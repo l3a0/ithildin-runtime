@@ -119,7 +119,7 @@ The journal is one of the three things the premise says cannot be recovered, so 
 
 - The execution worker runs as a Unix user of its own, started by a systemd unit with that user, never by a process that keeps root.
 - Only root and one provisioning user can reach the VM's instance metadata service, because any process that can reach that service can fetch the VM's credentials. A firewall rule matched on the process's owner enforces that across reboots.
-- Each VM has no inbound port, and Docker listens on its Unix socket alone. Every role is refused remote commands and remote sessions.
+- Each VM has no inbound port, and Docker listens on its Unix socket alone. Outbound, the data, execution and monitoring containers ask the two [time servers](03-context-and-scope.md#the-time-servers) on UDP 123 and need DNS for the public one. AWS's [security groups](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html) and [network ACLs](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-network-acls.html) filter neither the link-local time server nor Amazon's DNS, so only the public server's traffic passes them, and [#32](https://github.com/l3a0/ithildin-runtime/issues/32) holds the rules that let it out. Every role is refused remote commands and remote sessions.
 - At boot the provisioning step writes each worker user a credential file only that user can read, never carried in the VM's start-up data.
 - Only the execution user's credential can read the secret store's broker path.
 
@@ -287,7 +287,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
-**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The header's map from each strategy to its hash is one of two exceptions: no release from before it runs a worker, and one that read a map would halt, as [Rule 5](../design.md#rule-5-each-blob-names-what-made-it) says. Data's snapshot file, at format 2, is the second, for the same reason: no release that writes format 1 runs a worker in an environment, so no environment holds a snapshot of it. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so no session trades until it is cleared, and it stays set until the next session runs the earlier digest. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
+**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The header's map from each strategy to its hash is one of two exceptions: no release from before it runs a worker, and one that read a map would halt, as [Rule 5](../design.md#rule-5-each-blob-names-what-made-it) says. Data's snapshot file, at format 3, is the second, for the same reason: no release that writes format 1 or 2 runs a worker in an environment, so no environment holds a snapshot of either. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so no session trades until it is cleared, and it stays set until the next session runs the earlier digest. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
 
 ### Rule 7: systemd keeps every process running, up to a limit
 
@@ -480,7 +480,10 @@ Five things follow.
    [defaults](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-IMDS-new-instances.html)
    give 2 for an AMI that requires IMDSv2, and 2 lets a container
    through. A `DOCKER-USER` firewall rule also drops traffic from
-   Docker's bridges to the metadata service's addresses. [The drill on the metadata fence](../halts-and-drills.md#drills-with-no-alarm)
+   Docker's bridges to the metadata service's two addresses, `169.254.169.254`
+   and `fd00:ec2::254`. It names those two and never `169.254.0.0/16`, because
+   data, execution and monitoring ask AWS's time server at `169.254.169.123`,
+   and a rule on the whole range would halt all three. [The drill on the metadata fence](../halts-and-drills.md#drills-with-no-alarm)
    tests this from inside each container.
 4. **A restart writes its own record.** Each unit's stop handler on the
    host records why the container stopped, its count of restarts and

@@ -358,6 +358,22 @@ The writing commands are for the cases the platform cannot resolve alone:
 - a halt of all trading that waits for a person, as [How a sort runs](halts-and-drills.md#how-a-sort-runs) says
 - any halt on live
 
+#### What to do about a halt on the clock
+
+A halt on the machine's clock is one decision's on shadow and paper, and the next decision reads the clock again, so a first one needs no command there. On live it holds the account until the owner clears it, as every halt does.
+
+**Table:** The owner's step where a halt on the clock repeats
+
+| The reason says | Step |
+| --- | --- |
+| A server's answer is too old, or it has given none | Wait while that server is out. Otherwise revert the last apply or release the halts began with, and where there was none, replace the VM, because the thread that asks is stuck |
+| The clock is past its bound against a server | Replace the VM, because chrony is not holding the clock. Where a newer answer of the other server puts the clock well within its bound, wait instead, because the first server or the path to it is wrong |
+| No time server was asked | Roll the release back with `ithildin pin set`, because it gave a trading run a clock that measures nothing |
+
+Each step but waiting is taken between sessions, because nothing on slice 1's one VM serves a cancel or the kill switch while it is replaced. [Roll a release back during a session](#roll-a-release-back-during-a-session) says how that one is taken inside a session, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) has still to say how the other two are and who ends a VM.
+
+[The time servers](architecture/03-context-and-scope.md#the-time-servers) says how each reason comes about.
+
 #### What to do away from a computer
 
 Away from a computer, the fallback is the runbook's: cancel at the broker's own app, and journal it with `ithildin override` once back. A page or a phone app that runs these commands waits for evidence that the command line is not enough.

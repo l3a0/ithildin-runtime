@@ -61,6 +61,9 @@ flowchart TB
     subgraph tb_alert["Trust boundary: alert vendors"]
         alert(["Heartbeat and push"])
     end
+    subgraph tb_time["Trust boundary: AWS's time service"]
+        times(["Two time servers"])
+    end
     subgraph tb_account["Trust boundary: the environment's AWS account"]
         subgraph tb_vm["Trust boundary: the VM"]
             sup["Supervisor"]
@@ -94,12 +97,13 @@ flowchart TB
     tb_marketlake ~~~ tb_account
     tb_broker ~~~ tb_account
     tb_alert ~~~ tb_account
+    tb_time ~~~ tb_account
 
     classDef boundary fill:none,stroke-dasharray:6 4
-    class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
+    class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_time,tb_account,tb_vm,tb_exec boundary
 ```
 
-In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. Execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model and portfolio construction, in flows 7.4 and 7.5.
+In the second figure, the numbers give the order of one decision on paper, and a sub-number, such as 9.2, names one arrow of a step that has several. Flow 0 happens before the session, and flow 15 whenever a person acts. Flow 16 runs on threads of each process's own, whether or not a decision is under way. In shadow, flows 6, 10 and 11 go to the simulated broker and cross nothing, and no broker key exists. Execution reads the hard caps in its recover stage and stores the book, the caps as read and the valuation for the risk model and portfolio construction, in flows 7.4 and 7.5.
 
 The figure below is a C4 dynamic diagram. It draws the same components, stores and boundaries as the deployment diagram above, with the flows of one decision between them.
 
@@ -119,6 +123,9 @@ flowchart LR
     end
     subgraph tb_alert["Trust boundary: alert vendors"]
         alert(["Heartbeat and push"])
+    end
+    subgraph tb_time["Trust boundary: AWS's time service"]
+        times(["Two time servers"])
     end
     subgraph tb_account["Trust boundary: the environment's AWS account"]
         subgraph tb_vm["Trust boundary: the VM"]
@@ -169,9 +176,12 @@ flowchart LR
     person -->|"15.1 switch, clears, overrides,<br/>releases, hard caps, owner's records"| d5
     person -->|"15.2 clear and override entries"| d3
     person -->|"15.3 lease cleared, after its clear entry"| d5
+    times -->|"16.1 time"| data
+    times -->|"16.2 time"| exec
+    times -->|"16.3 time"| mon
 
     classDef boundary fill:none,stroke-dasharray:6 4
-    class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_account,tb_vm,tb_exec boundary
+    class tb_person,tb_github,tb_marketlake,tb_broker,tb_alert,tb_time,tb_account,tb_vm,tb_exec boundary
 ```
 
 Flows outside one decision, such as pin writes and a failure's direct alarm route, are drawn in [Where it runs](07-deployment.md#where-it-runs).
@@ -194,6 +204,7 @@ The table below names each flow of the dynamic diagram that crosses a trust boun
 | 10 orders and cancels | Execution to Alpaca | An order is sent twice or around the gate, or a cancel is sent with no record | One order path through the gate, each step journaled before the send, and a client order id on every order. A cancel skips the gate on purpose, so it is journaled first and sent only while the account's lease tag is unchanged |
 | 14.2 pings and alarms | Monitoring to vendors | An alarm is lost or forged | Each environment holds only its own checks' addresses and its own push topic's address, and the dead-man check pages when pings stop. On paper and live the SNS subscription also holds the owner's email address, written by hand. No runtime VM, parameter or EventBridge route holds marketlake's topic address, no tracked file holds a push topic's, and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) holds how an EventBridge target and the tool reach it, and whether OpenTofu state may hold that address |
 | 15.1, 15.2, 15.3 person's writes | A person's machine into storage | Someone else acts as the owner | Each person has their own credential, on live only the owner's role writes the release and override keys or clears a lease, on every account only the owner's role writes the hard caps and an owner's record, and CloudTrail records each write and delete |
+| 16.1, 16.2, 16.3 time | AWS's time service into data, execution and monitoring | An answer is forged, late, withheld or wrong, since nothing authenticates it | Both servers have to be fresh and within the bound, so one forged answer can only halt, apart from hiding what neither of the machine's clocks shows until the other server's next answer, or for 300 seconds without one. Both forged hide any fault. A reply counts only from the address asked and with the random bytes sent, its 48 bytes are checked by value, the public server's address rests on a lookup nothing authenticates and has to be a global one, and a handler reads the last answers from memory, as [The time servers](03-context-and-scope.md#the-time-servers) says. [#165](https://github.com/l3a0/ithildin-runtime/issues/165) builds execution's reading and [#11](https://github.com/l3a0/ithildin-runtime/issues/11) monitoring's |
 
 The security master is the table that maps each ticker to the platform's own instrument id, so a vendor's renamed ticker does not become a new instrument. Every run record is kept after the run, and its header names the blobs it came from. That is what makes each decision readable afterwards.
 

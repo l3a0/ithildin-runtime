@@ -159,7 +159,7 @@ writes a fill. Research, which the figure draws as a module, has no package in s
 | Research | Find, test and retire alphas, away from the live loop (L920, L5680) | History | A registered strategy, or a recorded null result | Quant researcher |
 | Monitoring | Watch exposure, P&L, execution and systems (L4973) | Everything above | Alerts, a halt | Operator |
 
-Three packages under `src/ithildinruntime` are shared code rather than modules, so the table leaves them out. `core` holds the types, the interfaces, the one codec, the key builders, the calendar and the storage contract that every module imports. `adapters` holds what stands behind `core`'s ports, the folder and S3 stores and read-only buckets, the named-pipe and SQS queues and the history and wall clocks today, and only `runtime` imports it. `journal` holds the journal's writer and reader, what an entry holds, an order's states and the book the entries replay to, and only execution, monitoring, the supervisor and the `ithildin` tool may import it. [Package layout and the import rule](architecture/05-building-blocks.md#package-layout-and-the-import-rule) draws all three. A fourth package, `runtime`, puts the modules together, and today holds the receive loop every worker and the supervisor run, with the table of stages it reads, and the data, alpha, cost, risk and portfolio workers' entry points.
+Three packages under `src/ithildinruntime` are shared code rather than modules, so the table leaves them out. `core` holds the types, the interfaces, the one codec, the key builders, the calendar and the storage contract that every module imports. `adapters` holds what stands behind `core`'s ports, the folder and S3 stores and read-only buckets, the named-pipe and SQS queues, the history and wall clocks and the sampler that asks the time servers today, and only `runtime` imports it. `journal` holds the journal's writer and reader, what an entry holds, an order's states and the book the entries replay to, and only execution, monitoring, the supervisor and the `ithildin` tool may import it. [Package layout and the import rule](architecture/05-building-blocks.md#package-layout-and-the-import-rule) draws all three. A fourth package, `runtime`, puts the modules together, and today holds the receive loop every worker and the supervisor run, with the table of stages it reads, and the data, alpha, cost, risk and portfolio workers' entry points.
 
 Narang's build-or-buy advice sets what the team writes itself. Adequate
 off-the-shelf solutions exist for data, risk models, portfolio construction and
@@ -409,7 +409,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   platform too, because each is cheap to compute on every order. Owns the halt
   on stale data, which is why many high-frequency firms stopped trading in the
   Flash Crash (L7365). Owns the kill switch, a term the book never uses. Its nearest
-  idea is a person's panic button that cuts risk (L994). Also owns the halts on clock offset and sync age. Holds the rule for what a halt
+  idea is a person's panic button that cuts risk (L994). Also owns the halts on the clock's offset from each time server, on the age of each server's last answer, on no answer and on no time server asked. Holds the rule for what a halt
   and the kill switch cancel and keep at the broker, per the design doc. No clock or cutoff reading stops a sort's adding cancel or a pair-keeping cancel, so a clock that failed its check holds neither back. The
   kill switch acts as a holder of the account's lease, never as a second
   sender.
@@ -564,7 +564,7 @@ time is the scarce resource, so work reaches the owner already reviewed.
   comes first (AoS L3421). Here restoring service means reconciling with the
   broker before trading resumes. Plans headroom for each component, per the
   design doc, and runs the release's production check below. Watches the clock's
-  offset and sync age, which halt trading past their bounds, and the lag of
+  offset from each time server and the age of each one's last answer, which halt trading past their bounds, and the lag of
   capture and of the off-machine copy, which alarms, since a drifting clock
   and a growing backlog both fail without an error (DDIA L8913, L14056). Runs
   the dead-man check off the machine, and drills the restore on a schedule. Owns the release
@@ -840,7 +840,7 @@ running, each placed where it is cheapest (AoS L6250, L6377).
   [A release is checked where it runs](design.md#a-release-is-checked-where-it-runs-and-nothing-heals-by-hiding-a-fault)
   says, which also says what each finding serves, read every component's
   restart and scaling switch and execution's restart count, and check the
-  clock's offset and sync age. A failure of the release's own digest or the
+  clock's offset from each time server and the age of each one's last answer. A failure of the release's own digest or the
   journal check halts everything and pages the owner, naming the broker's own
   interface, and that instance receives nothing and runs the two again at a written
   interval. Once they pass, the order path reads the kill switch and serves it, and resumes any sort [How a sort runs](halts-and-drills.md#how-a-sort-runs) proposes, which is no Startup check. A failure of any other check, apart from a store finding, which

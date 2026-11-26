@@ -30,6 +30,7 @@ from ithildinruntime.core import (
     StoreUnavailable,
     decode,
     encode,
+    sha256_of,
     sim_account_key,
 )
 from ithildinruntime.execution.brokers.faults import (
@@ -1379,11 +1380,25 @@ def committed() -> SimWorld:
     return made
 
 
+# The digest, when the log was committed, of the snapshot that priced its fills.
+PRICED_FROM = "9910432dd2bbd1174e8982d18d1063b88c8911a86b6d4fb307c7d798928fbbd7"
+
+
 def test_5_this_release_reads_and_writes_the_committed_log() -> None:
-    """A shadow account's log outlives a release, so its bytes never change."""
+    """A shadow account's log outlives a release, so its bytes never change.
+
+    The digest of the snapshot that priced a fill moves with `Snapshot`'s fields, so it
+    is compared with that snapshot's own bytes, and left out of the comparison.
+    """
     made = committed()
     stored = {p.name: p.read_bytes() for p in sorted(FIXTURES.glob("*.json"))}
-    assert {k.rpartition("/")[2]: v for k, v in made.blobs().items()} == stored
+    written = {k.rpartition("/")[2]: v for k, v in made.blobs().items()}
+    ends = [end for data in written.values() for end in decode(data, SimCall).events.closed]
+    # One snapshot priced both fills.
+    (ref,) = {end.priced_from for end in ends if end.priced_from is not None}
+    assert ref.sha256 == sha256_of(made.store.blobs[ref.key])
+    now, then = ref.sha256.encode(), PRICED_FROM.encode()
+    assert {name: data.replace(now, then) for name, data in written.items()} == stored
     store = Wired({f"sim/{ACCOUNT}/{name}": data for name, data in stored.items()})
     log = SimulatedAccount.load(store, ACCOUNT, OTHER)
     log.catch_up()

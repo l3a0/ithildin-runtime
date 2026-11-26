@@ -27,6 +27,7 @@ from ithildinruntime.core import (
     result_key,
 )
 from ithildinruntime.runtime.loop import Item, LoopFailed, ReceiveLoop
+from tests.support.clocks import never_asked
 from tests.support.queues import (
     COMPONENTS,
     DEPLOYMENT,
@@ -2078,7 +2079,7 @@ def test_a_stop_ends_a_wall_clocks_wait_and_leaves_the_decision_for_later(
         entered.set()
         try:
             # The next report is 5 seconds off, so only the stop wakes it sooner.
-            clock = WallClock(SystemTimer(), interval=5.0)
+            clock = WallClock(SystemTimer(), servers=never_asked(), interval=5.0)
             clock.wait_until(datetime.now(UTC) + timedelta(seconds=8), report)
         except Exception as error:
             # A handler's own catch never turns a stop into a halt.

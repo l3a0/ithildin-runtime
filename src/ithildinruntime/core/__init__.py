@@ -7,6 +7,8 @@ and the import rule` says what it holds and why.
 """
 
 from .broker import BrokerUnavailable, error_name
+from .clock import *  # noqa: F403
+from .clock import __all__ as _clock
 from .codec import (
     CodecError,
     Places,
@@ -136,6 +138,7 @@ __all__ = [
     "shows_instrument",
     "to_decimal",
     "to_utc",
+    *_clock,
     *_exact,
     *_keys,
     *_limits,

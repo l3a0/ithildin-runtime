@@ -8,9 +8,10 @@ and no answer is usable but an empty one. docs/architecture/03-context-and-scope
 The age is measured at `now`, at each read. A stage that reads no clock passes
 the decision time, and the risk gate passes its own `now`, so a quote that was
 good at the decision halts the order that meets it too late. `CLOCK_BOUND`, the
-bound on how far the machine's clock may be off, is added to every age. Until
-#134 builds the check of that clock nothing measures the offset, so a machine
-whose clock runs further behind than the bound reads an old quote as fresh.
+bound on how far the machine's clock may be off, is added to every age. Data's
+stage measures that clock once a decision, through `core.clock_faults`. Until
+#165 builds the check before each submit, a clock that goes wrong after data's
+read makes an old quote read as fresh at the gate.
 
 An age is compared in whole microseconds and a spread exactly, as
 `core/exact.py` says. `quote_faults` raises nothing, and the other functions
@@ -24,6 +25,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from .clock import CLOCK_BOUND
 from .codec import INT_LIMIT
 from .exact import exact_product, exact_total, finite
 from .halt import Halt
@@ -32,7 +34,6 @@ from .records import InstrumentId, Quote, Snapshot
 from .sessions import Session, load_sessions, require_utc
 
 __all__ = [
-    "CLOCK_BOUND",
     "maximum_faults",
     "midpoint",
     "quote_faults",
@@ -40,7 +41,6 @@ __all__ = [
     "require_quote",
 ]
 
-CLOCK_BOUND = timedelta(seconds=1)
 
 _MICROSECOND = timedelta(microseconds=1)
 _BOUND = CLOCK_BOUND // _MICROSECOND

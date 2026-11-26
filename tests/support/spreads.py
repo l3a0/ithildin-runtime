@@ -15,6 +15,7 @@ from decimal import Decimal
 from ithildinruntime.core import (
     Bar,
     BarStatus,
+    ClockReading,
     InstrumentId,
     Snapshot,
     StrategyConfig,
@@ -99,6 +100,7 @@ def snapshot(
         "segments": (),
         "ledgers": {},
         **NONE_READ,
+        "clock": ClockReading(at or TABLE.session(gld[-1].session).close, None),
     }
     return Snapshot(**fields | changes)  # type: ignore[arg-type]
 

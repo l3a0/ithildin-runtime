@@ -22,6 +22,7 @@ from ithildinruntime.core import (
     BarStatus,
     BlobHeader,
     BlobRef,
+    ClockReading,
     CostKind,
     CostSchedule,
     CostSide,
@@ -187,6 +188,7 @@ def snapshot(*instruments: str) -> Snapshot:
         segments=(),
         ledgers={},
         **NONE_READ,
+        clock=ClockReading(AT, None),
     )
 
 

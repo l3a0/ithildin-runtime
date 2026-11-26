@@ -96,6 +96,7 @@ def source(
         clock=Clock(),
         timer=Timer(),
         kinds=kinds,
+        measured=False,
     )
 
 
@@ -103,7 +104,7 @@ def both(lake: Path, tmp_path: Path, day: date) -> tuple[str, ...]:
     """The halts of a read at `day`'s close, which a judge of its stored snapshot gives too."""
     reading = source(lake, tmp_path).read(close(day))
     stored = decode(encode(reading.snapshot), Snapshot)
-    assert judge(stored, (GLD, USO)) == reading.halts
+    assert judge(stored, (GLD, USO), measured=False) == reading.halts
     return reading.halts
 
 
@@ -218,7 +219,7 @@ def test_1_a_change_across_a_missing_session_halts_beside_it(tmp_path: Path) -> 
     ]
     reading = source(made.build(tmp_path / "lake", cut), tmp_path).read(close(DAYS[AT + 2]))
     stored = decode(encode(reading.snapshot), Snapshot)
-    for reasons in (reading.halts, judge(stored, (GLD, USO))):
+    for reasons in (reading.halts, judge(stored, (GLD, USO), measured=False)):
         assert [r for r in reasons if "two series" in r] == list(crossing(AT - 2, AT + 1))
         assert len([r for r in reasons if " missing " in r]) == 2
 
@@ -235,7 +236,10 @@ def test_1_a_change_comes_after_a_contradiction_and_an_unstated_kind(
     assert [("unstated" in r, "two series" in r) for r in gold] == [(True, False), (False, True)]
     assert ["contradict" in r for r in oil] == [True] * (len(oil) - 2) + [False, False]
     assert len(oil) > 2 and "unstated" in oil[-2] and "two series" in oil[-1]
-    assert judge(decode(encode(reading.snapshot), Snapshot), (GLD, USO)) == reading.halts
+    assert (
+        judge(decode(encode(reading.snapshot), Snapshot), (GLD, USO), measured=False)
+        == reading.halts
+    )
 
 
 def test_1_a_change_leaves_each_status_fresh_and_the_port_refuses_it(
@@ -267,7 +271,7 @@ def test_2_two_price_kinds_within_one_series_add_no_halt(one_lake: Path, tmp_pat
     reading = source(one_lake, tmp_path, kinds=kinds).read(close(SEAM))
     held = reading.snapshot.bars[USO]["1d"]
     assert {bar.price_kind for bar in held} == {"official close", "last sale"}
-    assert reading.halts == judge(reading.snapshot, (GLD, USO)) == ()
+    assert reading.halts == judge(reading.snapshot, (GLD, USO), measured=False) == ()
 
 
 def test_2_captured_bars_throughout_add_no_halt(tmp_path: Path) -> None:
@@ -281,7 +285,11 @@ def test_2_captured_bars_throughout_add_no_halt(tmp_path: Path) -> None:
     following = made.DAYS[made.DAYS.index(captured[-1]) + 1]
     at = made.TABLE.session(following).open - timedelta(microseconds=1)
     reading = source(lake, tmp_path).read(at)
-    assert reading.halts == judge(decode(encode(reading.snapshot), Snapshot), (GLD, USO)) == ()
+    assert (
+        reading.halts
+        == judge(decode(encode(reading.snapshot), Snapshot), (GLD, USO), measured=False)
+        == ()
+    )
     bar = reading.snapshot.bars[USO]["1d"][-1]
     assert bar.session == captured[-1]
     assert series_of(bar) == ("raw", None, None)
@@ -365,6 +373,7 @@ def test_3_the_tracked_strategy_halts_at_close_20_from_2026_09_08_to_2027_01_28(
         clock=Clock(),
         timer=Timer(),
         kinds=made.KINDS,
+        measured=False,
     )
     early = timedelta(minutes=20)
     crossed = {
@@ -455,7 +464,7 @@ def test_5_the_replications_one_read_of_both_chan_vintages_gains_no_reason(
     every_session: Snapshot,
 ) -> None:
     """The fixture reads through the port, which raises on any reason, so it holds the read."""
-    assert judge(every_session, (GLD, USO)) == ()
+    assert judge(every_session, (GLD, USO), measured=False) == ()
     for instrument in (GLD, USO):
         held = every_session.bars[instrument]["1d"]
         assert len(held) == 1500 and len({series_of(bar) for bar in held}) == 1

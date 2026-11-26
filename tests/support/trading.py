@@ -234,7 +234,7 @@ def trade(
     opened = SESSIONS.session(days[first - 1]).close
     open_backtest(Mode.BACKTEST, store, ACCOUNT, CASH, opened)
     written: list[HardCaps] = []
-    clock = HistoryClock()
+    clock = HistoryClock(readings=None)
     made = dict(storage=storage, deployment=DEPLOYMENT, run=RUN, release=RELEASE, table=TABLE)
     handlers: dict[str, Callable] = {
         **cost_handlers(**made),

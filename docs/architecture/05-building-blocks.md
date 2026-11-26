@@ -203,7 +203,7 @@ flowchart LR
 strategy sees:
 
 1. The data source's two buckets, folders in a backtest and two prefixes of marketlake's S3 bucket otherwise.
-2. The clock.
+2. The clock. Whether a run measures it, as [The time servers](03-context-and-scope.md#the-time-servers) says, goes with it.
 3. The broker.
 
 It lists three more beside them, which change only where records and signals go:
@@ -399,7 +399,20 @@ classDiagram
         +dict rows
         +list faults
         +datetime or None quotes_read_at
+        +ClockReading clock
         +require_fresh(needed)
+    }
+    class ClockReading {
+        +datetime read_at
+        +list or None answers
+    }
+    class TimeAnswer {
+        +str server
+        +int or None offset_us
+        +int or None error_us
+        +int or None age_us
+        +str or None received
+        +str or None failed
     }
     class Segment {
         +str key
@@ -841,6 +854,8 @@ classDiagram
     Snapshot o-- Quote
     Snapshot o-- Segment
     Snapshot o-- SpikeFlag
+    Snapshot o-- ClockReading
+    ClockReading o-- TimeAnswer
     Bar --> Instrument
     Quote --> Instrument
     Forecast --> Basket
@@ -1018,8 +1033,7 @@ classDiagram
         <<Protocol>>
         +now() datetime
         +monotonic() float
-        +offset() timedelta
-        +sync_age() timedelta
+        +reading() ClockReading
         +wait_until(datetime, Progress)
     }
     class Progress {
@@ -1220,6 +1234,7 @@ classDiagram
     OrderPath ..> OrderState
     DataSource ..> Snapshot
     Clock ..> Progress
+    Clock ..> ClockReading
     Bucket ..> BucketObject
     AlphaModel ..> ForecastSet
     RiskModel ..> Constraints
@@ -1334,7 +1349,9 @@ A snapshot's quotes share one `captured_at`, and `Snapshot` refuses to be built 
 4. `faults` holds each reason the read of the quotes failed, in order.
 5. `quotes_read_at` is the data worker's clock after the bucket's last answer, and `None` exactly when `provisional` is false.
 
-The data module's file format is 2. The codec refuses a record with a field it does not know or lacks, so a release on either side of this refuses the other's snapshot rather than misreading it.
+`clock` is the reading of the machine's clock the decision was judged by, taken after the last answer the read waited on, as [The time servers](03-context-and-scope.md#the-time-servers) says. Its `answers` are `None` where nothing measured the clock, and otherwise hold two servers or more.
+
+The data module's file format is 3. The codec refuses a record with a field it does not know or lacks, so a release on either side of this refuses the other's snapshot rather than misreading it.
 
 A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A bar's flag from the contradiction rule halts the decision once its snapshot is stored, a quote's adds no halt to the judge's, and a flag from the move rule or the below-the-low rule halts nothing. The price itself stays as received in its bar or its quote. A flag on a quote names the field `bid`, `ask` or `midpoint`.
 
@@ -1980,7 +1997,7 @@ The figure below is a C4 component diagram.
 flowchart TB
     core["ithildinruntime.core<br/>the code every module shares"]
     journal["ithildinruntime.journal<br/>the journal's writer and reader,<br/>and the book its entries replay to"]
-    adapters["adapters<br/>S3 and folder stores and buckets,<br/>SQS and named-pipe queues, two clocks"]
+    adapters["adapters<br/>S3 and folder stores and buckets,<br/>SQS and named-pipe queues, two clocks,<br/>and the time servers' sampler"]
     data["data"]
     alpha["alpha"]
     risk["risk"]
@@ -2055,7 +2072,8 @@ An arrow means "may import". The diagram draws four rules.
    - `StageRun` and `StageDecision`, the steps a model's stage takes to read another stage's result, hold it to the stage table's configuration hashes, read the files it lists, write its own files under one header, and turn a halt into its result. A capturing stage also stores a capture before it judges it, and goes on from its own stored files in a second attempt;
    - `parse_caps`, `check_constraints`, `require_current` and `tighten`, which read the hard caps blob, the share step included, check each field of a strategy's limits, refuse a V or a stress move a decision may not use, and take the tighter of each limit and its cap, and the decimal arithmetic limits are compared in, which is exact or halts;
    - `moves`, `largest_move` and `stress_vintage`, which measure the stress move and name the bars it read, the tracked stress records and their reader, and `hold_to_record`, which holds the caps to them, because the gate, the risk model and portfolio construction each call it;
-   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, and the alpha model's signal reads the price its position is sized at, `quote_faults`, `require_quote`, `readable_until` and `midpoint`, the one judge of a quote, the last moment one can be read and the price read of one, with `CLOCK_BOUND`, the bound added to every age, because data judges the quote the mark values at, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
+   - `mark`, `exposure`, `classify`, `held` and `value_book`, the one price, range, adding-or-reducing, list of what is held and valuation, so the gate, the risk model, portfolio construction and execution each count a book one way, and the alpha model's signal reads the price its position is sized at, `quote_faults`, `require_quote`, `readable_until` and `midpoint`, the one judge of a quote, the last moment one can be read and the price read of one, because data judges the quote the mark values at, and `series_of` and `unstated_fields`, which data reads too, because no worker may import another;
+   - `clock_faults`, the one rule that halts on a reading of the machine's clock, with `CLOCK_BOUND`, which is also added to every quote's age, `SYNC_BOUND`, `ANSWER_BOUND` and `DRIFT_PPM`, because data, execution and monitoring each judge a clock;
    - `reconcile`, the one comparison of a book and the journal's records of its open orders with the broker's account.
 
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
@@ -2078,7 +2096,7 @@ An arrow means "may import". The diagram draws four rules.
      The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`.
    - Only the entry points read the plan's mode, and a module is handed only the decisions.
 3. **Only `runtime` imports `execution.brokers`**, and only the execution worker's entry point builds a broker, which it hands to `OrderPath` alone.
-4. **Only `runtime` imports `adapters`**, which holds the S3 and memory-backed folder stores, the S3 and folder read-only buckets, the SQS and named-pipe queues, and the history and wall clocks. So each of the outside libraries in the table below is imported in one module.
+4. **Only `runtime` imports `adapters`**, which holds the S3 and memory-backed folder stores, the S3 and folder read-only buckets, the SQS and named-pipe queues, the history and wall clocks, and the sampler that asks the time servers. So each of the outside libraries in the table below is imported in one module.
 
    **Table:** The one module that imports each of five outside libraries
 

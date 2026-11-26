@@ -18,6 +18,7 @@ import pytest
 
 from ithildinruntime.adapters import FolderBucket, FolderStore, HistoryClock, S3Bucket, WallClock
 from ithildinruntime.core import (
+    ClockReading,
     Halt,
     InstrumentId,
     Mode,
@@ -37,6 +38,7 @@ from ithildinruntime.data.reference import PriceKinds
 from ithildinruntime.runtime.data_worker import DATA_ROW, data_buckets, data_handler
 from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
+from tests.support.clocks import never_asked
 from tests.support.quotes import quote
 from tests.test_data_source import FIRST, LAST, Clock, Timer, before, close, settings, unlist
 from tests.test_data_spikes import bar
@@ -55,6 +57,7 @@ READS = Table(stages=(DATA_ROW,), strategies=(READS_CHAN, parse_strategy("other"
 
 RUN = "2012-04-09"
 DEPLOYMENT = "test"
+MEASURED_NOTHING = ClockReading(close(LAST), None)
 
 
 class Reports:
@@ -68,7 +71,9 @@ class Reports:
         raise AssertionError("no clock here waits")
 
 
-def stage(lake: Path, tmp_path: Path, clock=None, **changes) -> tuple[DataStage, Storage, Alarms]:
+def stage(
+    lake: Path, tmp_path: Path, clock=None, measured: bool = False, **changes
+) -> tuple[DataStage, Storage, Alarms]:
     alarms = Alarms()
     storage = Storage(
         FolderStore(tmp_path / "store"),
@@ -85,6 +90,7 @@ def stage(lake: Path, tmp_path: Path, clock=None, **changes) -> tuple[DataStage,
         live=FolderBucket(lake.with_name("no-live")),
         clock=clock,
         timer=Timer(),
+        measured=measured,
     )
     made = DataStage(
         source,
@@ -193,7 +199,9 @@ def test_18_a_reread_keeps_the_first_capture_and_says_only_the_read_time_differs
     assert second.outputs[1].key == key(2)
     (reason,) = alarms.reasons
     assert key(2) in reason
-    assert reason.endswith("Only the read time differs, as on a redelivery after a crash")
+    assert reason.endswith(
+        "Only the read time or the clock's reading differs, as on a redelivery after a crash"
+    )
 
 
 def test_18_a_reread_after_a_changed_bar_says_the_bars_differ(lake: Path, tmp_path: Path) -> None:
@@ -289,6 +297,7 @@ def _again(lake: Path, tmp_path: Path, storage: Storage, clock, **changes) -> Da
         clock=clock,
         timer=Timer(),
         kinds=kinds,
+        measured=False,
     )
     return DataStage(
         source,
@@ -388,6 +397,7 @@ def test_18_a_redelivery_halts_on_a_capture_that_holds_other_than_one_snapshot(
             live=FolderBucket(lake.with_name("no-live")),
             clock=Clock(),
             timer=Timer(),
+            measured=False,
         )
         .read(close(LAST))
         .snapshot
@@ -531,7 +541,7 @@ def test_18_a_redelivery_halts_on_a_first_session_written_late_since_the_first_c
 def test_18_a_reread_under_the_history_clock_stores_the_same_bytes(
     lake: Path, tmp_path: Path
 ) -> None:
-    clock = HistoryClock()
+    clock = HistoryClock(readings=None)
     made, _, alarms = stage(lake, tmp_path, clock=clock)
     first = made(Item(close(LAST), "data"), Reports())
     second = made(Item(close(LAST), "data"), Reports())
@@ -569,7 +579,7 @@ def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(names: tuple[str
 
     hashes = {"chan_bollinger": "c" * 64}
     header = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
-    base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
+    base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None, MEASURED_NOTHING)
     gld = InstrumentId("GLD")
     flag = SpikeFlag(LAST, "close", Decimal(1), Decimal(2), "a rule", "a note")
     two = close(LAST) + timedelta(minutes=1)
@@ -590,7 +600,10 @@ def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(names: tuple[str
     def encoded(snap: Snapshot) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (snap,), False))
 
-    assert differences(encoded(base), encoded(changed)) == f"These differ: {', '.join(names)}"
+    assert (
+        differences(encoded(base), encoded(changed), measured=False)
+        == f"These differ: {', '.join(names)}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -609,7 +622,7 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
 
     hashes = {"chan": "c" * 64}
     first = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None, MEASURED_NOTHING)
     later, later_snap = first, snap
     if change == "config_hashes":
         later = dataclasses.replace(first, config_hashes={**hashes, "other": "d" * 64})
@@ -628,7 +641,10 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
     def encoded(header: BlobHeader, body: Snapshot) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (body,), False))
 
-    assert differences(encoded(first, snap), encoded(later, later_snap)) == f"These differ: {said}"
+    assert (
+        differences(encoded(first, snap), encoded(later, later_snap), measured=False)
+        == f"These differ: {said}"
+    )
 
 
 @pytest.mark.parametrize(("first", "later"), [(0, 1), (2, 1), (1, 0)])
@@ -640,12 +656,12 @@ def test_18_the_reread_alarm_names_a_capture_that_holds_other_than_one_snapshot(
     header = BlobHeader(
         1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
     )
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None)
+    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), {}, {}, (), None, MEASURED_NOTHING)
 
     def holding(n: int) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (snap,) * n, False))
 
-    assert differences(holding(first), holding(later)) == (
+    assert differences(holding(first), holding(later), measured=False) == (
         f"The captures hold {first} and {later} snapshots, where each should hold one"
     )
 
@@ -699,7 +715,7 @@ class FakeProgress:
 def test_19_the_wall_clock_reports_while_it_waits_past_the_heartbeat_limit() -> None:
     start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
     time = FakeTime(start)
-    clock = WallClock(time, interval=5.0)
+    clock = WallClock(time, servers=never_asked(), interval=5.0)
     report = FakeProgress(time)
     # The receive loop's heartbeat limit is 30 seconds, and the wait is 7 hours.
     at = start + timedelta(hours=7)
@@ -720,7 +736,7 @@ def test_19_the_wall_clock_returns_at_once_once_the_time_has_passed(
     at = datetime(2012, 4, 9, 20, 0, tzinfo=UTC)
     time = FakeTime(at + past)
     report = FakeProgress(time, at if stopped else None)
-    WallClock(time).wait_until(at, report)
+    WallClock(time, servers=never_asked()).wait_until(at, report)
     assert report.waited == [] and time.now() == at + past
 
 
@@ -728,7 +744,7 @@ def test_19_the_wall_clock_waits_out_the_last_microsecond() -> None:
     at = datetime(2012, 4, 9, 20, 0, tzinfo=UTC)
     time = FakeTime(at - timedelta(microseconds=1))
     report = FakeProgress(time)
-    WallClock(time).wait_until(at, report)
+    WallClock(time, servers=never_asked()).wait_until(at, report)
     assert report.waited == [1e-06] and time.now() == at
 
 
@@ -736,7 +752,9 @@ def test_19_the_wall_clock_never_waits_past_the_time() -> None:
     start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
     time = FakeTime(start)
     report = FakeProgress(time)
-    WallClock(time, interval=5.0).wait_until(start + timedelta(seconds=12), report)
+    WallClock(time, servers=never_asked(), interval=5.0).wait_until(
+        start + timedelta(seconds=12), report
+    )
     assert report.waited == [5.0, 5.0, 2.0] and time.now() == start + timedelta(seconds=12)
 
 
@@ -746,7 +764,9 @@ def test_a_stop_ends_the_wall_clocks_wait_at_once() -> None:
     stop_at = start + timedelta(seconds=12)
     report = FakeProgress(time, stop_at)
     with pytest.raises(Stopped, match="2012-04-09T20:00:00"):
-        WallClock(time, interval=5.0).wait_until(start + timedelta(hours=7), report)
+        WallClock(time, servers=never_asked(), interval=5.0).wait_until(
+            start + timedelta(hours=7), report
+        )
     assert time.now() == stop_at
     assert report.waited == [5.0, 5.0, 5.0]
 
@@ -755,13 +775,15 @@ def test_a_stop_already_asked_ends_the_wall_clocks_wait_before_any_time_passes()
     start = datetime(2012, 4, 9, 13, 0, tzinfo=UTC)
     time = FakeTime(start)
     with pytest.raises(Stopped):
-        WallClock(time).wait_until(start + timedelta(hours=7), FakeProgress(time, start))
+        WallClock(time, servers=never_asked()).wait_until(
+            start + timedelta(hours=7), FakeProgress(time, start)
+        )
     assert time.now() == start
 
 
 def test_the_history_clock_ignores_a_stop() -> None:
     at = close(LAST)
-    clock = HistoryClock()
+    clock = HistoryClock(readings=None)
     clock.wait_until(at, FakeProgress(FakeTime(at), at))
     assert clock.now() == at
 
@@ -788,7 +810,7 @@ def test_a_stop_while_datas_stage_waits_reads_and_stores_nothing(
 
 
 def test_19_the_history_clock_returns_at_once_and_reads_the_decision_time() -> None:
-    clock = HistoryClock()
+    clock = HistoryClock(readings=None)
     reports = Reports()
     clock.wait_until(close(LAST), reports)
     assert reports.count == 0
@@ -811,16 +833,7 @@ def test_19_the_stage_hands_the_loops_report_to_the_clock(lake: Path, tmp_path: 
 
 def test_a_clock_waits_only_until_a_utc_time() -> None:
     with pytest.raises(ValueError):
-        HistoryClock().wait_until(datetime(2012, 4, 9, 16, 0), Reports())
-
-
-def test_neither_clock_reports_an_offset_nothing_measured() -> None:
-    time = FakeTime(datetime(2012, 4, 9, tzinfo=UTC))
-    for clock in (HistoryClock(), WallClock(time)):
-        with pytest.raises(NotImplementedError):
-            clock.offset()
-        with pytest.raises(NotImplementedError):
-            clock.sync_age()
+        HistoryClock(readings=None).wait_until(datetime(2012, 4, 9, 16, 0), Reports())
 
 
 # The entry point.
@@ -908,6 +921,7 @@ def test_a_change_to_one_strategys_file_leaves_every_other_strategys_hash_in_dat
             run=RUN,
             release="r1",
             table=table,
+            measured=False,
         )
         result = handler(Item(close(LAST), "data"), Reports())
         stored = decode_output(
@@ -940,6 +954,7 @@ def test_the_entry_points_handler_reads_through_the_bucket_it_is_given(
         run=RUN,
         release="r1",
         table=READS,
+        measured=False,
     )
     result = handler(Item(close(LAST), "data"), Reports())
     assert result.outputs[0].key == key()

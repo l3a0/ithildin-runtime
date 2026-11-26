@@ -226,7 +226,10 @@ def _read(
     if not after:
         raise Halt(f"the session table holds no session after {last.isoformat()}")
     # It reads no quote, so the bucket of segments is never asked for one.
-    source = LakeSource(mirror, settings, live=bucket, clock=clock, timer=timer, kinds=kinds)
+    # It trades nothing, so its clock is read for the time alone and measured by nothing.
+    source = LakeSource(
+        mirror, settings, live=bucket, clock=clock, timer=timer, measured=False, kinds=kinds
+    )
     reading = source.read(table.session(min(after)).open - timedelta(microseconds=1))
     if reading.halts:
         raise Halt("; ".join(reading.halts))
@@ -380,7 +383,7 @@ def main(
                 given.seam,
                 load_price_kinds() if kinds is None else kinds,
                 load_records(records),
-                clock=clock or WallClock(timer),
+                clock=clock or WallClock(timer, servers=None),
                 timer=timer,
             )
         print(text, end="", file=out or sys.stdout)
