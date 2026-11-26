@@ -754,7 +754,7 @@ that turns on money, contracts or law goes to the owner under a
 `/l3a0:ask-board` if the owner asks for one.
 
 The lenses, their verifiers and that comment make one review round. Every
-commit pushed after a round, its own fixes and a merge of `main` included, gets
+commit pushed after a round, that round's own fixes and a merge of `main` included, gets
 a round of its own. Once a round has read the head and found no must-fix, the
 review closes with a comment whose whole first line is exactly
 `## Review complete`, posted after the last push. The build board counts a
