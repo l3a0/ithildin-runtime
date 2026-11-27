@@ -575,7 +575,7 @@ def test_a_take_of_an_expired_lease_stores_the_list_and_journals_the_takeover_fi
     assert f"taken over from {FROZEN} of the run {RUN}, whose lease ran out at {ran_out}" in said
     assert f"the broker's order list is stored at {entry.orders.key}, and finds {late} late" in said
     # An ordinary takeover names no taker that failed one before it.
-    assert "failed that takeover" not in said
+    assert "with the takeover still owed" not in said
 
 
 def test_a_takeover_owed_names_its_holder_and_the_taker_that_died_holding_it() -> None:
@@ -591,7 +591,7 @@ def test_a_takeover_owed_names_its_holder_and_the_taker_that_died_holding_it() -
     assert (entry.holder, entry.late) == (FROZEN, (late,))
     (said,) = [a for a in world.alarms.sent if "taken over from" in a]
     assert f"taken over from {FROZEN}, whose lease ran out at" in said
-    assert f"after {dead}, which failed that takeover and held it last" in said
+    assert f"after {dead}, which held it last with the takeover still owed" in said
 
 
 def test_an_order_the_broker_lists_is_not_named_late() -> None:
@@ -649,7 +649,7 @@ def test_a_failed_takeover_halts_new_orders_and_the_next_take_owes_it(fails: str
     )
     assert any(f"taken over from {FROZEN}" in said for said in world.alarms.sent)
     # The release left the lease free, so no taker died holding it.
-    assert not any("failed that takeover" in said for said in world.alarms.sent)
+    assert not any("with the takeover still owed" in said for said in world.alarms.sent)
     if fails == "the journal":
         # Its list was stored under the same time, so the second is stored beside it.
         assert entry.orders.key == takeover_key(DEPLOYMENT, RUN, NOW, 2)
@@ -753,21 +753,24 @@ def test_a_takeover_whose_closing_rewrite_fails_has_alarmed_and_halts(answered: 
             replaced.append(number)
             if len(replaced) >= 2:
                 if answered:
-                    _plant(world, _held("e" * 32 + "-1", expires=timedelta(seconds=30)))
+                    # Another handler's take of this handler's lease once it ran out, which found
+                    # the takeover still owed from the frozen holder.
+                    other = _held("e" * 32 + "-1", expires=timedelta(seconds=30))
+                    _plant(world, replace(other, owed=True, owed_from=FROZEN, owed_expired=NOW))
                     world.store.before = lambda *_: None
                     return
                 raise StoreUnavailable(key, "SlowDown: the store's own text")
 
     world.store.before = before
     if answered:
-        reason = halted(world, "rewritten by another handler", lambda: world.send(2))
+        reason = halted(world, "now carries another handler's rewrite", lambda: world.send(2))
         # The entry is journaled, so the halt says it stands, not that the takeover failed.
         assert "takeover entry stands journaled" in reason
-        assert "journals one of its own before it acts" in reason
+        assert "journals a takeover of its own before it acts, if it has not already" in reason
         assert "until a takeover stores the list" not in reason
         assert "a write of this handler's own" not in reason
         # Another handler holds the lease, so no release is tried and the halt is the one page.
-        pages = [a for a in world.alarms.sent if "rewritten by another handler" in a]
+        pages = [a for a in world.alarms.sent if "now carries another handler's rewrite" in a]
         assert len(pages) == 1
         assert not [a for a in world.alarms.sent if "takeover of the account's lease failed" in a]
         assert not [a for a in world.alarms.sent if "release was refused" in a]

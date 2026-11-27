@@ -1241,8 +1241,11 @@ class OrderPath:
             ran_out = f", whose lease ran out at {expired.isoformat()}" if expired else ""
             whose = f"{owed_from}{run}{ran_out}"
         if took.handler is not None and took.handler != owed_from:
-            # A taker that failed the takeover owed and then died holding the lease.
-            whose = f"{whose}, after {took.handler}, which failed that takeover and held it last"
+            # A taker that held the lease last with the takeover still owed: one whose takeover
+            # failed, or whose entry stands journaled but whose rewrite clearing `owed` did not.
+            whose = (
+                f"{whose}, after {took.handler}, which held it last with the takeover still owed"
+            )
         # The alarm goes before the rewrite that clears `owed`, so a journaled takeover alarms
         # even where that rewrite fails.
         shared.alarm(
@@ -1267,11 +1270,12 @@ class OrderPath:
             # halt is the one page, and it says the entry stands rather than the takeover failed.
             self._lease = None
             reason = (
-                "the account's lease was rewritten by another handler before this handler's "
-                "rewrite after its takeover, so that rewrite was refused. This handler's takeover "
-                "entry stands journaled. The lease still owes a takeover, so the other handler "
-                "journals one of its own before it acts. This send halts, and the next order's "
-                "take reads the lease again"
+                "the account's lease now carries another handler's rewrite, so this handler's "
+                "rewrite after its takeover, which marks the takeover done, did not stand. This "
+                "handler's takeover entry stands journaled. The other handler took the lease over "
+                "after this handler's ran out, so it journals a takeover of its own before it "
+                "acts, if it has not already. This send halts, and the next order's take reads "
+                "the lease again"
             )
             raise Halt(f"{reason}{shared.alarm(reason)}") from None
 

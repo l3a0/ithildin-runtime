@@ -264,9 +264,9 @@ class AccountLease:
                 )
             owes = lease.owed or lease.handler is not None
             # The holder a takeover is owed from: the one whose lease ran out, or the one an
-            # earlier takeover that failed was owed from, or none for a person's clear.
-            # A takeover already owed keeps whom it is owed from, though a later taker that
-            # failed it too then died holding the lease.
+            # earlier takeover left owed was owed from, or none for a person's clear.
+            # A takeover already owed keeps whom it is owed from, though a later taker then
+            # held the lease with the takeover still owed.
             owed: tuple[str | None, datetime | None] | None
             if lease.owed:
                 owed = (lease.owed_from, lease.owed_expired)

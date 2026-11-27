@@ -368,7 +368,7 @@ class TakeoverEntry:
 
     - `tag` is the lease's tag the take rewrote, and `count` the count it wrote.
     - `holder` names the handler the takeover is owed from: the one whose lease
-      ran out, or the one an earlier takeover that failed was owed from. It is
+      ran out, or the one an earlier takeover left owed was owed from. It is
       `None` only after a person's clear.
     - `expired` is when that holder's lease ran out, or `None` after a clear.
     - `orders` names the broker's order list the take read and stored, from `since`.
