@@ -246,7 +246,7 @@ def test_9_a_backtest_over_a_folder_recovers_through_the_loop(case: Case, monkey
     assert isinstance(clock, HistoryClock) and faults.events == faults.reads == faults.orders == {}
 
 
-SHADOW = "#147, #148, #149, #150, #151 and #155"
+SHADOW = "#148, #149, #150, #151 and #155"
 
 
 def s3_store() -> S3Store:

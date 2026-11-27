@@ -36,6 +36,7 @@ __all__ = [
     "journal_entry_key",
     "kill_switch_key",
     "load_claim_key",
+    "lookup_key",
     "load_sent_key",
     "loss_stop_key",
     "off_switch_key",
@@ -71,7 +72,7 @@ _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._]*")
 # An output's name holds no `.`, so it cannot spell an attempt key, and these
 # names belong to the key table's own rows.
 _OUTPUT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
-_RESERVED = re.compile(r"result|claim|broker-read-[0-9]+")
+_RESERVED = re.compile(r"result|claim|broker-read-[0-9]+|lookup-[0-9]+")
 _DIGEST = re.compile(r"[A-Za-z0-9][A-Za-z0-9:._-]*")
 _ORDER_ID = re.compile(r"ith-(.+)-([0-9]{8}T[0-9]{6}Z)-([0-9]{2})")
 # Alpaca's create order page says a client order id has at most this many characters
@@ -262,6 +263,12 @@ def valuation_key(deployment: str, run: str, decision_at: datetime) -> str:
 def broker_read_key(deployment: str, run: str, decision_at: datetime, attempt: int) -> str:
     n = _count(attempt, "attempt")
     return f"{_stage_prefix(deployment, run, decision_at, SEND_STAGE)}/broker-read-{n}.json"
+
+
+def lookup_key(deployment: str, run: str, decision_at: datetime, stage: str, attempt: int) -> str:
+    """A stored answer about one order, of a list read to find it or of a lookup by its id."""
+    n = _count(attempt, "attempt")
+    return f"{_stage_prefix(deployment, run, decision_at, stage)}/lookup-{n}.json"
 
 
 def attempt_key(

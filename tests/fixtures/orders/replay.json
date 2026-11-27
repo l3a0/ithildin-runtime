@@ -97,10 +97,15 @@
   "newest_sent_at": "2026-10-01T19:40:42+00:00",
   "stop_alone": [45],
   "afterwards": {
-    "through": 57,
+    "through": 64,
     "stop": {"standing": null, "alone": [], "covered": ["\"5d41402abc4b2a76b9719d911017c592\""]},
     "cash": "97440.859552",
     "records": ["20261001::f1e2"],
-    "unmatched": [[51, "record", "20261001::d3c4"], [52, "fill", "f::x"], [53, "order", "x-1"]]
+    "unmatched": [[51, "record", "20261001::d3c4"], [52, "fill", "f::x"], [53, "order", "x-1"]],
+    "lost": {
+      "order": "ith-chan_bollinger-20261002T194000Z-01",
+      "state": "Lost",
+      "entries": "58:intent 59:verdict 60:sending 61:in_doubt 63:lost"
+    }
   }
 }

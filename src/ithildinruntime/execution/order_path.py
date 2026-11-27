@@ -26,7 +26,24 @@ per order` gives the steps.
 An order reaches the broker at most once. Only the call whose `intent` the
 journal took goes past step 2, and the account gives each `sending` entry's
 acknowledgement to one submit. An order whose answer is unknown is `in_doubt`,
-which a lookup settles (#147). Nothing here sends it again.
+which `settle` settles by asking the broker. Nothing here sends it again.
+
+`settle` takes an order of a plan whose send stage has ended, and moves it to
+where only the broker moves it on, in this order.
+
+1. An order with no entry, `Intended` or `Approved` is journaled `abandoned`,
+   with an `intent` first where it has none.
+2. A `Sending` order gets the crash half of `in_doubt`, since only its writer
+   may journal that nothing left.
+3. An `InDoubt` order is found through `Broker.find_order`, read from its
+   `sending` less `OVERLAP`, and that answer is stored and named by a `read`
+   entry before it is judged. A list that failed or did not come whole settles
+   nothing. A whole list that omits a closing-auction order, asked for once its
+   session closed, journals it `lost`, and one that omits an order of any other
+   kind keeps it in doubt. One row that `copy_differs` finds no difference in is
+   looked up by the broker's id, and that answer is stored and named the same
+   way. A match journals the `ack`. Any other row, more than one, or a lookup
+   that disagrees is journaled as an `unmatched_order` and halts.
 
 **What a person reads holds none of a broker's text.** A reason, an alarm and a
 halt name the order, the step and an error's type or a store's code. Two things
@@ -54,11 +71,13 @@ from ithildinruntime.core import (
     BlobStore,
     Book,
     Broker,
+    BrokerOrder,
     BrokerState,
     BrokerUnavailable,
     CashRead,
     Clock,
     FillsRead,
+    FoundOrder,
     GateInputs,
     Halt,
     HardCaps,
@@ -68,6 +87,7 @@ from ithildinruntime.core import (
     LossReading,
     OrderEntry,
     OrderIntent,
+    OrderLookup,
     OrderRecord,
     OrdersRead,
     OrderState,
@@ -105,13 +125,19 @@ from ithildinruntime.journal import (
     InDoubtEntry,
     IntentEntry,
     Journal,
+    LostEntry,
     NumberTaken,
+    ReadEntry,
     Record,
     RejectedEntry,
+    Repeat,
     SendingEntry,
+    UnmatchedOrderEntry,
     VerdictEntry,
     View,
     kind_of,
+    lost_from,
+    may_be_lost,
     record_of,
 )
 
@@ -120,7 +146,17 @@ from .inputs import Inputs, read_inputs
 from .latch import Latch
 from .patience import Patience, Tries, code_of
 
-__all__ = ["Asked", "OrderPath", "Shared", "Unstored", "quietly"]
+__all__ = [
+    "OVERLAP",
+    "Asked",
+    "OrderPath",
+    "Outage",
+    "Settled",
+    "Shared",
+    "Unstored",
+    "copy_differs",
+    "quietly",
+]
 
 # How many times a step that lost its number starts over.
 _STARTS_OVER = 5
@@ -132,6 +168,10 @@ _NUMBERS = 100
 _PASS = 5.0
 _NOT_SENT = NOT_SENT
 _DOUBTFUL = DOUBTFUL
+# How far before an order's `sending` the list that finds it is read. It is larger than twice
+# the clock's bound of 1 second, since the broker dates an order by a clock of its own.
+OVERLAP = timedelta(seconds=60)
+
 # Why a firing's entry says the stop fired, by the read that found the loss past its stop.
 _DECIDED = "the day's loss at the decision's own time read past its stop"
 _NOW = "the day's loss at the clock's time read past its stop"
@@ -182,7 +222,12 @@ def _plain[T](read: Callable[[], object], kind: type[T]) -> T | None:
 
 
 def _said(error: BaseException) -> str:
-    """An error in words of the platform's own: a halt's reason, or a code."""
+    """An error in words of the platform's own: a halt's reason, a broker call's, or a code.
+
+    A `BrokerUnavailable` names only the call and an error's type.
+    """
+    if isinstance(error, BrokerUnavailable):
+        return f"{error}"
     return _reason(error) if isinstance(error, Halt) else code_of(error)
 
 
@@ -418,6 +463,15 @@ def _doubted(kept: _Kept) -> InDoubtEntry:
     return InDoubtEntry(kept.name, reason, raw, False, at)
 
 
+class Outage(Halt):
+    """A halt on a store that did not answer, whose alarm has already gone.
+
+    A caller that meets one stops its other writes, since each would alarm on
+    the same outage again. `Unstored`'s halt on an entry the journal did not take
+    is not one: it comes after a broker's answer, which only this process holds.
+    """
+
+
 @dataclass(frozen=True)
 class Shared:
     """What one account's paths share, built once by `Account`."""
@@ -444,10 +498,10 @@ class Shared:
         """Send one alarm, and say what a halt adds where it could not be sent."""
         return _alarm(self.alerts, reason)
 
-    def outage(self, reason: str) -> Halt:
+    def outage(self, reason: str) -> Outage:
         """A store that did not answer, alarmed here, since no halt blob could be stored either."""
         reason = f"{reason}. The owner's step: {self.storage.owner_step}"
-        return Halt(f"{reason}{self.alarm(reason)}")
+        return Outage(f"{reason}{self.alarm(reason)}")
 
     def settle(self, report: Callable[[], None]) -> None:
         """Store each entry the journal has not taken, and complete the loss stop's firing.
@@ -550,6 +604,13 @@ class Asked(NamedTuple):
     @property
     def approved(self) -> bool:
         return self.verdict is not None and self.verdict.approved
+
+
+class Settled(NamedTuple):
+    """The state `settle` left an order in, and what a person is to be told of it, or nothing."""
+
+    state: OrderState
+    said: str
 
 
 class _Off(Exception):
@@ -737,6 +798,202 @@ class OrderPath:
             raise Halt(stopping.reason)
         return stopping.reason
 
+    def settle(
+        self, name: str, keep: Callable[[OrderLookup], BlobRef], stage: str, at: datetime
+    ) -> Settled:
+        """Settle one order of a plan whose send stage has ended, and never send it.
+
+        `keep` stores a broker's answer as it came and gives the stored file,
+        which a `read` entry of `stage` at the decision `at` names before
+        anything judges it. An order that already stands where only the broker
+        moves it on is returned as it stands. Anything that leaves the order
+        unsettled raises `Halt`.
+        """
+        self._one_account()
+        view = self._view()
+        order = view.orders.get(name)
+        state = None if order is None else order.state
+        if state is None or state in _NOT_SENT:
+            state = self.abandon(name, "its send stage ended before it was sent")
+            return Settled(state, "")
+        said = ""
+        if state is OrderState.SENDING:
+            reason = "its send stage ended with no answer journaled"
+            state = self._journaled(
+                name, lambda v: InDoubtEntry(name, reason, None, False, self._shared.clock.now())
+            )
+            said = (
+                f"the order {name} is in doubt: {reason}, so it is looked up and never sent again"
+            )
+        if state is not OrderState.IN_DOUBT:
+            return Settled(state, said)
+        state, lost = self._looked_up(name, keep, stage, at)
+        return Settled(state, lost or said)
+
+    def _looked_up(
+        self, name: str, keep: Callable[[OrderLookup], BlobRef], stage: str, at: datetime
+    ) -> tuple[OrderState, str]:
+        """Find an order in doubt in the broker's list, then look it up by the broker's id."""
+        view = self._view()
+        order = view.orders[name]
+        sent = order.sent_at
+        if sent is None:
+            raise Halt(f"the order {name} is in doubt with no sending")
+        since = sent - OVERLAP
+        mapped = frozenset(
+            o.broker_order_id for o in view.orders.values() if o.broker_order_id is not None
+        )
+        asked = self._shared.clock.now()
+        try:
+            found = self._called(
+                "find_order", FoundOrder, lambda b: b.find_order(order.intent, since, mapped)
+            )
+        except (Halt, BrokerUnavailable) as failed:
+            raise Halt(
+                f"the order list that maps {name} could not be read: {_said(failed)}, so nothing "
+                "settles it"
+            ) from None
+        ref, seq = self._kept(keep, OrderLookup(name, since, asked, found, None), stage, at)
+        if found.whole_list is not True:
+            raise Halt(
+                f"the order list that maps {name} did not come whole, as {ref.key}, so nothing "
+                "settles it"
+            )
+        rows = tuple(found.rows)
+        if found.answer is Outcome.NOT_FOUND and not rows:
+            if not may_be_lost(order.intent):
+                # A day order a broker takes after its close may wait for the next open.
+                raise Halt(
+                    f"the order {name} is in no row of the broker's whole order list, as "
+                    f"{ref.key}, and only a closing-auction order is given up as lost until a "
+                    "broker's contract test shows what a late order of another kind does"
+                )
+            after = lost_from(name)
+            if asked < after:
+                raise Halt(
+                    f"the order {name} is in no row of the broker's whole order list, as "
+                    f"{ref.key}, and may still arrive until {after.isoformat()}"
+                )
+            reason = (
+                f"the broker's whole order list, asked for at {asked.isoformat()} once its time "
+                f"in force ran out, omits it, as {ref.key}"
+            )
+            self._journaled(name, lambda v: LostEntry(name, seq, reason))
+            return (
+                OrderState.LOST,
+                f"the order {name} is lost: {reason}. Whether it was sent is unproved",
+            )
+        if found.answer is not Outcome.ACCEPTED or len(rows) != 1:
+            many = f"{len(rows)} rows" if rows else "no row"
+            what = (
+                f"the broker's order list answers {_outcome(found.answer)} with {many} for {name}"
+            )
+            raise self._unmatched(rows, seq, f"{what}, as {ref.key}")
+        (row,) = rows
+        if differs := copy_differs(order.intent, row, None, known=False):
+            what = f"the broker's row for {name} differs in {', '.join(differs)}, as {ref.key}"
+            raise self._unmatched(rows, seq, what)
+        broker = row.broker_order_id
+        asked = self._shared.clock.now()
+        try:
+            ack = self.lookup(broker)
+        except (Halt, BrokerUnavailable) as failed:
+            raise Halt(
+                f"the lookup of {name} by the broker's {broker} failed: {_said(failed)}, so it "
+                "stays in doubt"
+            ) from None
+        ref, seq = self._kept(keep, OrderLookup(name, None, asked, None, ack), stage, at)
+        copy = ack.order
+        raw, came = _plain(lambda: ack.raw, bytes), _utc(ack.received_at)
+        if ack.outcome is not Outcome.ACCEPTED or copy is None or ack.broker_order_id != broker:
+            raise Halt(
+                f"the lookup of {name} by the broker's {broker} answers {_outcome(ack.outcome)}"
+                f"{'' if copy is not None else ' with no copy of the order'}, as {ref.key}, so it "
+                "stays in doubt"
+            )
+        if differs := copy_differs(order.intent, copy, broker):
+            what = f"the lookup of {name} by the broker's {broker} differs in {', '.join(differs)}"
+            raise self._unmatched((copy,), seq, f"{what}, as {ref.key}")
+        if raw is None or came is None:
+            raise Halt(f"the lookup of {name} is not plain bytes at a UTC time, as {ref.key}")
+        entry = AckEntry(name, broker, raw[:RAW_LIMIT], len(raw) > RAW_LIMIT, came)
+        return self._journaled(name, lambda v: entry), ""
+
+    def _kept(
+        self, keep: Callable[[OrderLookup], BlobRef], found: OrderLookup, stage: str, at: datetime
+    ) -> tuple[BlobRef, int]:
+        """Store a broker's answer, and journal the `read` entry naming it before any judging."""
+        ref = keep(found)
+        self._report()
+        read = ReadEntry(stage, at, ref, found.asked_at)
+        for _ in range(_NUMBERS):
+            view = self._view()
+            held = [n for n, entry in view.reads.items() if entry.ref == ref]
+            if held:
+                return ref, held[0]
+            try:
+                _, view = self._record(view, read)
+            except NumberTaken:
+                continue
+            except StoreError as error:
+                what = f"the read of {ref.key} was not stored in the journal"
+                raise self._outage(f"{what}: {code_of(error)}") from None
+            return ref, max(view.reads)
+        raise Halt(f"other writers took {_NUMBERS} numbers in a row")
+
+    def _journaled(self, name: str, made: Callable[[View], Record | None]) -> OrderState:
+        """Journal what `settle` found of an order, and return the state it then shows."""
+        return self._appended(name, made).orders[name].state
+
+    def _appended(self, name: str, made: Callable[[View], Record | None]) -> View:
+        """Journal one entry `settle` makes, on a new view each time its number goes.
+
+        `made` gives `None` where the view already holds what it would say.
+        """
+        for _ in range(_NUMBERS):
+            view = self._view()
+            record = made(view)
+            if record is None:
+                return view
+            try:
+                _, view = self._record(view, record)
+            except NumberTaken:
+                continue
+            except StoreError as error:
+                what = f"the {kind_of(record)} of {name} was not stored in the journal"
+                raise self._outage(f"{what}: {code_of(error)}") from None
+            return view
+        raise Halt(f"other writers took {_NUMBERS} numbers in a row")
+
+    def _unmatched(self, rows: tuple[BrokerOrder, ...], seq: int, reason: str) -> Halt:
+        """Keep each row as an order that traces to nothing, and give the halt that says why.
+
+        A row the journal keeps already with this content is not kept twice, so a
+        later decision's halt says the same. A store that does not answer is raised
+        as an `Outage` that names the row's reason first, since every later write
+        would meet it too.
+        """
+        said = [reason]
+        for row in rows:
+            if not is_broker_id(row.broker_order_id):
+                said.append(
+                    "a row's broker id is one the journal refuses, so it is kept in the read alone"
+                )
+                continue
+
+            def made(view: View, row: BrokerOrder = row) -> Record | None:
+                held = view.unmatched_repeats("order", row.broker_order_id, row)
+                return None if held is Repeat.HELD else UnmatchedOrderEntry(row, seq, _text(reason))
+
+            try:
+                self._appended(row.broker_order_id, made)
+            except Outage as outage:
+                # It paged already, and the halt still says why the row was kept.
+                raise Outage(f"{reason}. {outage.reason}") from None
+            except Halt as halt:
+                said.append(halt.reason)
+        return Halt(". ".join(said))
+
     # The day's loss
 
     def loss(
@@ -853,7 +1110,9 @@ class OrderPath:
         found = view.orders.get(name)
         if found is not None:
             if found.state in _NOT_SENT:
-                raise Halt(f"the order {name} was left {found.state}, and nothing settles it yet")
+                raise Halt(
+                    f"the order {name} was left {found.state}, and the next recover settles it"
+                )
             return found.state
         self._newest(view, planned)
         caps, caps_sha256 = self._caps()
@@ -1297,7 +1556,7 @@ class OrderPath:
                 raise _Unjournaled(f"{code_of(error)}, and {shows}") from None
         raise Halt(f"{name} lost its number {_STARTS_OVER + 1} times")
 
-    def _outage(self, reason: str) -> Halt:
+    def _outage(self, reason: str) -> Outage:
         return self._shared.outage(reason)
 
     def _past(self, reading: LossReading) -> Halt:
@@ -1371,17 +1630,7 @@ def _doubted_by(answer: _Answer) -> str:
 def _differs(order: OrderIntent, ack: Ack) -> list[str]:
     """Each field the broker's copy of the order gives another value, where it sent a copy."""
     found = ack.order
-    if found is None:
-        return []
-    pairs = (
-        ("client_order_id", found.client_order_id, order.client_order_id),
-        ("instrument", found.instrument, order.instrument),
-        ("qty", found.qty, order.qty),
-        ("type", found.type, order.type),
-        ("time_in_force", found.time_in_force, order.time_in_force),
-        ("broker_order_id", found.broker_order_id, ack.broker_order_id),
-    )
-    return [name for name, one, other in pairs if one != other]
+    return [] if found is None else copy_differs(order, found, ack.broker_order_id)
 
 
 def _contradicts(ack: Ack) -> str | None:
@@ -1409,6 +1658,39 @@ def _taken(name: str, kind: str) -> str:
 
 def _stopped(stopping: Stopping) -> Exception:
     return Halt(stopping.reason) if stopping.halts else _Off(stopping.reason)
+
+
+def copy_differs(
+    intent: OrderIntent, copy: BrokerOrder, broker: str | None, known: bool = True
+) -> list[str]:
+    """Each detail a broker's copy of an order gives another value than its `sending` entry's.
+
+    It is the order path's one comparison of a single copy the broker returns
+    for an order against the order the platform sent, which a submit's answer, a
+    settling list's row and lookup, and recover's lookup of an order the broker
+    no longer lists each run. `core.reconcile` compares the open orders a broker
+    lists by fields of its own, because `core` imports nothing of `execution`. It reads the client
+    order id, the instrument, the quantity, whose sign is the side, the type, the
+    time in force and the broker's id, which is `broker` where `known`, and any
+    id the journal takes otherwise. A copy of a broker that keeps a client order
+    id and gives none is no match.
+    """
+    pairs = [
+        ("client_order_id", copy.client_order_id, intent.client_order_id),
+        ("instrument", copy.instrument, intent.instrument),
+        ("qty", copy.qty, intent.qty),
+        ("type", copy.type, intent.type),
+        ("time_in_force", copy.time_in_force, intent.time_in_force),
+    ]
+    if known:
+        pairs.append(("broker_order_id", copy.broker_order_id, broker))
+    else:
+        pairs.append(("broker_order_id", is_broker_id(copy.broker_order_id), True))
+    return [name for name, one, other in pairs if one != other]
+
+
+def _outcome(outcome: object) -> str:
+    return outcome.value if isinstance(outcome, Outcome) else "no outcome"
 
 
 def _shown(broker_order_id: str) -> str:

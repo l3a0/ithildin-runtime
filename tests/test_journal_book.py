@@ -22,6 +22,7 @@ from ithildinruntime.core import (
     OrderState,
     OrderType,
     StoreUnavailable,
+    TimeInForce,
     encode,
     journal_entry_key,
 )
@@ -44,6 +45,7 @@ from tests.support.journals import (
     AT,
     CHAN,
     GLD,
+    LATE,
     OTHER,
     USO,
     WRITER,
@@ -57,6 +59,7 @@ from tests.support.journals import (
     fill,
     filled,
     in_doubt,
+    lost,
     opening,
     placed,
     planned,
@@ -107,8 +110,16 @@ def accepts(journal: Journal, record: Record):
     return view
 
 
-def at(state: str, qty: object = 4) -> tuple[Journal, str]:
+def at(state: str, qty: object = 4, closing: bool | None = None) -> tuple[Journal, str]:
+    """A journal holding one order brought to `state`, a closing-auction one where `closing`.
+
+    Only a closing-auction order can be given up as lost, so a `Lost` route takes one.
+    """
     order = planned(1, qty)
+    if state == "Lost" if closing is None else closing:
+        order = dataclasses.replace(
+            order, type=OrderType.MARKET_ON_CLOSE, time_in_force=TimeInForce.CLS
+        )
     journal = started(order)
     for record in route(state, order):
         add(journal, record)
@@ -133,6 +144,7 @@ ALLOWED = {
     ("rejected", "Acknowledged"): "Rejected",
     ("in_doubt", "Sending"): "InDoubt",
     ("in_doubt", "InDoubt"): "InDoubt",
+    ("lost", "InDoubt"): "Lost",
     ("part", "Acknowledged"): "PartlyFilled",
     ("part", "PartlyFilled"): "PartlyFilled",
     ("whole", "Acknowledged"): "Filled",
@@ -153,6 +165,7 @@ ROUTES = (
     "Abandoned late",
     "Sending",
     "InDoubt",
+    "Lost",
     "Acknowledged",
     "PartlyFilled",
     "Filled",
@@ -170,6 +183,7 @@ ACTS = (
     "ack",
     "rejected",
     "in_doubt",
+    "lost",
     "part",
     "whole",
     "expired",
@@ -201,8 +215,10 @@ def test_3_the_list_names_every_state_and_every_kind_of_an_order() -> None:
 @pytest.mark.parametrize("route_", ROUTES)
 @pytest.mark.parametrize("act", ACTS)
 def test_3_every_state_against_every_kind(route_: str, act: str) -> None:
-    journal, name = at(route_)
+    journal, name = at(route_, closing=route_ == "Lost" or act == "lost")
     state = route_.split()[0]
+    # A `lost` names a list asked for once the order's time in force ran out.
+    late = add(journal, read(LATE)) if act == "lost" else 0
     before = journal.view()
     done = before.orders[name].filled if name in before.orders else Decimal(0)
     record = {
@@ -214,6 +230,7 @@ def test_3_every_state_against_every_kind(route_: str, act: str) -> None:
         "ack": ack(name, "b9"),
         "rejected": rejected(name),
         "in_doubt": in_doubt(name),
+        "lost": lost(name, late),
         "part": filled(fill("new", "b1", 1)),
         "whole": filled(fill("new", "b1", 4 - done or 1)),
         "expired": expired(name, done),
@@ -1520,3 +1537,38 @@ def test_a_stored_abandonment_by_another_writer_halts_the_replay() -> None:
     journal._append(journal._build(body, AT))
     with pytest.raises(Halt, match="another writer stored"):
         Journal(journal._store, ACCOUNT).view()
+
+
+@pytest.mark.parametrize(
+    ("asked", "takes"),
+    [
+        (timedelta(minutes=20, seconds=1), False),
+        (timedelta(minutes=20, seconds=2), True),
+        (DAY, True),
+    ],
+    ids=["a second short of twice the clock's bound", "at it", "a day later"],
+)
+def test_a_lost_names_a_list_asked_for_once_the_time_in_force_ran_out(
+    asked: timedelta, takes: bool
+) -> None:
+    """The order is planned 20 minutes before its session's close, so it may arrive until then."""
+    journal, name = at("InDoubt", closing=True)
+    seq = add(journal, read(AT + asked))
+    if takes:
+        assert accepts(journal, lost(name, seq)).orders[name].state is OrderState.LOST
+    else:
+        refuses(
+            journal, lost(name, seq), "before 2026-10-01T20:00:02.+, when the order could still"
+        )
+
+
+def test_a_day_order_is_never_given_up_as_lost() -> None:
+    """A broker may hold a day order that came after its close for the next session's open."""
+    journal, name = at("InDoubt")
+    seq = add(journal, read(AT + DAY))
+    refuses(journal, lost(name, seq), "which is no closing-auction order")
+
+
+def test_a_lost_names_a_read_before_it() -> None:
+    journal, name = at("InDoubt", closing=True)
+    refuses(journal, lost(name, 99), "names entry 99, which is no read before it")

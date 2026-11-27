@@ -524,7 +524,7 @@ A run that starts on a book the broker disagrees with would trade the wrong diff
 The stage is `execution/recover.py`, and its reads of the broker and what the journal takes from them, steps 3 and 5 to 7, are `execution/sync.py`'s, which the send stage runs too. It waits for the decision's time, having written nothing, and then works in this order.
 
 1. It reads data's result and its snapshot, and passes a halt in either on.
-2. It stores each answer this process still owes the journal, and takes one reading of the journal. A plan a crash left unfinished halts here, under the rule below.
+2. It stores each answer this process still owes the journal, and takes one reading of the journal. It then settles each plan a send stage left unfinished, under the rule below, and sends none of its orders. An order that stays unsettled halts here.
 3. It reads the broker's positions, open orders and cash, then the records the broker booked on its own, through `Broker.activities`, and then its fills. The records and the fills are asked from the same time, which `fills_since` gives. The fills come last, so a record or a fill that lands between two reads shows as a difference and never as a match.
 4. It stores the five reads as one capture, `account.json`, before anything in them is compared.
 5. It journals a `read` entry that names the capture, and then halts where any of the five did not come whole.
@@ -539,7 +539,7 @@ The stage is `execution/recover.py`, and its reads of the broker and what the jo
 9. It reads the owner's hard caps.
 10. It stores `caps.json`, `book.json` and `valuation.json`, each with one entry. The loop then stores its result.
 
-A record the broker dates before the time the records are asked from is never fetched. That time is one day before the newest read a decision followed, or before the `sending` of the oldest order not yet ended where that is earlier, as `fills_since` says. So a record posted up to a day late is fetched again and skipped by its id, and one dated earlier is never captured and halts as a difference in cash. A split halts until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) reconciles one, and an order in flight until [#147](https://github.com/l3a0/ithildin-runtime/issues/147). An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
+A record the broker dates before the time the records are asked from is never fetched. That time is one day before the newest read a decision followed, or before the `sending` of the oldest order not yet ended where that is earlier, as `fills_since` says. So a record posted up to a day late is fetched again and skipped by its id, and one dated earlier is never captured and halts as a difference in cash. A split halts until [#191](https://github.com/l3a0/ithildin-runtime/issues/191) reconciles one. An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
 
 Every halt after step 4 lists the capture in its result. A halt's reason or an alarm shows a broker's order or fill id where it is one the journal takes, an instrument where it is a name, and a client order id where it is a stamp of the platform's, and no other text of the broker's. An alarm goes once in a process, and again after a restart.
 
@@ -550,7 +550,17 @@ Each `decision` entry plans its orders together. A plan is unfinished where any 
 1. An order of it is `Intended`, `Approved`, `Sending` or `InDoubt`.
 2. An order of it has no entry while another of its orders has one.
 
-Recover halts naming every order of that plan, its state and when its `sending` was stored, and sends an alarm for each. A crash writes no `in_doubt` entry, so this can be the first a person hears of the order. A plan none of whose orders has an entry sent nothing and halts nothing. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) builds what settles an unfinished one, and until then each later decision halts here.
+A plan none of whose orders has an entry sent nothing and halts nothing.
+
+##### How recover settles an unfinished plan
+
+The receive loop runs recover only once the last decision's send stage has a result, a halt included, so the stage that left the plan has ended and its runner is finished or gone. Recover then settles each order of the plan through `OrderPath.settle`, which never sends one.
+
+1. An order with no entry, `Intended` or `Approved` is journaled `Abandoned`, with an `intent` first where it has none, since nothing of it can have left.
+2. A `Sending` order gets an `in_doubt` entry, the half of the move a crash leaves unwritten, because only the writer of a `sending` may journal that nothing left.
+3. An `InDoubt` order is looked up, as [If an instance dies in the middle of a send](#if-an-instance-dies-in-the-middle-of-a-send) says.
+
+An order a lookup leaves in doubt halts the decision, naming every order of the plan with its state and when its `sending` was stored, and an order that cannot be settled does not stop the orders after it. A journal that stops answering, where the path reports it as an outage, does stop them, because each would page the same outage again, and the halt names every order of the plans left. A store that fails while a lookup is stored is not yet reported so, which item 11 of [#211](https://github.com/l3a0/ithildin-runtime/issues/211) holds. Each order given up as `Lost`, and each halt, sends an alarm, once in a process for one cause and again after a restart, whichever decision's file the halt names. A crash writes no `in_doubt` entry, so that alarm can be the first a person hears of the order. Recover settles a plan before it reads what the broker lists, so an acknowledged order and an `unmatched_fill` never share one broker id.
 
 ##### From when fills are read
 
@@ -585,7 +595,7 @@ The first recover of a session values the book at the official closes of the ses
 | Mode | What it builds | What lifts the halt |
 | --- | --- | --- |
 | A backtest over a folder | The simulated broker, with no fault | Nothing halts, unless the stage table's row of recover is not the one the worker declares, which halts both stages, or its row of send is not, which halts send alone |
-| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#147](https://github.com/l3a0/ithildin-runtime/issues/147) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151) and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) closes last |
+| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#148](https://github.com/l3a0/ithildin-runtime/issues/148) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151) and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) closes last |
 | Paper | The same | [#153](https://github.com/l3a0/ithildin-runtime/issues/153), once all of shadow's are closed |
 | Live | The same | Only the owner switches an account to live |
 | An unknown mode, and a backtest over any other store | The same | The configuration |
@@ -640,13 +650,13 @@ flowchart TB
 Three more checks sit inside these steps, as [How a rerun never doubles anything](../design.md#rule-9-how-a-rerun-never-doubles-anything) and [Who takes over a dead send stage](../design.md#rule-9-fifth-item-who-takes-over-a-dead-send-stage) say.
 
 1. An instance checks the kill switch when it receives the event.
-2. The sync settles each order in doubt. Until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) builds the lookup, an order in doubt halts the decision instead.
+2. The sync halts on an order in doubt. Recover settles every one before the send stage runs, so only another writer's entry after recover's book can leave one, and taking such a book without halting is [#211](https://github.com/l3a0/ithildin-runtime/issues/211)'s.
 3. Execution halts before it plans if an entry that changes the book, and that neither its sync nor its own order loop wrote, lies past the entry its sync names.
 
 The steps run in this order.
 
 1. **Claim the stage.** Whichever execution instance receives portfolio construction's result writes a create-only claim on the send stage, naming its process's writer and a token of this one call, so a second call in the same process never reads the first one's claim as its own. An instance that finds a claim it did not write never plans for that decision. It halts, and its reason names where each planned order of the decision stands, each order in doubt with the time its `sending` was stored, and each leg whose partner did not go. It alarms on each order in doubt, and then reads the day's loss, whose own halt joins the reason. All of that comes before any input is read, so an unreadable snapshot hides no order.
-2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again, afresh on every attempt, and stores the read at `broker-read-<n>.json` with the first number left free. Until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) lets another instance take over, a second attempt halts at the claim, so the read lands at `broker-read-1.json`. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. It also reads the broker's records and journals each ahead of the comparison, a listed one inside its range as an outside entry and any other as unmatched, as recover does. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
+2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again, afresh on every attempt, and stores the read at `broker-read-<n>.json` with the first number left free. Until [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s lease and [#211](https://github.com/l3a0/ithildin-runtime/issues/211) let another instance take over, a second attempt halts at the claim, so the read lands at `broker-read-1.json`. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. It also reads the broker's records and journals each ahead of the comparison, a listed one inside its range as an outside entry and any other as unmatched, as recover does. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
 3. **Run the daily loss stop's test.** It is the gate's `loss`, which runs with no order needed, so a decision that plans no order still runs it. A reading past the stop fires it, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
 4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
    - **What the stored entry holds.** One stored entry holds seven things.
@@ -664,7 +674,7 @@ The steps run in this order.
 
      Being off never reads as a target of zero, so nothing it holds is sold, and the close after a broker's trade still goes out. An off switch or a strategy halt this step cannot read halts the decision. A switch set after this step is caught by the check before each send, as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
    - **What a strategy whose late forecast reads as no change gets.** It also gets no planned orders, cancels or replacements, so its positions and working orders stand, and the entry names it as read as no change. A late forecast reads as no change where the owner's written age under hard limit 3 is above 0 and the strategy's last stored forecast is within it, counted from that forecast's decision. [#54](https://github.com/l3a0/ithildin-runtime/issues/54) holds how.
-5. **Ask the gate about the whole plan.** First every quote the plan's gate checks will mark, of each instrument the account holds, has a working order in or the plan orders, must still pass its check at 5 seconds for each order of the plan past the clock's `now`. Where any of them already fails at that `now`, the whole plan is left to the gate. Where every one passes and one would not last, the decision halts before anything is asked, and every order of the plan is journaled `Abandoned` where the journal takes each entry. On shadow and paper that halt holds no account, as [When the age is measured](03-context-and-scope.md#when-the-age-is-measured) says. Before any order is journaled as intended, the risk gate is asked about each planned order in turn, with each approved one counted open in the book the next is asked on. Nothing is stored by the asking. Where one order is refused or its check halts, nothing is sent and the decision halts. Each order then ends with one recorded outcome: the steps up to the gate's `verdict` run again for each order up to the refused one, every order still approved is journaled `Abandoned` with the reason that a partner was refused, and each order after it gets an `intent` and that `Abandoned`. The caps can be rewritten between the two asks, so an order the second ask approves is abandoned too. Where every order passes, each is asked again right before its own send, as the path always does.
+5. **Ask the gate about the whole plan.** First every quote the plan's gate checks will mark, of each instrument the account holds, has a working order in or the plan orders, must still pass its check at 5 seconds for each order of the plan past the clock's `now`. Where any of them already fails at that `now`, the whole plan is left to the gate. Where every one passes and one would not last, the decision halts before anything is asked, and every order of the plan is journaled `Abandoned`. A store that stops answering stops those abandons at the first it refuses, a journal that cannot be read takes none, and the next recover journals the rest where any order of the plan has an entry. On shadow and paper that halt holds no account, as [When the age is measured](03-context-and-scope.md#when-the-age-is-measured) says. Before any order is journaled as intended, the risk gate is asked about each planned order in turn, with each approved one counted open in the book the next is asked on. Nothing is stored by the asking. Where one order is refused or its check halts, nothing is sent and the decision halts. Each order then ends with one recorded outcome: the steps up to the gate's `verdict` run again for each order up to the refused one, every order still approved is journaled `Abandoned` with the reason that a partner was refused, and each order after it gets an `intent` and that `Abandoned`. Where the journal stops answering or cannot be read, the next recover journals those abandons instead, and a plan none of whose orders has an entry stays as it is, with nothing sent. The caps can be rewritten between the two asks, so an order the second ask approves is abandoned too. Where every order passes, each is asked again right before its own send, as the path always does.
 6. **Check the clock.** Execution confirms its clock agrees with the broker's and that the market-on-close cutoff has not passed.
 7. **Work through the plan.** The order manager carries out what step 4 journaled. It cancels a resting order of the strategy's that the target no longer wants, and replaces one that should change, sending the replacement only once the old order's cancel is settled.
 
@@ -676,7 +686,7 @@ The steps run in this order.
 2. The clock's check against the broker, which is [#153](https://github.com/l3a0/ithildin-runtime/issues/153)'s and [#165](https://github.com/l3a0/ithildin-runtime/issues/165)'s.
 3. A late forecast read as no change, which is [#54](https://github.com/l3a0/ithildin-runtime/issues/54)'s.
 4. The account's lease, which is [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s.
-5. Settling an order in doubt by lookup at the sync. An order in doubt there halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) builds it.
+5. Taking a book that holds an order in doubt at the sync, which halts until [#211](https://github.com/l3a0/ithildin-runtime/issues/211) builds it. Recover settles every order in doubt before this stage runs.
 
 A send that answers anything but `Acknowledged` ends that strategy's plan, whichever leg it was, and each later order of the strategy is journaled `Abandoned`. A strategy switched off before any leg of its reached the broker ends as partly sent, and the other strategies' orders go on. Any other answer, a switch with a leg at the broker, and any error halt the stage once each order not yet sent, from the one that failed on, is journaled `Abandoned`, with an alarm naming each leg's state. A plan of this decision that another writer journaled, and that is not this stage's, halts the stage before anything is asked, with an alarm naming both plans. A leg already at the broker is [#149](https://github.com/l3a0/ithildin-runtime/issues/149)'s to cancel, so until it is built no mode but a backtest runs, as [Which modes build a broker](#which-modes-build-a-broker) says. The stage's result holds a halt or the decision's outcome, never both, and the outcome names each order's end state, each strategy's end and each part of a position no order of the account's share step can trade.
 
@@ -685,7 +695,7 @@ A send that answers anything but `Acknowledged` ends that strategy's plan, which
 Each order goes through the order path alone, and the journal gains a line before the broker hears anything. The first step that fails decides what becomes of the order.
 
 1. Take the account's lease, which [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds.
-2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, of a decision that is not the journal's newest, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again, and one left `Intended` or `Approved` halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
+2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, of a decision that is not the journal's newest, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again, and one left `Intended` or `Approved` halts, and the next decision's recover journals it `Abandoned`, as [How recover settles an unfinished plan](#how-recover-settles-an-unfinished-plan) says.
 3. Journal the intent. A number another writer took starts the order over, at most five times.
 4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
 5. Read the snapshot, the constraints and the valuation, and halt unless each is the file the plan was made from. Check the order's last moment, its market-on-close cutoff or its session's close.
@@ -773,13 +783,28 @@ An order in doubt has no ack, so the journal holds no broker id for it. `OrderPa
 
 So `OrderPath` runs the match and the halts in one place. How the adapter finds the order is its own, so a new broker changes no line of `OrderPath`.
 
-Three steps make Alpaca's lookup go by the broker's id too, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) builds them.
+Three steps make every lookup go by the broker's id, Alpaca's included.
 
-1. The adapter reads the broker's order list, open and closed orders alike, from the earliest `sending` entry in doubt, less a written overlap larger than the clock's bound, which [#10](https://github.com/l3a0/ithildin-runtime/issues/10) sets.
+1. The adapter reads the broker's order list, open and closed orders alike, from the order's `sending` entry less a written overlap of 60 seconds, `OVERLAP` in `execution/order_path.py`. That is larger than twice the clock's bound of 1 second, since the broker dates an order by a clock of its own.
 2. It returns the broker's order id from the row that carries the order's client order id.
 3. `OrderPath` looks the order up by that id and journals the answer. Its ack maps the order like any other, apart from a late order under an older lease or an answer that disagrees with the `sending` entry, which halts first.
 
-An order absent from a whole list stays `InDoubt`, because a request sent just before a crash can still arrive. A list that fails or stops early settles no order's state and halts new orders, a row already read still serves every cancel but a plan's own, and a row or an answer that disagrees with the `sending` entry halts, as design.md's `### Orders the platform did not send` says. Alpaca, the broker for paper and for live, names both ids in its [list of orders](https://docs.alpaca.markets/reference/getallorders-1), which returns at most 500 orders a call, and [#10](https://github.com/l3a0/ithildin-runtime/issues/10) confirms how the adapter pages through it.
+Each answer is stored as it came before anything judges it, at `lookup-<n>.json` under the recover stage's prefix with the first number left free, and a `read` entry names the file. The table below says what each answer comes to.
+
+**Table:** What each answer about an order in doubt comes to
+
+| The broker answers | What follows |
+| --- | --- |
+| The list fails | Nothing is stored or settled, and the decision halts naming the read |
+| The list does not come whole | It is stored, nothing is settled, and the decision halts |
+| A whole list omits a closing-auction order, asked for at or after its session's close plus twice the clock's bound | A `lost` entry names the list's `read` entry, and the order is `Lost`, with an alarm that says whether it was sent is unproved |
+| A whole list omits the order, asked for earlier | It stays `InDoubt`, and the decision halts |
+| A whole list omits an order whose time in force is not the closing auction | It stays `InDoubt`, and the decision halts, because a broker may hold a day order that came after its close for the next session's open. Giving one up waits on a contract test of the broker's, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) runs |
+| More than one row, or one row that differs in client order id, instrument, quantity, whose sign is the side, type or time in force, or a row under an id the journal refuses | Each row the journal can key is journaled as an `unmatched_order` and holds the account, and the decision halts |
+| One row that matches, whose lookup by the broker's id fails or answers anything but that order | It stays `InDoubt`, and the decision halts. A copy that differs is journaled as an `unmatched_order` |
+| One row that matches, and a lookup that matches | The `ack` is journaled with the lookup's bytes, and recover goes on to read the order's fills like any other |
+
+An order absent from a whole list stays `InDoubt` until its time in force has run out, because a request sent just before a crash can still arrive, and only a closing-auction order is given up then. The journal's fold holds both rules too, and refuses a `lost` whose list was asked for too early or of any other kind of order. A list that fails or stops early settles no order's state and halts new orders, a row already read is to serve every cancel but a plan's own once [#149](https://github.com/l3a0/ithildin-runtime/issues/149) builds cancels, and a row or an answer that disagrees with the `sending` entry halts, as design.md's `### Orders the platform did not send` says. Alpaca, the broker for paper and for live, names both ids in its [list of orders](https://docs.alpaca.markets/reference/getallorders-1), which returns at most 500 orders a call, and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) confirms how the adapter pages through it.
 
 A broker that takes no client order id gets an adapter that pairs on the order's details instead. It takes a row the journal has not mapped, matching the order's instrument, side, quantity and type inside the same window. That match is close to unique, because an account holds one portfolio, one holder of the lease sends, and the gate refuses a second order beside one in doubt. The journal's mapping stands in for the stamp there, and more than one match halts. This adapter is designed and not built, and it passes the broker suite before any such broker is used, on the terms design.md's `### Orders the platform did not send` gives.
 
@@ -906,7 +931,7 @@ The restart runs the same first phase as any trading day.
 
 1. On starting, execution settles the order the dead worker left half-sent, by
    asking the broker about it rather than sending it again, and halts that old
-   decision, as [Who takes over a dead send stage](../design.md#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says.
+   decision, as [Who takes over a dead send stage](../design.md#rule-9-fifth-item-who-takes-over-a-dead-send-stage) says. Slice 1 settles it at the next decision's recover instead, once data's result is in, as [How recover settles an unfinished plan](#how-recover-settles-an-unfinished-plan) says, and settling on start is [#211](https://github.com/l3a0/ithildin-runtime/issues/211)'s.
 2. Data finds no row captured by the cut, 15 seconds before the decision time,
    in the segments marketlake has uploaded, stores its snapshot and halts, so execution's recover stage,
    which waits for data's result, halts too.
@@ -1046,7 +1071,7 @@ The journal's fold works out the state from those entries.
 The command takes four steps, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds.
 
 1. Where no firing stands and the blob is a covered firing's, an earlier clear died before its delete, so it deletes that blob on its tag and journals nothing.
-2. It completes the firing as a settle does, and stops unless the firing then has its `stop_stored`.
+2. It completes the firing as the order path's settle before each send does, and stops unless the firing then has its `stop_stored`.
 3. It journals `stop_cleared`.
 4. It deletes the blob with `If-Match` on the tag the firing's `stop_stored` names.
 
@@ -1263,7 +1288,7 @@ stateDiagram-v2
     Sending --> Acknowledged: the broker acknowledges it in an answer<br/>read whole, unless it is a late order,<br/>which halts
     Sending --> InDoubt: no answer, a crash, a refusal saying<br/>the broker already holds the id, or an answer this<br/>release cannot read, that was cut short, that differs<br/>from the order or that says two things of it
     InDoubt --> Acknowledged: a lookup by the broker's id finds it, unless it is<br/>a late order under an older lease or disagrees<br/>with its sending entry, which halts first, or the process<br/>that sent it journals the answer it kept
-    InDoubt --> Lost: still not found once its time in force has run out
+    InDoubt --> Lost: a whole order list read past its close<br/>and twice the clock's bound omits<br/>a closing-auction order
     Acknowledged --> PartlyFilled: some shares fill
     PartlyFilled --> Filled: the rest fill
     Acknowledged --> Filled: all shares fill
@@ -1303,7 +1328,7 @@ stateDiagram-v2
 `Refused` is the platform's own risk gate saying no. `Rejected` is the broker
 saying no.
 
-`journal/orders.py` holds the moves built so far as one table, and an entry that asks for a move it does not hold halts, naming the entry, the order and its state. The moves into and out of `Lost` arrive with [#147](https://github.com/l3a0/ithildin-runtime/issues/147), and those of `CancelSent` and `Cancelled` with [#149](https://github.com/l3a0/ithildin-runtime/issues/149).
+`journal/orders.py` holds the moves built so far as one table, and an entry that asks for a move it does not hold halts, naming the entry, the order and its state. The moves of `CancelSent` and `Cancelled` arrive with [#149](https://github.com/l3a0/ithildin-runtime/issues/149). Nothing moves a `Lost` order on, and an open order or a fill on its broker's id is kept as unmatched, because no `ack` mapped the id.
 
 ### How an order leaves `InDoubt`
 
@@ -1311,7 +1336,7 @@ saying no.
 
 The way out is to ask the broker, by the broker's order id, which the broker's order list supplies for an order with no ack. The process that sent the order may also still hold the broker's answer, where the journal did not take it at the time, and journals it when it can. Sending the order again is never a way out.
 
-A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out, when it becomes `Lost`. It stays because a request sent just before a crash can still arrive after that read.
+A lookup that finds nothing, or a whole order list that does not show the order, keeps it `InDoubt`, counted at its worst case, until its time in force has run out. Only a whole order list read after that gives an order up, and only a closing-auction one, which then becomes `Lost`. A lookup that finds nothing keeps it in doubt and halts at any time. It stays because a request sent just before a crash can still arrive after that read. An order of any other kind stays `InDoubt` until a contract test of the broker's, which [#153](https://github.com/l3a0/ithildin-runtime/issues/153) runs, shows what a late one does.
 
 ### What the next decision does with `Abandoned` and `Lost`
 
