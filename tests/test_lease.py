@@ -119,7 +119,9 @@ def test_a_lease_another_handler_holds_is_not_taken_until_it_expires_past_the_ma
     lease.take(A, _tries(clock), False, _absent)
     for after in (timedelta(0), PERIOD, PERIOD + MARGIN):
         clock.at = AT + after
-        with pytest.raises(LeaseHeld, match=f"held by {A.handler} until"):
+        with pytest.raises(
+            LeaseHeld, match=f"held by {A.handler} of the run run-1 on the release r1 until"
+        ):
             lease.take(B, _tries(clock), True, _absent)
     clock.at = AT + PERIOD + MARGIN + timedelta(microseconds=1)
     taken = lease.take(B, _tries(clock), True, _absent)
@@ -139,8 +141,10 @@ def test_a_release_clears_the_holder_and_keeps_what_is_owed(store: object) -> No
     owing = lease.take(B, _tries(clock), True, _absent)
     assert owing.took is not None and owing.held.lease.owed
     lease.release(owing.held, _tries(clock))
-    assert _stored(store) == free_lease(5, True)
-    assert lease.take(A, _tries(clock), True, _absent).took == free_lease(5, True)
+    # The takeover is still owed from A, whose lease ran out, and the release keeps that.
+    owed = free_lease(5, True, A.handler, AT + PERIOD)
+    assert _stored(store) == owed
+    assert lease.take(A, _tries(clock), True, _absent).took == owed
 
 
 def test_a_free_lease_with_a_takeover_owed_is_taken_as_a_takeover(store: object) -> None:
@@ -195,7 +199,8 @@ def test_a_holder_whose_lease_was_taken_over_cannot_renew_or_release_it(store: o
     new = lease.take(B, _tries(clock), True, _absent).held
     with pytest.raises(LeaseLost, match="rewritten by another handler"):
         lease.renew(frozen, _tries(clock))
-    assert "refused" in (lease.release(frozen, _tries(clock)) or "")
+    lost = lease.release(frozen, _tries(clock))
+    assert lost is not None and "refused" in lost.reason
     assert _stored(store) == new.lease
 
 
@@ -320,6 +325,25 @@ def test_a_second_first_use_finds_the_first_one_s_lease(store: object) -> None:
     store.create = first_lands  # type: ignore[attr-defined]
     with pytest.raises(LeaseHeld, match=f"held by {A.handler}"):
         lease.take(B, _tries(clock), False, _absent)
+
+
+def test_a_read_whose_bytes_differ_from_the_heads_checksum_reads_again(store: object) -> None:
+    clock = Clock()
+    lease = _lease(store, clock)
+    held = lease.take(A, _tries(clock), False, _absent).held
+    real, gets = store.get, []  # type: ignore[attr-defined]
+
+    def torn(key: str) -> bytes:
+        gets.append(key)
+        # The first read meets bytes another write left between the head and the get.
+        return b"torn" if len(gets) == 1 else real(key)
+
+    store.get = torn  # type: ignore[attr-defined]
+    assert lease.read(_tries(clock)) == (held.tag, held.lease)
+    assert len(gets) == 2
+    store.get = lambda key: b"torn"  # type: ignore[attr-defined]
+    with pytest.raises(Halt, match="rewritten while it was read, 5 times in a row"):
+        lease.read(_tries(clock))
 
 
 def test_a_lease_of_another_format_or_none_this_release_reads_halts(store: object) -> None:

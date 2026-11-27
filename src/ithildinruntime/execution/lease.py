@@ -42,6 +42,7 @@ from ithildinruntime.core import (
     Clock,
     CodecError,
     Halt,
+    HaltRecord,
     KeyExists,
     Lease,
     OrdersRead,
@@ -64,6 +65,7 @@ __all__ = [
     "Holder",
     "LeaseHeld",
     "LeaseLost",
+    "AbsentHalt",
     "Taken",
     "TakeoverRead",
     "AccountLease",
@@ -75,7 +77,8 @@ FORMAT = 1
 # How long a take or a renewal holds the lease.
 PERIOD = timedelta(seconds=30)
 # How far past its expiry a lease must be before another handler takes it over: five times
-# `core.CLOCK_BOUND`, past which the clock check already halts.
+# `core.CLOCK_BOUND`. Nothing holds the execution worker's clock to that bound until #165 builds
+# the clock's check before each submit, so until then the late-order halt guards a larger skew.
 MARGIN = timedelta(seconds=5)
 # How many times a take reads again after a 409 or another handler's first create.
 _READS = 5
@@ -134,17 +137,42 @@ class Taken(NamedTuple):
 
 @dataclass(frozen=True)
 class TakeoverRead:
-    """The broker's order list a takeover read, stored before its entry is journaled."""
+    """The broker's order list a takeover read, stored before its entry is journaled.
 
+    `format` is `FORMAT`, as every blob stored at a key of its own carries one.
+    `handler` and `release` name the take that read it, and `count` the lease's
+    count that take wrote.
+    """
+
+    format: int
     account: str
+    handler: str
+    release: str | None
     count: int
     since: datetime
     asked_at: datetime
     orders: OrdersRead
 
 
-def free_lease(count: int, owed: bool) -> Lease:
-    """A lease with no holder, at `count`."""
+@dataclass(frozen=True)
+class AbsentHalt:
+    """The halt an absent lease raises, stored once at the key its journal's head fixes.
+
+    `format` is `FORMAT`. `through` and `sent_at` are the number of the journal's
+    newest entry and the time of its newest `sending` when the halt was raised.
+    """
+
+    format: int
+    account: str
+    through: int
+    sent_at: datetime
+    halt: HaltRecord
+
+
+def free_lease(
+    count: int, owed: bool, owed_from: str | None = None, owed_expired: datetime | None = None
+) -> Lease:
+    """A lease with no holder, at `count`, and the takeover it still owes where it owes one."""
     return Lease(
         format=FORMAT,
         vm=None,
@@ -159,6 +187,8 @@ def free_lease(count: int, owed: bool) -> Lease:
         status=None,
         count=count,
         owed=owed,
+        owed_from=owed_from if owed else None,
+        owed_expired=owed_expired if owed else None,
     )
 
 
@@ -210,7 +240,7 @@ class AccountLease:
             if found is None:
                 if sent:
                     raise absent()
-                lease = self._holding(free_lease(0, False), holder, now, owed=False)
+                lease = self._holding(free_lease(0, False), holder, now, None)
                 try:
                     tag = self._write(None, lease, tries)
                 except KeyExists:
@@ -222,12 +252,22 @@ class AccountLease:
             if lease.handler is not None and not expired:
                 if lease.expires is None:
                     raise Halt(f"{self.key} names a holder and no expiry")
+                run = f" of the run {lease.run}" if lease.run else ""
+                release = f" on the release {lease.release}" if lease.release else ""
                 raise LeaseHeld(
-                    f"the account's lease is held by {lease.handler} until "
-                    f"{lease.expires.isoformat()}, so this handler does not act"
+                    f"the account's lease is held by {lease.handler}{run}{release} until "
+                    f"{lease.expires.isoformat()}, so this handler does not act. If that holder "
+                    f"is gone, the first take after {(lease.expires + MARGIN).isoformat()} takes "
+                    "it over and alarms"
                 )
             owes = lease.owed or lease.handler is not None
-            mine = self._holding(lease, holder, now, owed=owes)
+            # The holder a takeover is owed from: the one whose lease ran out, or the one an
+            # earlier takeover that failed was owed from, or none for a person's clear.
+            if lease.handler is not None:
+                owed: tuple[str | None, datetime | None] | None = (lease.handler, lease.expires)
+            else:
+                owed = (lease.owed_from, lease.owed_expired) if lease.owed else None
+            mine = self._holding(lease, holder, now, owed)
             try:
                 new = self._write(tag, mine, tries)
             except StaleTag:
@@ -237,7 +277,11 @@ class AccountLease:
                     "its rewrite, so this handler does not act"
                 ) from None
             except BlobMissing:
-                raise absent() from None
+                if sent:
+                    raise absent() from None
+                # Gone between the read and the rewrite, on a journal with no `sending`: read
+                # again, which finds a first use.
+                continue
             took = lease if owes else None
             return Taken(Held(new, mine), took, tag if owes else None)
         raise Halt(f"{self.key} could not be taken: {_READS} reads in a row met another write")
@@ -253,20 +297,23 @@ class AccountLease:
 
     def settled(self, held: Held, tries: Tries) -> Held:
         """Clear `owed` once the takeover's entry is journaled, on this handler's own tag."""
-        lease = replace(held.lease, owed=False, count=held.lease.count + 1)
+        lease = replace(
+            held.lease, owed=False, owed_from=None, owed_expired=None, count=held.lease.count + 1
+        )
         return self._rewrite(held, lease, "rewrite after its takeover", tries)
 
-    def release(self, held: Held, tries: Tries) -> str | None:
+    def release(self, held: Held, tries: Tries) -> LeaseLost | None:
         """Clear the holder on this handler's own tag, and say why not where it could not.
 
         A lease another handler took over, or a store that stays down, is left
         as it is: it expires, and the next take is a takeover.
         """
-        lease = free_lease(held.lease.count + 1, held.lease.owed)
+        was = held.lease
+        lease = free_lease(was.count + 1, was.owed, was.owed_from, was.owed_expired)
         try:
             self._rewrite(held, lease, "release", tries)
         except LeaseLost as lost:
-            return lost.reason
+            return lost
         return None
 
     def _rewrite(self, held: Held, lease: Lease, what: str, tries: Tries) -> Held:
@@ -274,7 +321,9 @@ class AccountLease:
             tag = self._write(held.tag, lease, tries)
         except (StaleTag, BlobMissing):
             raise LeaseLost(
-                f"the account's lease was rewritten by another handler, so its {what} was refused"
+                f"the account's lease was rewritten by another handler, so its {what} was "
+                "refused. This handler held it no longer, as after a pause past its expiry, and "
+                "the handler that took it over alarms"
             ) from None
         except StoreError as error:
             raise LeaseLost(
@@ -319,7 +368,13 @@ class AccountLease:
 
         return tries(once)
 
-    def _holding(self, lease: Lease, holder: Holder, now: datetime, *, owed: bool) -> Lease:
+    def _holding(
+        self,
+        lease: Lease,
+        holder: Holder,
+        now: datetime,
+        owed: tuple[str | None, datetime | None] | None,
+    ) -> Lease:
         return Lease(
             format=FORMAT,
             vm=holder.vm,
@@ -333,5 +388,7 @@ class AccountLease:
             expires=now + PERIOD,
             status=None,
             count=lease.count + 1,
-            owed=owed,
+            owed=owed is not None,
+            owed_from=None if owed is None else owed[0],
+            owed_expired=None if owed is None else owed[1],
         )

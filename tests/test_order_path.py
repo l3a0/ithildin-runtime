@@ -368,9 +368,11 @@ def test_2_a_store_down_from_a_call_on(at: int, lost: bool) -> None:
     world.store.before, world.store.after = before, after
     if at == CALLS:
         # Only the lease's release meets the store down. The order went out and its answer is
-        # journaled, so nothing halts, and the lease is left to expire.
+        # journaled, so nothing halts, and the lease is left to expire with a page that says so.
         assert world.send(account=account) is OrderState.ACKNOWLEDGED
-        assert world.alarms.sent == [] and world.submits == 1
+        (said,) = world.alarms.sent
+        assert "release was not stored: StoreUnavailable AccessDenied" in said
+        assert "The owner's step: the broker's site" in said and world.submits == 1
         return
     with pytest.raises(Halt) as raised:
         world.send(account=account)

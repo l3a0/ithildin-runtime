@@ -359,6 +359,8 @@ def test_a_lease_another_handler_holds_abandons_the_plan_and_halts_naming_the_ho
         status=None,
         count=7,
         owed=False,
+        owed_from=None,
+        owed_expired=None,
     )
     made.store.put(account_lease_key(ACCOUNT), encode(held))
     result = made.send_attempt()

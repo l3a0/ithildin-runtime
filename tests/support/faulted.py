@@ -64,21 +64,35 @@ class Died(BaseException):
 
 
 class Dying(FolderStore):
-    """A folder store whose `kill_after`th journal entry from now ends the process once it lands."""
+    """A folder store whose `kill_after`th journal entry from now ends the process once it lands.
+
+    A process that died writes nothing more, so every write after its death raises `Died`
+    again until `Replay.start` begins a new one. The `finally` that releases the account's
+    lease therefore leaves it held, as a real death does.
+    """
 
     def __init__(self, root: Path) -> None:
         super().__init__(root)
         self.kill_after: int | None = None
         self.appends = 0
+        self.dead = False
 
     def create(self, key: str, data: bytes, sha256: str) -> str:
+        if self.dead:
+            raise Died(key)
         tag = super().create(key, data, sha256)
         if key.startswith(f"journal/{ACCOUNT}/"):
             self.appends += 1
             if self.kill_after is not None and self.appends == self.kill_after:
                 self.kill_after = None
+                self.dead = True
                 raise Died(key)
         return tag
+
+    def replace_if_match(self, key: str, data: bytes, sha256: str, etag: str) -> str:
+        if self.dead:
+            raise Died(key)
+        return super().replace_if_match(key, data, sha256, etag)
 
 
 @dataclass(frozen=True)
@@ -117,6 +131,7 @@ class Replay:
 
     def start(self) -> None:
         """A new execution process over the same store, as the host restarts one."""
+        self.store.dead = False
         self.starts += 1
         self.worker = execution_worker(self.made, self.alarms, self.faults)
         self.handlers[RECOVER_STAGE] = self.worker.recover

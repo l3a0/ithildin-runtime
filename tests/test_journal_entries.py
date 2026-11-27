@@ -158,6 +158,8 @@ SAMPLES: tuple[Record, ...] = (
     TakeoverEntry('"e1"', 9, None, None, AT, BlobRef("t.json", "b" * 64), ()),
 )
 
+TAKEOVER = SAMPLES[-2]
+
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
@@ -536,6 +538,21 @@ BIG = b"x" * RAW_LIMIT
         (decision(ONE, planned(2, 0)), "is for zero shares"),
         (decision(planned(1, "-0.0")), "is for zero shares"),
         (dataclasses.replace(SAMPLES[4], order=planned(1, 0)), "is for zero shares"),
+        *(
+            (dataclasses.replace(TAKEOVER, **changes), past)
+            for changes, past in (
+                ({"count": 1}, None),
+                ({"count": 0}, "it names the count 0, which no rewrite writes"),
+                ({"tag": ""}, "it names no tag"),
+                ({"late": ("a", "b")}, None),
+                ({"late": ("b", "a")}, "the late orders are not sorted"),
+                ({"late": ("a", "a")}, "the late orders are not sorted, or one is named twice"),
+                ({"expired": None}, "it names a holder and no expiry"),
+                ({"holder": None}, "it names a holder and no expiry, or an expiry and no holder"),
+                ({"holder": None, "expired": None}, None),
+                ({"orders": BlobRef("k", "a" * 63)}, "the key 'k' and SHA-256 .* name no blob"),
+            )
+        ),
     ],
 )
 def test_1_each_bound_is_held_one_step_inside_and_outside(record: Record, past: str | None) -> None:
@@ -810,10 +827,10 @@ def _committed() -> list[tuple[Record, datetime]]:
             '"7d793037a0760186574b0282f2f435e7"',
             4,
             "1" * 32 + "-0a1b2c3d4e5f6a7b",
-            next_day + timedelta(seconds=90),
-            day_after - timedelta(seconds=60),
+            t(62),
+            t(63) - timedelta(seconds=60),
             BlobRef(
-                "runs/fixture/2026-10-01/execution/takeovers/20261003T194000.000000Z.json",
+                "runs/fixture/2026-10-01/execution/takeovers/20261001T194103.000000Z.json",
                 sha256_of(b"takeover"),
             ),
             (),

@@ -1494,7 +1494,9 @@ class Lease(_Record):
     on every rewrite, so no two writes hold the same bytes and S3's tag, which can
     be a hash of them, never repeats. `owed` is set only on an account's lease,
     from a take of an expired lease or a person's clear until the takeover is
-    journaled, so a release in between leaves the takeover owed.
+    journaled, so a release in between leaves the takeover owed. `owed_from` and
+    `owed_expired` name the holder the takeover is owed from and when its lease
+    ran out, kept across that release, and are `None` for a person's clear.
     """
 
     format: int
@@ -1510,6 +1512,8 @@ class Lease(_Record):
     status: str | None
     count: int
     owed: bool
+    owed_from: str | None
+    owed_expired: datetime | None
 
 
 @dataclass(frozen=True)

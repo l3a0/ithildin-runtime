@@ -704,6 +704,7 @@ A writer builds an entry once and resends the same bytes on a retry, so a live p
 | `outside_order` | The broker's order id |
 | `unmatched_fill` and `unmatched_order` | The broker's fill or order id, with a repeat of the same content skipped and a differing one kept beside it |
 | `stop_fired` and `stop_stored` | The firing's id, and the standing firing, since at most one stands and it has one `stop_stored` |
+| `takeover` | The lease's count the take wrote, which no other take writes. A restarted writer holds no lease and takes it again, so it journals a takeover of its own |
 | `outside_record` and `unmatched_record` | The broker's own record id, with a repeat of the same content skipped and a differing one kept as unmatched |
 | `sort` and `sort_done` | The off switch's or halt's id |
 | `override` | The override blob's SHA-256 |
@@ -732,7 +733,7 @@ A create-only write that S3 refuses, whose stored SHA-256 differs from the write
 | The reconciled `Book`, and the `HardCaps` as recover parsed them, which the risk and portfolio stages read, two outputs of each decision's recover stage. The caps file's header names the owner's blob by its key and SHA-256 | `runs/<deployment>/<run>/<decision>/execution/recover/book.json`, `runs/<deployment>/<run>/<decision>/execution/recover/caps.json` |
 | A send stage's broker read, an output file of the send stage, one for each attempt | `runs/<deployment>/<run>/<decision>/execution/send/broker-read-<n>.json` |
 | A capturing stage's later capture that differs from its first | `runs/<deployment>/<run>/<decision>/<stage>/<name>.attempt-<n>.json`, with `n` counting from 2 |
-| A takeover's broker order list, a capture named by the journaled `takeover` entry: a `TakeoverRead` of `execution/lease.py`, holding the account, the lease's count, the `since` it was read from, when it was asked for and the `OrdersRead` | `runs/<deployment>/<run>/execution/takeovers/<UTC time>.json`, under the run of the order the take was for. A later list at a time whose key another list holds, as on a backtest's clock, which reads one time for a whole decision, is at `<UTC time>.attempt-<n>.json`, with `n` counting from 2 |
+| A takeover's broker order list, a capture named by the journaled `takeover` entry: a `TakeoverRead` of `execution/lease.py` at format 1, holding the account, the handler and release of the take, the lease's count it wrote, the `since` it was read from, when it was asked for and the `OrdersRead` | `runs/<deployment>/<run>/execution/takeovers/<UTC time>.json`, under the run of the order the take was for. A later list at a time whose key another list holds, as on a backtest's clock, which reads one time for a whole decision, is at `<UTC time>.attempt-<n>.json`, with `n` counting from 2 |
 | A broker's answer about an order in doubt, the order list that maps it or the lookup by the broker's id, an `OrderLookup` stored afresh on each attempt and named by a `read` entry | `runs/<deployment>/<run>/<decision>/execution/recover/lookup-<n>.json` |
 | A send stage's claim, naming its process's writer and a token of the call that wrote it | `runs/<deployment>/<run>/<decision>/execution/send/claim.json` |
 | A journal entry | `journal/<account>/<seq>.json`, with `seq` padded to twelve digits |

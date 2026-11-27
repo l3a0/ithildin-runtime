@@ -558,9 +558,6 @@ def _past_bounds(record: Record) -> Iterator[str]:
                 yield "the late orders are not sorted, or one is named twice"
             if (record.holder is None) != (record.expired is None):
                 yield "it names a holder and no expiry, or an expiry and no holder"
-            for at in (record.since, record.expired):
-                if at is not None and at.utcoffset() != timedelta(0):
-                    yield "a time it names is not in UTC"
         case _:
             pass
 

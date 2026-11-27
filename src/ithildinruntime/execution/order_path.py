@@ -23,6 +23,13 @@ per order` gives the steps.
    lock the call is marked under.
 9. The entry that says what the broker answered.
 
+The account's lease, which `execution/lease.py` holds, wraps those steps. `send`
+reads the journal, then takes the lease, and journals a takeover where one is
+owed, before step 1. The renewal of the lease is the fifth of step 8's checks,
+and the release comes in a `finally`, whatever ends the send.
+docs/architecture/06-runtime.md's `#### The account's lease, around each submit`
+gives the steps.
+
 An order reaches the broker at most once. Only the call whose `intent` the
 journal took goes past step 2, and the account gives each `sending` entry's
 acknowledgement to one submit. An order whose answer is unknown is `in_doubt`,
@@ -42,8 +49,10 @@ where only the broker moves it on, in this order.
    session closed, journals it `lost`, and one that omits an order of any other
    kind keeps it in doubt. One row that `copy_differs` finds no difference in is
    looked up by the broker's id, and that answer is stored and named the same
-   way. A match journals the `ack`. Any other row, more than one, or a lookup
-   that disagrees is journaled as an `unmatched_order` and halts.
+   way. A match journals the `ack`, unless a takeover named the order late
+   under an older lease, whose `ack` the fold refuses, so it halts. Any other
+   row, more than one, or a lookup that disagrees is journaled as an
+   `unmatched_order` and halts.
 
 **What a person reads holds none of a broker's text.** A reason, an alarm and a
 halt name the order, the step and an error's type or a store's code. Two things
@@ -56,6 +65,7 @@ apart from a halt `core.Storage` raises on a decision's files or the hard caps.
 from __future__ import annotations
 
 import secrets
+import sys
 import threading
 from collections import deque
 from collections.abc import Callable
@@ -149,7 +159,16 @@ from ithildinruntime.journal import (
 from .controls import Controls, Stopping, Where
 from .inputs import Inputs, read_inputs
 from .latch import Latch
-from .lease import AccountLease, Held, Holder, LeaseLost, Taken, TakeoverRead
+from .lease import (
+    FORMAT,
+    AbsentHalt,
+    AccountLease,
+    Held,
+    Holder,
+    LeaseLost,
+    Taken,
+    TakeoverRead,
+)
 from .patience import Patience, Tries, code_of
 
 __all__ = [
@@ -681,7 +700,9 @@ class OrderPath:
             self._take(client_order_id)
             return self._sent(client_order_id)
         finally:
-            self._let_go()
+            # An exception that ends the process, rather than the send, pages nothing more.
+            ending = sys.exc_info()[1]
+            self._let_go(page=ending is None or isinstance(ending, Exception))
 
     def _sent(self, client_order_id: str) -> OrderState:
         found = self._approve(client_order_id)
@@ -1178,10 +1199,14 @@ class OrderPath:
             raise self._failed("the broker's order list could not be read", _said(failed)) from None
         if read.whole is not True:
             raise self._failed("the broker's order list did not come whole", "")
-        count = taken.held.lease.count
-        ref = self._stored_list(where, TakeoverRead(shared.account, count, since, asked, read))
+        count, mine = taken.held.lease.count, taken.held.lease
+        assert mine.handler is not None
+        stored = TakeoverRead(
+            FORMAT, shared.account, mine.handler, mine.release, count, since, asked, read
+        )
+        ref = self._stored_list(where, stored)
         listed = {row.client_order_id for row in read.orders}
-        expired = took.expires if took.handler is not None else None
+        owed_from, expired = taken.held.lease.owed_from, taken.held.lease.owed_expired
         for _ in range(_STARTS_OVER + 1):
             late = tuple(
                 sorted(
@@ -1190,27 +1215,42 @@ class OrderPath:
                     if order.state in _LATE and order.intent.client_order_id not in listed
                 )
             )
-            entry = TakeoverEntry(taken.tag, count, took.handler, expired, since, ref, late)
+            entry = TakeoverEntry(taken.tag, count, owed_from, expired, since, ref, late)
             try:
                 _, view = self._record(view, entry)
                 break
             except NumberTaken:
                 view = self._view()
             except StoreError as error:
-                raise self._failed("the takeover was not journaled", code_of(error)) from None
+                what = f"the takeover of the list at {ref.key} was not journaled"
+                raise self._failed(what, code_of(error)) from None
             except Halt as halt:
-                raise self._failed("the journal refused the takeover", halt.reason) from None
+                what = f"the journal refused the takeover of the list at {ref.key}"
+                raise self._failed(what, halt.reason) from None
         else:
-            raise self._failed(f"the takeover lost its number {_STARTS_OVER + 1} times", "")
+            what = f"the takeover of the list at {ref.key} lost its number {_STARTS_OVER + 1} times"
+            raise self._failed(what, "")
+        late_said = f", and finds {', '.join(late)} late" if late else ""
+        if owed_from is None:
+            whose = "a lease a person cleared"
+        else:
+            run = f" of the run {took.run}" if took.handler == owed_from and took.run else ""
+            ran_out = f", whose lease ran out at {expired.isoformat()}" if expired else ""
+            whose = f"{owed_from}{run}{ran_out}"
+        # The alarm goes before the rewrite that clears `owed`, so a journaled takeover alarms
+        # even where that rewrite fails.
+        shared.alarm(
+            f"the account's lease was taken over from {whose}, and the broker's order list is "
+            f"stored at {ref.key}{late_said}"
+        )
         held = self._lease
         assert held is not None
-        self._lease = shared.lease.settled(held, shared.patience.tries(self._report))
-        late_said = f", and finds {', '.join(late)} late" if late else ""
-        reason = (
-            f"the account's lease was taken over from {took.handler or 'a person clearing it'}, "
-            f"and the broker's order list is stored at {ref.key}{late_said}"
-        )
-        shared.alarm(reason)
+        try:
+            self._lease = shared.lease.settled(held, shared.patience.tries(self._report))
+        except LeaseLost as lost:
+            if lost.unanswered:
+                raise self._outage(lost.reason) from None
+            raise self._failed("the rewrite after its entry was refused", lost.reason) from None
 
     def _stored_list(self, where: Where, read: TakeoverRead) -> BlobRef:
         """Store a takeover's list create-only, at the first key its time leaves free.
@@ -1251,14 +1291,22 @@ class OrderPath:
         """Raise the absent lease's one halt, at a key two finders of one journal share."""
         shared = self._shared
         assert view.sent_at is not None
-        reason = (
-            f"the account's lease is absent at {shared.lease.key}, and the journal holds a sending "
-            f"through entry {view.through.seq}, so the lease was lost. New orders halt"
-        )
         key = account_halt_key(
             shared.account, "execution", "lease_absent", view.sent_at, view.through.seq
         )
-        data = encode(shared.storage.halt_record(Halt(reason)))
+        reason = (
+            f"the account's lease is absent at {shared.lease.key}, and the journal holds a sending "
+            f"through entry {view.through.seq}, so the lease was lost. New orders halt, and the "
+            f"halt stands at {key} until a person releases it"
+        )
+        held = AbsentHalt(
+            FORMAT,
+            shared.account,
+            view.through.seq,
+            view.sent_at,
+            shared.storage.halt_record(Halt(reason)),
+        )
+        data = encode(held)
         try:
             tries(lambda: shared.store.create(key, data, sha256_of(data)))
         except KeyExists:
@@ -1278,10 +1326,21 @@ class OrderPath:
                 raise self._outage(lost.reason) from None
             raise
 
-    def _let_go(self) -> None:
+    def _let_go(self, *, page: bool) -> None:
         held, self._lease = self._lease, None
-        if held is not None:
-            self._shared.lease.release(held, self._shared.patience.tries(self._report))
+        if held is None:
+            return
+        refused = self._shared.lease.release(held, self._shared.patience.tries(self._report))
+        if refused is None or not page:
+            return
+        # The lease expires, and the next order of this process or any other halts on it as held
+        # until then, so the cause is paged here.
+        ends = held.lease.expires
+        reason = f"{refused.reason}. It expires at {ends.isoformat()}" if ends else refused.reason
+        if refused.unanswered:
+            self._shared.outage(reason)
+        else:
+            self._shared.alarm(reason)
 
     # Steps 1 to 6
 

@@ -27,7 +27,8 @@ import pytest
 
 from ithildinruntime.core import RECOVER_STAGE, SEND_STAGE, OrderState
 from ithildinruntime.execution.brokers.faults import Faults, OrderFault, ReadFault
-from tests.support.faulted import Day, Replay, counted
+from ithildinruntime.journal import Journal
+from tests.support.faulted import ACCOUNT, Day, Replay, counted
 
 _S = OrderState
 DAYS = 6
@@ -176,6 +177,10 @@ def test_2_a_restart_after_any_append_sends_nothing_twice_and_the_next_decision_
     for day in days[3:]:
         assert day.halts == {}, day.halts
     nothing_twice(replay)
+    # A death once the send stage holds the account's lease, from the sixth append on, leaves
+    # the lease held, so the next day's first order takes it over and journals that.
+    kinds = [entry.body["kind"] for entry in Journal(replay.store, ACCOUNT).read()]
+    assert kinds.count("takeover") == (after >= 6)
     assert pinned(replay, days) == RESTARTS[after]
 
 
