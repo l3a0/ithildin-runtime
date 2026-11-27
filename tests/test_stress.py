@@ -117,6 +117,24 @@ def test_1_the_largest_two_session_move_rounds_up(name: str) -> None:
     assert f"{largest_move(legs(gld, uso), 2).move.size:f}" == size
 
 
+# The floors that the caps of a strategy with a SPY or QQQ leg hold, from the index closes of
+# October 1987 that design.md's `**Why SPY's and QQQ's caps reach back to 1987.**` quotes, by the
+# rounding every measured move takes. The session table starts in 1993, so the closes stand on
+# three of its sessions, and only their order matters.
+FLOORS = {
+    "the-s-and-p-500": (("298.08", "282.70", "224.84"), "0.20466927", "0.24570586"),
+    "the-nasdaq-100": (("183.285", "155.65", "143.96"), "0.15077612", "0.21455657"),
+}
+
+
+@pytest.mark.parametrize("name", FLOORS)
+def test_1_the_1987_floors_are_the_index_falls_rounded_up(name: str) -> None:
+    closes, one, two = FLOORS[name]
+    bars = {GLD: leg(GLD, *closes)}
+    assert f"{largest_move(bars, 1).move.size:f}" == one
+    assert f"{largest_move(bars, 2).move.size:f}" == two
+
+
 def test_1_a_tie_goes_to_the_earliest_date_then_to_the_first_leg_by_name() -> None:
     bars = legs((100, 100, 100, 100, 120), (100, 100, 100, 120, 110))
     assert found(bars) == (d("0.2"), USO, DAYS[T0 + 1], DAYS[T0 + 3])
