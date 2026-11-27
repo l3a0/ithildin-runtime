@@ -92,11 +92,13 @@ class LeaseLost(Halt):
     """A rewrite the store refused, or did not answer, so this handler no longer holds the lease.
 
     `unanswered` says the store gave no answer, so whether the rewrite landed is unknown.
+    `gone` says no lease stood at its key.
     """
 
-    def __init__(self, reason: str, *, unanswered: bool = False) -> None:
+    def __init__(self, reason: str, *, unanswered: bool = False, gone: bool = False) -> None:
         super().__init__(reason)
         self.unanswered = unanswered
+        self.gone = gone
 
 
 @dataclass(frozen=True)
@@ -333,8 +335,10 @@ class AccountLease:
             ) from None
         except BlobMissing:
             raise LeaseLost(
-                f"the account's lease is gone from {self.key}, so its {what} was refused, and "
-                "the next take halts on it as absent"
+                f"the account's lease is gone from {self.key}, so its {what} was refused. The "
+                "next take halts on it as absent where the journal holds a sending, and "
+                "otherwise starts the lease anew",
+                gone=True,
             ) from None
         except StoreError as error:
             raise LeaseLost(

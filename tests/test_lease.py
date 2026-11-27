@@ -184,6 +184,8 @@ def test_a_takeover_owed_keeps_its_holder_through_a_taker_that_died_holding_it(
     clock.at += PERIOD + MARGIN + timedelta(seconds=1)
     third = lease.take(Holder("c" * 32 + "-1"), _tries(clock), True, _absent)
     assert (third.held.lease.owed_from, third.held.lease.owed_expired) == (A.handler, AT + PERIOD)
+    # The lease as the third take read it still names B, whom the takeover's alarm names too.
+    assert third.took is not None and third.took.handler == B.handler
 
 
 def test_every_write_holds_new_bytes_and_a_new_tag(store: object) -> None:

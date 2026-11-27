@@ -92,7 +92,8 @@ class Difference:
             return (
                 f"the broker's order {broker_id_shown(self.name)} is open at the broker alone "
                 f"under {_client(theirs.client_order_id)}, a late order under an older lease: a "
-                "takeover found it sent with no answer, and the broker's list it stored omits it"
+                "takeover found it sent with no answer, and the broker's list it stored omits it. "
+                "It may be working at the broker, so a person looks it up there"
             )
         if ours is not None and theirs is not None:
             parts = [f"{f} {_field(f, ours, theirs)}" for f in self.fields]

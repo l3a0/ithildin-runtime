@@ -1237,6 +1237,9 @@ class OrderPath:
             run = f" of the run {took.run}" if took.handler == owed_from and took.run else ""
             ran_out = f", whose lease ran out at {expired.isoformat()}" if expired else ""
             whose = f"{owed_from}{run}{ran_out}"
+        if took.handler is not None and took.handler != owed_from:
+            # A taker that failed the takeover owed and then died holding the lease.
+            whose = f"{whose}, after {took.handler}, which failed that takeover and held it last"
         # The alarm goes before the rewrite that clears `owed`, so a journaled takeover alarms
         # even where that rewrite fails.
         shared.alarm(
@@ -1338,7 +1341,10 @@ class OrderPath:
         # handler's own last rewrite leaves that write unknown here, so the page can then name
         # it as another handler's.
         ends = held.lease.expires
-        reason = f"{refused.reason}. It expires at {ends.isoformat()}" if ends else refused.reason
+        reason = refused.reason
+        if ends is not None and not refused.gone:
+            # A write of this handler's own that landed unanswered moved the expiry further on.
+            reason = f"{reason}. It expires no earlier than {ends.isoformat()}"
         if refused.unanswered:
             self._shared.outage(reason)
         else:

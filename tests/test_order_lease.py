@@ -15,6 +15,7 @@ other three intact.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 
@@ -265,10 +266,12 @@ def test_a_lease_taken_over_before_the_broker_call_ends_the_order_unsent() -> No
             _plant(world, _held(other, expires=timedelta(seconds=30)))
 
     world.store.before = before
-    halted(
+    reason = halted(
         world,
         "rewritten since this handler.s last answered write of it, so its renewal was refused",
     )
+    assert "another handler took it over after its expiry" in reason
+    assert "a write of this handler's own landed with its answer lost" in reason
     assert world.state() is OrderState.ABANDONED
     assert _lease(world).handler == other
 
@@ -307,7 +310,7 @@ def test_a_release_the_store_does_not_answer_leaves_the_lease_to_expire() -> Non
     lease = _lease(world)
     assert lease.handler is not None and lease.expires == NOW + PERIOD
     (said,) = [a for a in world.alarms.sent if "release was not stored" in a]
-    assert f"It expires at {(NOW + PERIOD).isoformat()}" in said
+    assert f"It expires no earlier than {(NOW + PERIOD).isoformat()}" in said
     # The next order of this process meets the lease as held, and the page above says why.
     with pytest.raises(Halt, match="held by"):
         world.path().send(world.orders[0].client_order_id)
@@ -325,7 +328,7 @@ def test_a_release_the_store_refuses_after_a_send_that_halted_still_pages() -> N
     world.store.before = before
     halted(world, "kill switch stands")
     (said,) = [a for a in world.alarms.sent if "release was not stored" in a]
-    assert f"It expires at {(NOW + PERIOD).isoformat()}" in said
+    assert f"It expires no earlier than {(NOW + PERIOD).isoformat()}" in said
 
 
 def test_a_release_another_handler_refused_pages_without_an_outage() -> None:
@@ -342,8 +345,37 @@ def test_a_release_another_handler_refused_pages_without_an_outage() -> None:
     assert world.send() is OrderState.ACKNOWLEDGED
     (said,) = world.alarms.sent
     assert "so its release was refused" in said
-    assert f"It expires at {(NOW + PERIOD).isoformat()}" in said
+    assert f"It expires no earlier than {(NOW + PERIOD).isoformat()}" in said
     assert "The owner's step" not in said
+
+
+@pytest.mark.parametrize("sent", [False, True], ids=["a first use", "a journal that sent"])
+def test_a_release_that_finds_the_lease_gone_says_what_the_next_take_does(sent: bool) -> None:
+    orders = (order(1, 2), order(2, 1, gates.USO))
+    world = World(orders=orders, position=Decimal(3)) if sent else World(orders=orders)
+    world.store.put(kill_switch_key(ACCOUNT), b"{}")
+    # A journal that sent planted a lease, which the take rewrites, so the release is the second
+    # rewrite there and the first on a first use.
+    replaces: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY):
+            replaces.append(number)
+            if len(replaces) == 1 + sent:
+                world.store.drop(KEY)
+
+    world.store.before = before
+    halted(world, "kill switch stands")
+    (said,) = [a for a in world.alarms.sent if "is gone from" in a]
+    assert f"the account's lease is gone from {KEY}, so its release was refused" in said
+    assert "halts on it as absent where the journal holds a sending" in said
+    assert "otherwise starts the lease anew" in said and "expires" not in said
+    world.store.before = lambda *_: None
+    world.store.drop(kill_switch_key(ACCOUNT))
+    if sent:
+        halted(world, "lease is absent", lambda: world.send(2))
+    else:
+        assert world.send(2) is OrderState.ACKNOWLEDGED
 
 
 def test_a_release_whose_first_try_landed_unanswered_leaves_the_lease_free() -> None:
@@ -476,6 +508,22 @@ def test_a_take_of_an_expired_lease_stores_the_list_and_journals_the_takeover_fi
     ran_out = (NOW - timedelta(minutes=1)).isoformat()
     assert f"taken over from {FROZEN} of the run {RUN}, whose lease ran out at {ran_out}" in said
     assert f"the broker's order list is stored at {entry.orders.key}, and finds {late} late" in said
+
+
+def test_a_takeover_owed_names_its_holder_and_the_taker_that_died_holding_it() -> None:
+    world = _two()
+    late = _sent_by_another(world)
+    dead = "d" * 32 + "-1"
+    owed = replace(
+        _held(dead), owed=True, owed_from=FROZEN, owed_expired=NOW - timedelta(minutes=2)
+    )
+    _plant(world, owed)
+    assert world.send(2) is OrderState.ACKNOWLEDGED
+    (entry,) = [r for r in world.entries() if isinstance(r, TakeoverEntry)]
+    assert (entry.holder, entry.late) == (FROZEN, (late,))
+    (said,) = [a for a in world.alarms.sent if "taken over from" in a]
+    assert f"taken over from {FROZEN}, whose lease ran out at" in said
+    assert f"after {dead}, which failed that takeover and held it last" in said
 
 
 def test_an_order_the_broker_lists_is_not_named_late() -> None:
@@ -731,7 +779,10 @@ def test_a_lease_gone_between_the_read_and_the_rewrite_of_a_first_use_is_created
 def test_4_the_older_holders_own_answer_is_never_journaled_acknowledged() -> None:
     world = _two()
     late, _ = _taken_over(world)
-    with pytest.raises(Halt, match=f"acknowledges {late}, a late order under an older lease"):
+    with pytest.raises(
+        Halt,
+        match=f"acknowledges {late}, a late order under an older lease.*a person looks it up",
+    ):
         world.record(AckEntry(late, "b-late", b"{}", False, NOW))
     assert world.state(1) is OrderState.SENDING
 
@@ -752,7 +803,9 @@ def test_4_a_lookup_that_finds_a_late_order_halts_before_acknowledged() -> None:
         world.store.put(key, data)
         return BlobRef(key, sha256_of(data))
 
-    with pytest.raises(Halt, match="a late order under an older lease"):
+    with pytest.raises(
+        Halt, match="a late order under an older lease.*so a person looks it up there"
+    ):
         world.path().settle(late, keep, "execution/recover", NOW)
     assert world.state(1) is OrderState.IN_DOUBT
     assert len(kept) == 2
@@ -771,7 +824,10 @@ def test_4_a_reconcile_names_a_late_order_the_broker_lists_open() -> None:
         records=RecordsRead((), PAGES, True),
     )
     said = [str(d) for d in reconcile(view.book, view.live.values(), read, view.late)]
-    assert any("a late order under an older lease" in s for s in said), said
+    assert any(
+        "a late order under an older lease" in s and "so a person looks it up there" in s
+        for s in said
+    ), said
     plain = [str(d) for d in reconcile(view.book, view.live.values(), read)]
     assert not any("late order" in s for s in plain)
     assert late in view.late
@@ -783,7 +839,10 @@ def test_4_the_brokers_read_that_lists_a_late_order_halts_naming_it(met: str) ->
     world = _two()
     late, _ = _taken_over(world)
     view = world.reader().view()
-    with pytest.raises(Halt, match=f"under {late}, a late order under an older lease"):
+    with pytest.raises(
+        Halt,
+        match=f"under {late}, a late order under an older lease.*so a person looks it up there",
+    ):
         if met == "an open order":
             order_entry(view, _row(world.orders[0]), 2)
         else:

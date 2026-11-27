@@ -624,7 +624,8 @@ def _ack(step: Step, record: AckEntry) -> None:
         raise Halt(
             f"entry {step.seq} acknowledges {record.client_order_id}, a late order under an older "
             f"lease: the takeover at entry {took} found it sent with no answer, and the broker's "
-            "order list it stored omits it"
+            "order list it stored omits it. It may be working at the broker, so a person looks it "
+            "up there"
         )
     order, state = _next(step, record.client_order_id, Move.ACK)
     broker = record.broker_order_id
