@@ -383,6 +383,12 @@ def test_5_a_file_that_cannot_be_used_ends_the_order_abandoned(fault: str, name:
     world = World()
     spoil(world, name)
     halted(world, why)
+    if fault.endswith("unreadable"):
+        # The store did not answer, so the outage pages once and no `abandoned` is tried. The
+        # `intent` stands for the next recover to journal abandoned (#211).
+        assert world.kinds() == ["intent"]
+        assert len(world.alarms.sent) == 1, world.alarms.sent
+        return
     assert world.kinds() == ["intent", "abandoned"]
 
 
@@ -560,11 +566,24 @@ def test_5_a_control_that_cannot_be_read_halts(name: str, read: int, error: str)
 
         world.store.list = listed  # type: ignore[method-assign]
     shown = {"None": "NoneType", "StoreUnavailable": "StoreUnavailable 403 AccessDenied"}
-    reason = halted(world, f"{name} unreadable: {shown.get(error, error)}")
+    account = world.account()
+    reason = halted(
+        world, f"{name} unreadable: {shown.get(error, error)}", lambda: world.send(account=account)
+    )
     assert "own text" not in reason + str(world.entries()) + str(world.alarms.sent)
     late = read == 1
     assert ("sending" in world.kinds()) == late
     refused = name == "loss stop" and not late
+    if error == "StoreUnavailable" and not refused:
+        # The store did not answer, so the outage pages once and nothing more is written (#211).
+        # The `intent` stands for the next recover, and an `abandoned` after the `sending` is
+        # kept for the next settle, which stores it once the store answers.
+        assert len(world.alarms.sent) == 1, world.alarms.sent
+        assert world.state() is (OrderState.SENDING if late else OrderState.INTENDED)
+        world.store.before = lambda n, o, k: None
+        account.settle(lambda: None)
+        assert world.state() is (OrderState.ABANDONED if late else OrderState.INTENDED)
+        return
     assert world.state() is (OrderState.REFUSED if refused else OrderState.ABANDONED)
 
 

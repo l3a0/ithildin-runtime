@@ -67,6 +67,7 @@ from ithildinruntime.core import (
     Ack,
     Alerts,
     BeforeClose,
+    BlobMissing,
     BlobRef,
     BlobStore,
     Book,
@@ -1241,6 +1242,9 @@ class OrderPath:
         account = self._shared.account
         try:
             data = tries(lambda: self._shared.store.get(caps_key(account)))
+        except BlobMissing as error:
+            # The store answered, so this is no outage.
+            raise Halt(f"the hard caps could not be read again: {code_of(error)}") from None
         except StoreError as error:
             raise self._outage(f"the hard caps could not be read again: {code_of(error)}") from None
         try:

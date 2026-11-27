@@ -365,8 +365,13 @@ def test_2_a_store_down_from_a_call_on(at: int, lost: bool) -> None:
     if sent:
         assert f"the ack of {ID}, {WENT}" in world.alarms.sent[0]
     if at >= CREATES[2] and not sent:
-        assert any("which was not sent" in a for a in named)
-        assert "It is kept and tried again" in reason
+        # One page, and the `abandoned` is kept for the next settle. Where the path met the
+        # outage among its checks, it paged and the entry is not tried (#211). Where the
+        # `sending` or a read inside the journal's own append failed, the entry's page is the one.
+        assert len(world.alarms.sent) == 1, world.alarms.sent
+        held = f"The abandoned of {ID} is kept and tried again before the next send" in reason
+        assert held or any("which was not sent" in a for a in named)
+        assert held or "It is kept and tried again" in reason
     owed = account.unstored()
     assert bool(owed) == (at >= CREATES[2])
     world.store.before = world.store.after = lambda n, op, key: None
@@ -2101,7 +2106,16 @@ def test_7_caps_that_cannot_be_read_again_stop_the_order(fault: str) -> None:
         "malformed": "the hard caps read again are not whole: the caps blob's format",
         "unreadable": "the hard caps could not be read again: StoreUnavailable",
     }
-    halted(world, said[fault])
+    account = world.account()
+    halted(world, said[fault], lambda: world.send(account=account))
+    if fault != "unreadable":
+        assert world.state() is OrderState.ABANDONED
+        return
+    # The store did not answer, so the outage pages once and the `abandoned` waits (#211).
+    assert len(world.alarms.sent) == 1, world.alarms.sent
+    assert world.state() is OrderState.SENDING
+    world.store.before = lambda n, o, k: None
+    account.settle(lambda: None)
     assert world.state() is OrderState.ABANDONED
 
 
