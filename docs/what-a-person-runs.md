@@ -453,7 +453,7 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 
 #### Fetch what a row is read from
 
-1. Fetch each source the row cites and save its bytes as fetched under `~/.config/ithildin-runtime/splits/<date>/`, never in the repository, with a `README.md` there that gives each file's address and the UTC time it was fetched.
+1. Fetch each source the row cites and save its bytes as fetched under `~/.config/ithildin-runtime/splits/<date>/`, never in the repository, with a `README.md` there that gives each file's address and the UTC time it was fetched. That folder is the only copy of these bytes until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) gives saved published texts a prefix the replica rule copies. An issuer's filing can be fetched again, and a vendor's answer of that day cannot.
 2. Write the SHA-256 of each file into the row's `read_from`, beside its address and fetch time. `read_from` holds no comma, because the loader splits the row on commas.
 
 #### Write a split row

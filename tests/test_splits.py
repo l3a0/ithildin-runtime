@@ -602,9 +602,21 @@ def test_10_a_split_on_the_decisions_own_session_refuses_an_order_that_adds_too(
     assert verdict.limit is Limit.SPLIT
 
 
-@pytest.mark.parametrize(("mid", "halts"), [(50, True), (800, True), (75, False), (100, False)])
+@pytest.mark.parametrize(
+    ("mid", "halts"),
+    [
+        (50, True),
+        (800, True),
+        (75, False),
+        (100, False),
+        (Decimal("70.00"), True),
+        (Decimal("70.01"), False),
+        (Decimal("142.89"), False),
+        (Decimal("142.90"), True),
+    ],
+)
 def test_6_a_split_on_the_decisions_own_session_the_quote_does_not_restate_halts_on_the_step(
-    mid: int, halts: bool
+    mid: Decimal, halts: bool
 ) -> None:
     """The quote's midpoint against the newest stored close, where only the quote covers the pair.
 
@@ -628,3 +640,20 @@ def test_6_a_covered_row_over_the_decisions_own_pair_reads_no_step_on_its_quote(
     found = snap(flat(), covers=covers, quoted="100.0", quote_covered=row)
     found = replace(found, quotes={USO: quote(USO, Decimal("49.99"), Decimal("50.01"), AT)})
     assert check_splits(found, TABLE) == []
+
+
+def test_10_a_split_before_the_first_covered_session_refuses_nothing_on_its_own_session() -> None:
+    """The gate reads the instrument's first covered session, as data's halt does."""
+    record = made.record(made.split("GLD", gates.TODAY, 2, 1, known_at=gates.DECISION))
+    world = gates.World(intent=gates.order(1), book=gates.book(positions={"chan": {GLD: 5}}))
+    bars = {
+        i: {"1d": tuple(replace(b, basis="raw", source_as_of=None) for b in by["1d"][-1:])}
+        for i, by in world.snapshot.bars.items()
+    }
+    later = DAYS[DAYS.index(gates.TODAY) + 1]
+    known = replace(
+        made.NO_SPLITS,
+        rows={GLD: record.known(GLD, gates.DECISION)},
+        covered_from={GLD: later},
+    )
+    assert world.at(snapshot=replace(world.snapshot, bars=bars, splits=known)).check().approved
