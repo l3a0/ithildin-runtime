@@ -1262,10 +1262,18 @@ class OrderPath:
                 # anew. Nothing is left to release, so this is the one page.
                 self._lease = None
                 raise Halt(f"{lost.reason}{shared.alarm(lost.reason)}") from None
-            # Another handler rewrote the lease, so a release on this handler's tag is sure to be
-            # refused, and the failed takeover's halt is the one page.
+            # `settled` reads back a write whose answer was lost, so a refusal here is another
+            # handler's rewrite. A release on this handler's tag is sure to be refused, so this
+            # halt is the one page, and it says the entry stands rather than the takeover failed.
             self._lease = None
-            raise self._failed("the rewrite after its entry was refused", lost.reason) from None
+            reason = (
+                "the account's lease was rewritten by another handler before this handler's "
+                "rewrite after its takeover, so that rewrite was refused. This handler's takeover "
+                "entry stands journaled. The lease still owes a takeover, so the other handler "
+                "journals one of its own before it acts. This send halts, and the next order's "
+                "take reads the lease again"
+            )
+            raise Halt(f"{reason}{shared.alarm(reason)}") from None
 
     def _stored_list(self, where: Where, read: TakeoverRead) -> BlobRef:
         """Store a takeover's list create-only, at the first key its time leaves free.
@@ -1295,7 +1303,7 @@ class OrderPath:
         raise self._failed(f"{_LISTS} keys of the takeover's list at its time are each taken", "")
 
     def _failed(self, what: str, why: str) -> Halt:
-        """A takeover that failed: new orders halt, and the takeover stays owed."""
+        """A takeover that failed: new orders halt, and the lease owes it or expires into one."""
         reason = (
             f"the takeover of the account's lease failed: {what}{': ' if why else ''}{why}. No new "
             "order goes out until a takeover stores the list and journals its entry"

@@ -397,9 +397,9 @@ def test_a_renewal_that_finds_the_lease_gone_sends_nothing(sent: bool) -> None:
     reason = halted(world, f"the account's lease is gone from {KEY}, so its renewal was refused")
     assert "The owner's step" not in reason, "a gone lease is not a store's outage"
     assert world.state() is OrderState.ABANDONED
-    # The renewal pages nothing itself, so the release's refusal is the page naming the lease.
-    released = [a for a in world.alarms.sent if f"gone from {KEY}, so its release was refused" in a]
-    assert len(released) == 1
+    # The renewal pages nothing itself, so the release's refusal is the one page naming the lease.
+    named = [a for a in world.alarms.sent if f"gone from {KEY}" in a]
+    assert len(named) == 1 and "so its release was refused" in named[0]
     world.store.before = lambda *_: None
     # The next take finds the lease lost: on a first use its only `sending` is the refused
     # order's own, and on a journal that sent an earlier one stands as well.
@@ -760,10 +760,16 @@ def test_a_takeover_whose_closing_rewrite_fails_has_alarmed_and_halts(answered: 
 
     world.store.before = before
     if answered:
-        halted(world, "rewrite after its entry was refused", lambda: world.send(2))
+        reason = halted(world, "rewritten by another handler", lambda: world.send(2))
+        # The entry is journaled, so the halt says it stands, not that the takeover failed.
+        assert "takeover entry stands journaled" in reason
+        assert "journals one of its own before it acts" in reason
+        assert "until a takeover stores the list" not in reason
+        assert "a write of this handler's own" not in reason
         # Another handler holds the lease, so no release is tried and the halt is the one page.
-        failed = [a for a in world.alarms.sent if "takeover of the account's lease failed" in a]
-        assert len(failed) == 1
+        pages = [a for a in world.alarms.sent if "rewritten by another handler" in a]
+        assert len(pages) == 1
+        assert not [a for a in world.alarms.sent if "takeover of the account's lease failed" in a]
         assert not [a for a in world.alarms.sent if "release was refused" in a]
     else:
         # The entry is journaled, so the halt is the store's outage, not a takeover still owed.
