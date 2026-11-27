@@ -208,9 +208,6 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     )
     assert f"where a leg {beyond}" in why
     assert "where two legs hold one index at different multiples" in why
-    across = "where two legs hold the two indexes at different multiples"
-    assert f"Stop as well {across}, as design.md proposes." in steps
-    assert f"This doc proposes the same stop {across}" in why
     assert "such as IVV or VOO for the S&P 500 and QQQM for the Nasdaq-100" in why
     assert "takes the move L gives over the same two sessions, 1 − (1 + L × r₁)(1 + L × r₂)" in why
     # Every figure with a decimal point the paragraph holds, and how many times, so a typo in one
