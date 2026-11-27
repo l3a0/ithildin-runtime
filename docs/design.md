@@ -3339,7 +3339,7 @@ Rishi K. Narang's *Inside the Black Box* (3rd ed., Wiley, 2024) draws the boxes 
 
    **What every decision checks.** `data/splits.py` judges the stored snapshot, so the first read and a redelivery halt alike. The pairs run, for each instrument whose window holds a `raw` bar, from that bar, or from Schwab's import just before it where a lookback crosses from that import to captured bars, to the newest bar and on to the quote.
 
-   1. A pair that no covered row holds and no quote covers halts, and a run of such pairs gives one reason.
+   1. A pair that no covered row holds and no quote covers halts, and a run of such pairs gives one reason, apart from the pair to the decision's own quote, which gives its own.
    2. A quote's restated close over the stored close of the session before passes from 0.95 to 1.05. The largest single dividend of the four funds from 2006 on is 0.806 percent of SPY's close, exploratory, and a split of five for four moves it to 0.8 or 1.25. The decision's own quote is checked under a covered row too.
    3. On a pair of two stored bars that only a quote covers, a fall of 30 percent or more or a rise of 42.9 percent or more halts, and so does the decision's own quote's midpoint against the newest stored close at the same bounds. That catches a split of three for two or more that Schwab does not restate, on the decision's own session too. [#174](https://github.com/l3a0/ithildin-runtime/issues/174) found no close of GLD or USO that large in 10,354, and the bound was chosen after reading them, so it is exploratory.
    4. A split row known by the decision halts every decision on its instrument from its first session, wherever a bar the decision reads is not already adjusted for it. A raw bar on or after the split counts as adjusted only where the split falls before the instrument's first covered row, which is how USO's split of 2020 halts nothing.
@@ -3352,13 +3352,13 @@ Rishi K. Narang's *Inside the Black Box* (3rd ed., Wiley, 2024) draws the boxes 
    | Halt | Stops | Released by |
    | --- | --- | --- |
    | The record is missing, unreadable or holds a bad row | Every decision | A corrected file in a release |
-   | A pair no covered row and no quote covers | Every decision whose window holds the pair | A covered row reaching past it |
+   | A pair no covered row and no quote covers | Every decision whose window holds the pair | A covered row reaching its later session |
    | A restated close outside 0.95 to 1.05 | Every decision whose window holds the pair | A split row, a correction or a `withdrawn` row, or a covered row where Schwab did not restate |
    | A step of 30 percent down or 42.9 percent up on a pair only a quote covers | Every decision whose window holds the pair, exits included | A split row, or a covered row that says the move was real |
    | A recorded split, from its first session, until [#190](https://github.com/l3a0/ithildin-runtime/issues/190) and [#191](https://github.com/l3a0/ithildin-runtime/issues/191) | Every decision that reads bars of that instrument not already adjusted for it, exits included | [#190](https://github.com/l3a0/ithildin-runtime/issues/190) and [#191](https://github.com/l3a0/ithildin-runtime/issues/191) |
    | A recorded split, from `known_at` to its first session | Orders that add on that instrument | Its first session, where the halt above takes over |
 
-   On the decision's own pair, from the newest stored bar to the decision's quote, no covered row can be written yet, because a covered row ends 5 sessions before the day it is added. So a halt there stays for that session, and from the next session the sealed day's checks take the pair over.
+   On the decision's own pair, from the newest stored bar to the decision's quote, no covered row can be written yet, because a covered row ends 5 sessions before the day it is added. So a halt there that waits on a covered row stays for that session, and from the next session the sealed day's checks take the pair over.
 
    The price is a merge by the owner per split, before the session it takes effect, and a halt of up to 60 sessions where a gap in Schwab's quotes or a real move past the step waits for a person's row. A stress record over captured bars needs a covered row for every pair of them, because a quote's check is not a row of the record. A release that changes `splits.csv` while a Paper sample is open keeps it open only once a replay that reads the new file shows the strategy's orders unchanged.
 

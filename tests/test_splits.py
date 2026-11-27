@@ -710,3 +710,21 @@ def test_9_a_run_of_unreached_pairs_ending_at_the_own_pair_keeps_its_covered_row
     assert f"the sessions {days[1]} and {days[2]}" in stored
     assert f"A covered row reaching {days[2]} releases it" in stored
     assert f"the sessions {days[2]} and {DAY}" in today and "stays halted for this session" in today
+
+
+def test_9_a_faulted_pair_ends_a_run_of_unreached_pairs() -> None:
+    """Each run's reason counts the pairs it names, and a fault in between names its own."""
+    days = list(flat(4))
+    covers = (
+        cover(USO, days[0], days[1]),
+        replace(cover(USO, days[1], days[2]), fault="a made-up fault"),
+        cover(USO, days[2], days[3]),
+    )
+    found = check_splits(snap(flat(4), covers=covers), TABLE)
+    assert found == [
+        found[0],
+        "a made-up fault",
+        found[2],
+    ]
+    assert f"the sessions {days[0]} and {days[1]}" in found[0]
+    assert f"the sessions {days[2]} and {days[3]}" in found[2]

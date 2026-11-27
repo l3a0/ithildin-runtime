@@ -26,7 +26,8 @@ and on to the quote's where the decision read one.
    Otherwise a quote of the later session must state the close of the earlier
    one, the decision's own quote for its own session and the sealed day for
    any before it. A pair neither covers halts, and pairs that run on from one
-   another give one reason.
+   another give one reason, apart from the pair to the decision's own quote,
+   which gives its own.
 2. **The residual.** Each `close_price` a quote states, over the stored close
    of the earlier session, passes from 0.95 to 1.05, both ends allowed. The
    decision's own quote is checked under a covered row too.
@@ -481,10 +482,13 @@ def _instrument(
                 "close. A bar of the session before releases it"
             )
             continue
-        if cover is None:
-            continue
-        if cover.fault is not None:
-            yield cover.fault
+        if cover is None or cover.fault is not None:
+            # A pair no run passes over, so the run before it ends there.
+            if short:
+                yield _short(instrument, short)
+                short = []
+            if cover is not None:
+                yield cover.fault
             continue
         usable = cover.close_kind != UNSTATED and bool(cover.close_prices)
         if cover.covered is None and not usable:
