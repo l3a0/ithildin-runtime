@@ -12,6 +12,7 @@ import hashlib
 import re
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import date
@@ -149,24 +150,32 @@ def _section(text: str, opening: str) -> str:
 
 def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     # The owner types each floor into the hard caps by hand from what-a-person-runs.md, so a
-    # floor mistyped there, or a close changed in design.md, fails here.
+    # floor mistyped there, or a close or floor changed in design.md, fails here.
     design = (DOCS / "design.md").read_text(encoding="utf-8")
     why = _section(design, "**Why SPY's and QQQ's caps reach back to 1987.**")
     steps = _section(
         (DOCS / "what-a-person-runs.md").read_text(encoding="utf-8"),
         "1. Take the strategy's floor:",
     )
-    for closes, _, floor in FLOORS.values():
-        for close in closes:
-            assert f" {close} " in why, close
-        assert floor in why and floor in steps, floor
-    spy, qqq = (FLOORS[n][2] for n in ("the-s-and-p-500", "the-nasdaq-100"))
+    spx, ndx = FLOORS["the-s-and-p-500"], FLOORS["the-nasdaq-100"]
+    spy, qqq = spx[2], ndx[2]
+    # Every number the paragraph holds, and how many times, so a typo in one of two copies fails.
+    # The percentages are the falls and the records' moves the paragraph compares them with.
+    assert Counter(re.findall(r"\d+\.\d+", why)) == Counter(
+        {**dict.fromkeys((*spx[0], *ndx[0]), 1), "224.84": 2, spy: 2, qqq: 2}
+        | {"20.47": 1, "24.57": 1, "15.08": 1, "21.46": 1, "14.52": 1, "17.09": 2}
+    )
+    for fund, floor in (("SPY", spy), ("QQQ", qqq)):
+        leg = f"{fund} leg write a `stress_move` of at least {floor} and a `stress_low` of {floor}"
+        assert leg in why, fund
     assert f"{spy} where a leg is SPY" in steps and f"{qqq} where a leg is QQQ" in steps
-    # Every page that names a floor, to the digits that set it apart, gives it whole.
-    floors = {floor for _, _, floor in FLOORS.values()}
+    table = (DOCS / "architecture" / "08-crosscutting-concepts.md").read_text(encoding="utf-8")
+    assert f"{spy} for a strategy with a SPY leg" in table
+    assert f"{qqq} for one with a QQQ leg" in table
+    # Every page that names a number of eight places or more from 0.2 to 0.3 names a floor.
     for page in sorted(DOCS.rglob("*.md")):
-        for named in re.findall(r"0\.2457058\d*|0\.2145565\d*", page.read_text(encoding="utf-8")):
-            assert named in floors, f"{page.name} names {named}"
+        for named in re.findall(r"\b0\.2\d{7,}\b", page.read_text(encoding="utf-8")):
+            assert named in (spy, qqq), f"{page.name} names {named}"
 
 
 def test_1_a_tie_goes_to_the_earliest_date_then_to_the_first_leg_by_name() -> None:
