@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import shutil
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -49,6 +50,7 @@ from ithildinruntime.core import (
     supervisor_start_key,
     to_utc,
 )
+from ithildinruntime.core.strategy import STRATEGIES
 from ithildinruntime.execution.controls import Controls
 from ithildinruntime.journal import Journal, PauseEntry, record_of
 from ithildinruntime.runtime.deployment import Deployment, deployment_table
@@ -1400,6 +1402,27 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     assert world.blob(halt) is not None
 
 
+def test_a_runs_halt_that_cannot_be_stored_halts_each_strategy_of_the_table(world: World) -> None:
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    _refusing(world, lambda call, key: call == "create" and key == halt)
+    both = {CHAN: (BeforeClose(20),), OTHER: (BeforeClose(20),)}
+    # The release tracks one strategy's file, so the second is a copy of it under another name.
+    folder = world.root / "strategies"
+    folder.mkdir()
+    for strategy in (CHAN, OTHER):
+        shutil.copyfile(STRATEGIES / f"{CHAN}.toml", folder / f"{strategy}.toml")
+    table = deployment_table(Deployment(DEPLOYMENT, ACCOUNT, both), folder)
+    assert world.supervisor(table=table, schedules=both).run(TODAY).code == EXIT_FAILED
+    # Every strategy the table names is held, not only the first.
+    for strategy in (CHAN, OTHER):
+        assert [k for k in world.held(strategy) if k.startswith("supervisor-run_halt-")]
+    assert any(f"a halt holds {CHAN}, {OTHER}" in a for a in world.alarms())
+
+
 def test_two_decisions_whose_results_are_all_stored_stop_the_run(world: World) -> None:
     world.opened()
     world.ran()
@@ -1568,7 +1591,11 @@ def test_a_restart_after_the_runs_halt_could_not_be_stored_stores_the_halt_not_a
     _refusing(world, refused)
     world.timer.at = OPEN
     assert world.supervisor().run(TODAY).code == EXIT_FAILED
-    assert world.held()
+    (name,) = world.held()
+    # The stand-in says it stands in for the run's halt, and carries that halt's reason.
+    stand_in = decode(world.blob(strategy_halts_prefix(ACCOUNT, CHAN) + name), StrategyHalt)
+    assert stand_in.reason.startswith("the run's halt could not be stored: ")
+    assert "the journal or an order's deadline cannot be read" in stand_in.reason
     # The store answers again and the journal reads, so nothing is late on the restart.
     _refusing(world, lambda call, key: False)
     world.timer.at = CLOSE + timedelta(minutes=10)
