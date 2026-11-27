@@ -603,7 +603,7 @@ The reader refuses each of these as a halt naming the file, and the record and t
 2. A key it does not know, or one left out.
 3. A value of another form, such as an m at or below zero or a flag with an empty `what`.
 4. A `leg` that is none of the record's instruments, because the hold counts a record by its leg.
-5. A `one_session` above `stress_move`, because m is the larger of the largest one-session move and the largest two-session move.
+5. A `one_session` above `stress_move` on a record that is not withdrawn, because m is the larger of the largest one-session move and the largest two-session move. A record withdrawn for that reason still reads, so the file can say it was found wrong.
 6. A `through` that is not the last session of each leg's `series`, because the stress move's age counts from it.
 7. Two records of one strategy and vintage.
 

@@ -127,15 +127,17 @@ _YAHOO_138_READ_FROM = {
         "c2aafddba5c921de725a341b10c1a3f7a9424866906479ad0abcea67855832c6. In an "
         "exploratory comparison Massive's unadjusted daily closes sum to the same cent in "
         "each of the 21 months from 2025-01-02 to 2026-09-04 and its volume to within "
-        "0.0494 percent. Before 2025 Alpha Vantage's daily closes give the same largest "
-        "one-session and two-session moves of SPY and QQQ and the same daily returns "
-        "around five more closes of SPY. QQQ's one-session move agrees once Yahoo's two "
-        "closes are rounded to the cent. Ten closes of the two funds that could hide a "
-        "larger move are listed there and no second vendor has checked them. Every volume "
-        "is a whole multiple of 100. That the volume is consolidated is measured from "
-        "2025 on and inferred before it and the price's venues rest on the ruling. Yahoo "
-        "publishes no statement of its close so official close is the usual meaning of a "
-        "Yahoo close for a US ETF"
+        "0.0494 percent. Before 2025 Alpha Vantage's daily closes give the same returns "
+        "over three of the four pairs of sessions that set SPY's and QQQ's largest "
+        "one-session and two-session moves in Yahoo's files. QQQ's one-session return is "
+        "the fourth and agrees once Yahoo's two closes are rounded to the cent. Alpha "
+        "Vantage's daily returns around five more closes of SPY agree with Yahoo's to "
+        "within the precision Yahoo stores each price at. Ten closes of the two funds "
+        "that could hide a larger move are listed there and no second vendor has checked "
+        "them. Every volume is a whole multiple of 100. That the volume is consolidated "
+        "is measured from 2025 on and inferred before it and the price's venues rest on "
+        "the ruling. Yahoo publishes no statement of its close so official close is the "
+        "usual meaning of a Yahoo close for a US ETF"
     ),
     "qqq": (
         "owner's ruling of 2026-11-27 on #138 at "
@@ -144,17 +146,20 @@ _YAHOO_138_READ_FROM = {
         "f9edb7d87e161d62ebc27d6618d512726a6fe8ae0dfe49eb4b2911a76f5a8662. In an "
         "exploratory comparison Massive's unadjusted daily closes sum to the same cent in "
         "each of the 21 months from 2025-01-02 to 2026-09-04 and its volume to within "
-        "0.0494 percent. Before 2025 Alpha Vantage's daily closes give the same largest "
-        "one-session and two-session moves of SPY and QQQ and the same daily returns "
-        "around five more closes of SPY. QQQ's one-session move agrees once Yahoo's two "
-        "closes are rounded to the cent. Ten closes of the two funds that could hide a "
-        "larger move are listed there and no second vendor has checked them. Its source "
-        "adjusts for QQQ's two-for-one split of 2000-03-20 so prices before it read half "
-        "those that traded and volume twice the shares traded. Every volume from the "
-        "split on is a whole multiple of 100 and every one before it of 200. That the "
-        "volume is consolidated is measured from 2025 on and inferred before it and the "
-        "price's venues rest on the ruling. Yahoo publishes no statement of its close so "
-        "official close is the usual meaning of a Yahoo close for a US ETF"
+        "0.0494 percent. Before 2025 Alpha Vantage's daily closes give the same returns "
+        "over three of the four pairs of sessions that set SPY's and QQQ's largest "
+        "one-session and two-session moves in Yahoo's files. QQQ's one-session return is "
+        "the fourth and agrees once Yahoo's two closes are rounded to the cent. Alpha "
+        "Vantage's daily returns around five more closes of SPY agree with Yahoo's to "
+        "within the precision Yahoo stores each price at. Ten closes of the two funds "
+        "that could hide a larger move are listed there and no second vendor has checked "
+        "them. Its source adjusts for QQQ's two-for-one split of 2000-03-20 so prices "
+        "before it read half those that traded and volume twice the shares traded. Every "
+        "volume from the split on is a whole multiple of 100 and every one before it of "
+        "200. That the volume is consolidated is measured from 2025 on and inferred "
+        "before it and the price's venues rest on the ruling. Yahoo publishes no "
+        "statement of its close so official close is the usual meaning of a Yahoo close "
+        "for a US ETF"
     ),
 }
 
@@ -482,6 +487,17 @@ def test_an_empty_kind_field_is_refused_where_unstated_says_the_source_is_silent
     path = tmp_path / "kinds.csv"
     path.write_text(f"{head}\n2026-11-22,s,2020-01-02,2020-12-31,close,all,none,,x\n")
     with pytest.raises(Halt, match="leaves a field empty"):
+        load_price_kinds(path)
+
+
+def test_a_row_with_more_fields_than_its_header_is_refused(tmp_path: Path) -> None:
+    """A comma inside `read_from` would split it, and what follows would be dropped unseen."""
+    head = (
+        "added,source,first_session,last_session,price_kind,venues,delay,volume_counted,read_from"
+    )
+    path = tmp_path / "kinds.csv"
+    path.write_text(f"{head}\n2026-11-22,s,2020-01-02,2020-12-31,close,all,none,all,x,y\n")
+    with pytest.raises(Halt, match="kinds.csv row 1 holds more fields than its header names"):
         load_price_kinds(path)
 
 
