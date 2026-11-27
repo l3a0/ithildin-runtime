@@ -615,11 +615,10 @@ which the sealed read's close check relies on, as
 says. marketlake's README does not state that rule, so a check in the run would
 test marketlake's internals, which no check here does. The run prints the step
 below wherever it says to raise the pin or to wait for a deploy before raising
-it, and checks none of it. The runtime relies on the rule all the same, a price
-the owner's ruling accepted, as
-[`### 2026-11-26` in design.md's decisions](../design.md#2026-11-26) records,
-until [l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050)
-puts it in marketlake's contract. At marketlake `8565362`, its
+it, and checks none of it. The runtime relies on the rule all the same until
+[l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050) puts it
+in marketlake's contract, at the price entries 15 and 16 of
+[`### 2026-11-26` in design.md's decisions](../design.md#2026-11-26) record. At marketlake `8565362`, its
 `main` on 2026-11-26, two writers write such a row, and both write it at or
 after the equity close.
 

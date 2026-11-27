@@ -268,6 +268,11 @@ def test_each_rule_says_what_to_do() -> None:
     assert "before the equity close" in script.REREAD
     assert "names the commit it read" in script.REREAD
     assert "l3a0/marketlake#1050" in script.REREAD
+    # The printed step points to the section that names the writers, so a rename fails here.
+    heading = "#### What says the marketlake pin is due a raise"
+    assert f"`{heading}`" in script.REREAD
+    deployment = (REPO / "docs" / "architecture" / "07-deployment.md").read_text(encoding="utf-8")
+    assert f"\n{heading}\n" in deployment
     assert set(script.RAISES) == {script.RAISE_NOW, script.RAISE_TOGETHER, script.WAIT}
 
 

@@ -35,8 +35,9 @@ beyond these cases.
    from marketlake's code, read at `8565362` with its writers unchanged since
    the pin. A raise of the pin re-reads it, as
    docs/architecture/07-deployment.md's `#### What says the marketlake pin is
-   due a raise` says, and `scripts/check_lake_pin.py` prints that step. A
-   writer change deployed before a raise goes unseen until then.
+   due a raise` says, and `scripts/check_lake_pin.py` prints that step
+   wherever it says to raise the pin or to wait for a deploy. A writer change
+   deployed before a raise goes unseen until then.
 10. pyarrow's version. The check of the pin, `scripts/check_lake_pin.py`, is what
    compares it with the one marketlake's `uv.lock` holds at the pinned commit.
 """
