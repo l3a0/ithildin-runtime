@@ -160,7 +160,8 @@ def _section(text: str, opening: str) -> str:
 
 def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     # The owner types each floor into the hard caps by hand from what-a-person-runs.md's table of
-    # floors, so that table is held row by row to the floors worked out here from the closes.
+    # floors, so that table is held row by row to the floors worked out here from the closes, and
+    # to the funds each row names.
     design = (DOCS / "design.md").read_text(encoding="utf-8")
     why = _section(
         design, "**Why the caps of funds on the S&P 500 and the Nasdaq-100 reach back to 1987.**"
@@ -176,10 +177,19 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     spy, qqq = floors["S&P 500", 1], floors["Nasdaq-100", 1]
     assert (spy, qqq) == (FLOORS["the-s-and-p-500"][2], FLOORS["the-nasdaq-100"][2])
     rows = re.findall(
-        r"^\| (S&P 500|Nasdaq-100) \| (\d) \| [^|]+ \| ([\d.]+) \|$", table, re.MULTILINE
+        r"^\| (S&P 500|Nasdaq-100) \| (\d) \| ([^|]+) \| ([\d.]+) \|$", table, re.MULTILINE
     )
-    assert {(index, int(multiple)): floor for index, multiple, floor in rows} == floors
+    assert {(index, int(multiple)): floor for index, multiple, _, floor in rows} == floors
     assert len(rows) == len(floors)
+    # The owner finds a leg's row by its ticker, so each row names the funds the ruling named.
+    assert {(index, int(multiple)): funds.strip() for index, multiple, funds, _ in rows} == {
+        ("S&P 500", 1): "SPY, IVV, VOO",
+        ("S&P 500", 2): "SSO",
+        ("S&P 500", 3): "UPRO, SPXL",
+        ("Nasdaq-100", 1): "QQQ, QQQM",
+        ("Nasdaq-100", 2): "QLD",
+        ("Nasdaq-100", 3): "TQQQ",
+    }
     assert f"So a strategy with SPY and QQQ legs takes SPY's, {spy}." in steps
     # Every figure with a decimal point the paragraph holds, and how many times, so a typo in one
     # of two copies fails. The percentages are the falls and the records' moves it compares them
