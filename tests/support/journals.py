@@ -7,6 +7,7 @@ nothing with the table in `journal/orders.py`.
 
 from __future__ import annotations
 
+import hashlib
 import random
 from bisect import bisect_left, bisect_right, insort
 from collections.abc import Iterator, Mapping
@@ -28,7 +29,9 @@ from ithildinruntime.core import (
     OrderIntent,
     OrderType,
     RecordKind,
+    StaleTag,
     StopState,
+    StoredBlob,
     TargetPortfolio,
     TimeInForce,
     Verdict,
@@ -87,7 +90,7 @@ class Memory:
             raise KeyExists(key, "the key already holds a blob")
         self.blobs[key] = data
         insort(self._keys, key)
-        return ""
+        return _md5(data)
 
     def get(self, key: str) -> bytes:
         self.gets += 1
@@ -101,6 +104,27 @@ class Memory:
         keys = self._keys
         start = bisect_left(keys, prefix) if after is None else bisect_right(keys, after)
         return [key for key in keys[start:] if key.startswith(prefix)]
+
+    def head(self, key: str) -> StoredBlob:
+        try:
+            data = self.blobs[key]
+        except KeyError:
+            raise BlobMissing(key, "no blob at the key") from None
+        return StoredBlob(BlobRef(key, sha256_of(data)), _md5(data), AT)
+
+    def replace_if_match(self, key: str, data: bytes, sha256: str, etag: str) -> str:
+        """Rewrite a blob only while it carries `etag`, whose tag is the MD5 of its bytes."""
+        if key not in self.blobs:
+            raise BlobMissing(key, "no blob at the key to rewrite")
+        if _md5(self.blobs[key]) != etag:
+            raise StaleTag(key, "the blob carries another tag")
+        self.blobs[key] = data
+        return _md5(data)
+
+
+def _md5(data: bytes) -> str:
+    # S3 gives a blob stored in one part the MD5 of its bytes as its tag.
+    return f'"{hashlib.md5(data).hexdigest()}"'
 
 
 def add(journal: Journal, record: Record) -> int:

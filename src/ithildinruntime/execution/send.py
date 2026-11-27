@@ -597,7 +597,9 @@ def _planned(view: View, at: datetime, entry: DecisionEntry) -> DecisionEntry | 
 
     A different plan journaled for this decision halts, naming both, since its
     orders share this plan's ids and would go out under them. An identical one is
-    this stage's own, and the claim keeps any other writer out.
+    this stage's own: the claim keeps another call of the stage from planning this
+    decision, and the account's lease keeps two handlers from sending at once,
+    which does not stop a second plan.
     """
     seq = view.decided.get(at)
     if seq is None:
@@ -671,11 +673,11 @@ def _synced(view: View, recovered: int, seq: int, ref: BlobRef, read: AccountRea
         )
     book = view.book
     # Recover halts on any order in doubt, and the check above on any entry but a read before
-    # this sync's own. So only another writer's entries after it reach this, which the
-    # account's lease (#148) is to rule out.
+    # this sync's own. So only another writer's entries after it reach this, such as a
+    # handler's whose lease was taken over before its answer was journaled.
     if book.in_doubt:
         raise Halt(f"an order is in doubt in {', '.join(book.in_doubt)}")
-    if found := reconcile(book, view.live.values(), read):
+    if found := reconcile(book, view.live.values(), read, view.late):
         said = "; ".join(str(difference) for difference in found)
         raise Halt(f"the book and the broker differ, as {ref.key} holds it: {said}")
 

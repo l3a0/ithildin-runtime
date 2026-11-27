@@ -7,8 +7,9 @@ other answer stops the order, and its reason names the error's code and never
 the store's text.
 
 A control that halts the decision is read before the strategy's, so a strategy
-that is off never hides the run's halt. The plan's lease and the account's lease
-tag are read here too once #11 and #148 build them.
+that is off never hides the run's halt. The plan's lease is read here too once
+#11 builds it. The account's lease is not read here: the order path renews it
+right after these, which proves its tag.
 """
 
 from __future__ import annotations

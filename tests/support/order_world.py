@@ -50,6 +50,7 @@ from ithildinruntime.core import (
     TargetPortfolio,
     TimeInForce,
     Valuation,
+    account_lease_key,
     caps_key,
     decode,
     decode_output,
@@ -62,6 +63,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.core import OutputFile as File
 from ithildinruntime.execution.account import Account
+from ithildinruntime.execution.lease import free_lease
 from ithildinruntime.execution.order_path import OrderPath
 from ithildinruntime.journal import (
     DecisionEntry,
@@ -150,6 +152,17 @@ class Wired(Memory):
             return StoredBlob(BlobRef(key, sha256_of(self.blobs[key])), self.tags[key], AT)
 
         return self._hooked("head", key, read)
+
+    def replace_if_match(self, key: str, data: bytes, sha256: str, etag: str) -> str:
+        def rewrote() -> str:
+            if key not in self.blobs:
+                raise BlobMissing(key, "NoSuchKey: the store's own text")
+            if self.tags.get(key) != etag:
+                raise StaleTag(key, "PreconditionFailed: the store's own text")
+            self.blobs[key] = data
+            return self._tagged(key)
+
+        return self._hooked("replace", key, rewrote)
 
     def put(self, key: str, data: bytes) -> None:
         """Write a blob by hand, around every rule the store keeps and every hook."""
@@ -396,6 +409,12 @@ class World:
         self.record(ack(name, "old-1"))
         bought = fill("old-f1", "old-1", qty, 1, gates.GLD, at=at, received_at=at)
         self.record(FillEntry(bought, 2))
+        # The session before sent under the account's lease, which it left free.
+        self.plant_lease()
+
+    def plant_lease(self, count: int = 1) -> None:
+        """The account's lease as a holder that sent before leaves it: free, and owing nothing."""
+        self.store.put(account_lease_key(ACCOUNT), encode(free_lease(count, False)))
 
     def reader(self) -> Journal:
         return Journal(Memory(self.store.blobs), ACCOUNT)

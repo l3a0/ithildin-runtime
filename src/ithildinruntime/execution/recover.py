@@ -207,7 +207,7 @@ class RecoverStage:
 
         view = account.view(report)
         book = view.book
-        if found := reconcile(book, view.live.values(), read):
+        if found := reconcile(book, view.live.values(), read, view.late):
             said = "; ".join(str(difference) for difference in found)
             raise Halt(f"the book and the broker differ, as {capture.ref.key} holds it: {said}")
         self._past_their_session([o for o in view.live.values() if o.state in OPEN], at, report)

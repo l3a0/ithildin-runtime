@@ -71,6 +71,7 @@ __all__ = [
     "StopClearedEntry",
     "StopFiredEntry",
     "StopStoredEntry",
+    "TakeoverEntry",
     "UnmatchedFillEntry",
     "UnmatchedOrderEntry",
     "UnmatchedRecordEntry",
@@ -388,6 +389,33 @@ class PauseEntry:
     ended: bool
 
 
+@dataclass(frozen=True)
+class TakeoverEntry:
+    """A take of the account's lease that another holder may still act under, journaled first.
+
+    `execution/lease.py` gives the rules. A take writes one when the lease it read
+    had expired unrenewed, or was free with a takeover still owed, before it acts.
+
+    - `tag` is the lease's tag the take rewrote, and `count` the count it wrote.
+    - `holder` names the handler the takeover is owed from: the one whose lease
+      ran out, or the one an earlier takeover left owed was owed from. It is
+      `None` only after a person's clear.
+    - `expired` is when that holder's lease ran out, or `None` after a clear.
+    - `orders` names the broker's order list the take read and stored, from `since`.
+    - `late` names each order that had a `sending` and no answer here, `Sending`
+      or `InDoubt`, and that the list omits. An older holder may still send one,
+      so the book refuses any `ack` for it, as a late order under an older lease.
+    """
+
+    tag: str
+    count: int
+    holder: str | None
+    expired: datetime | None
+    since: datetime
+    orders: BlobRef
+    late: tuple[str, ...]
+
+
 Record = (
     OpeningEntry
     | ReadEntry
@@ -411,6 +439,7 @@ Record = (
     | StopStoredEntry
     | StopClearedEntry
     | PauseEntry
+    | TakeoverEntry
 )
 
 KINDS: Mapping[str, type] = MappingProxyType(
@@ -437,6 +466,7 @@ KINDS: Mapping[str, type] = MappingProxyType(
         "stop_stored": StopStoredEntry,
         "stop_cleared": StopClearedEntry,
         "pause": PauseEntry,
+        "takeover": TakeoverEntry,
     }
 )
 _NAMES: Mapping[type, str] = MappingProxyType({kind: name for name, kind in KINDS.items()})
@@ -561,6 +591,16 @@ def _past_bounds(record: Record) -> Iterator[str]:
                 yield f"it names entry {record.fired}, which no journal holds"
             if isinstance(record, StopStoredEntry) and not record.etag:
                 yield "it names no tag"
+        case TakeoverEntry():
+            yield from _blobs(record.orders)
+            if not record.tag:
+                yield "it names no tag"
+            if record.count < 1:
+                yield f"it names the count {record.count}, which no rewrite writes"
+            if list(record.late) != sorted(set(record.late)):
+                yield "the late orders are not sorted, or one is named twice"
+            if (record.holder is None) != (record.expired is None):
+                yield "it names a holder and no expiry, or an expiry and no holder"
         case _:
             pass
 

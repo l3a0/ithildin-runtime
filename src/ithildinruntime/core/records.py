@@ -1490,7 +1490,14 @@ class Lease(_Record):
     """A lease's holder, down to the handler, and when it expires.
 
     The holder's fields are `None` while the lease is free. `status` is set
-    only on a plan's lease, where it holds the run's status.
+    only on a plan's lease, where it holds the run's status. `count` rises by one
+    on every rewrite, so no two writes hold the same bytes and S3's tag, which can
+    be a hash of them, never repeats. `owed` is set only on an account's lease,
+    from a take of an expired lease or a person's clear until the takeover is
+    journaled, so a release in between leaves the takeover owed. `owed_from` and
+    `owed_expired` name the holder the takeover is owed from and when its lease
+    ran out, kept across that release and through a later taker that holds
+    the lease with the takeover still owed, and are `None` for a person's clear.
     """
 
     format: int
@@ -1504,6 +1511,10 @@ class Lease(_Record):
     taken: datetime | None
     expires: datetime | None
     status: str | None
+    count: int
+    owed: bool
+    owed_from: str | None
+    owed_expired: datetime | None
 
 
 @dataclass(frozen=True)

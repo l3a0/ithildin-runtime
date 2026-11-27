@@ -58,6 +58,7 @@ from ithildinruntime.journal import (
     StopClearedEntry,
     StopFiredEntry,
     StopStoredEntry,
+    TakeoverEntry,
     UnmatchedFillEntry,
     UnmatchedOrderEntry,
     UnmatchedRecordEntry,
@@ -148,12 +149,24 @@ SAMPLES: tuple[Record, ...] = (
     StopClearedEntry(2),
     PauseEntry("paper", "2026-11-02", AT, (CHAN, OTHER), "the run's stop is missing", (), True),
     PauseEntry("paper", "2026-11-02", None, (), "a machine was lost", ("b-1", "b-2"), False),
+    TakeoverEntry(
+        '"9b2cf535f27731c974343645a3985328"',
+        3,
+        "c" * 32 + "-0123456789abcdef",
+        AT,
+        AT - timedelta(seconds=60),
+        BlobRef("runs/d-1/r-1/execution/takeovers/20261001T194000.000000Z.json", "a" * 64),
+        (NAME,),
+    ),
+    TakeoverEntry('"e1"', 9, None, None, AT, BlobRef("t.json", "b" * 64), ()),
 )
+
+TAKEOVER = SAMPLES[-2]
 
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
-    assert len(KINDS) == 22
+    assert len(KINDS) == 23
 
 
 # Acceptance 1: each kind there and back.
@@ -203,6 +216,7 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
         StopFiredEntry("c" * 32, "d-1", "r-1", AT, PAST, "the day's loss read past its stop"),
         StopStoredEntry(fired, "tag-1"),
         StopClearedEntry(fired),
+        TakeoverEntry('"tag-2"', 2, None, None, AT, BlobRef("t.json", "c" * 64), ()),
     ]
     given += [PauseEntry("paper", "2026-11-02", AT, (CHAN,), "no stop", (), True)]
     view = journal.view()
@@ -537,6 +551,21 @@ BIG = b"x" * RAW_LIMIT
         (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", (), False), "either the run's end"),
         (PauseEntry("p", "2026-11-02", AT, (OTHER, CHAN), "r", (), True), "strategies held"),
         (PauseEntry("p", "2026-11-02", AT, (CHAN, CHAN), "r", (), True), "strategies held"),
+        *(
+            (dataclasses.replace(TAKEOVER, **changes), past)
+            for changes, past in (
+                ({"count": 1}, None),
+                ({"count": 0}, "it names the count 0, which no rewrite writes"),
+                ({"tag": ""}, "it names no tag"),
+                ({"late": ("a", "b")}, None),
+                ({"late": ("b", "a")}, "the late orders are not sorted"),
+                ({"late": ("a", "a")}, "the late orders are not sorted, or one is named twice"),
+                ({"expired": None}, "it names a holder and no expiry"),
+                ({"holder": None}, "it names a holder and no expiry, or an expiry and no holder"),
+                ({"holder": None, "expired": None}, None),
+                ({"orders": BlobRef("k", "a" * 63)}, "the key 'k' and SHA-256 .* name no blob"),
+            )
+        ),
     ],
 )
 def test_1_each_bound_is_held_one_step_inside_and_outside(record: Record, past: str | None) -> None:
@@ -805,7 +834,7 @@ def _committed() -> list[tuple[Record, datetime]]:
         InDoubtEntry(late.client_order_id, sending_ended, None, False, t(61)),
         ReadEntry("execution/recover", day_after, blob("lookup-1"), day_after),
         LostEntry(late.client_order_id, 62, "the broker's whole order list omits it"),
-        # A pause comes last, so no entry before it is written again.
+        # A pause and then a take of the lease come last, so no entry before them is written again.
         PauseEntry(
             "fixture",
             "2026-09-30",
@@ -814,6 +843,20 @@ def _committed() -> list[tuple[Record, datetime]]:
             "the run's stop is missing",
             (),
             True,
+        ),
+        # A take of the lease the crash left held, once it expired. The lost order has ended,
+        # so no order is late.
+        TakeoverEntry(
+            '"7d793037a0760186574b0282f2f435e7"',
+            4,
+            "1" * 32 + "-0a1b2c3d4e5f6a7b",
+            t(62),
+            t(63) - timedelta(seconds=60),
+            BlobRef(
+                "runs/fixture/2026-10-01/execution/takeovers/20261001T194103.000000Z.json",
+                sha256_of(b"takeover"),
+            ),
+            (),
         ),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]
@@ -896,8 +939,8 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
     whole = journal.view()
     # After the dispute come a fee that moves the cash, three entries that move nothing, a stop's
     # firing stored and cleared, and a plan of the next day whose one closing-auction order a
-    # crash leaves sending and the recover after it gives up as lost. A pause comes last and
-    # moves nothing.
+    # crash leaves sending and the recover after it gives up as lost. A pause moves nothing,
+    # and a take of the lease that crash left held finds no order late.
     late = afterwards["lost"]["order"]
     assert {
         "through": whole.through.seq,
