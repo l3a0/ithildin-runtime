@@ -2143,33 +2143,27 @@ def test_7_a_refused_abandoned_after_an_outage_is_named_in_the_halt(monkeypatch)
     assert len(account.unstored()) == 1 and len(world.alarms.sent) == 1
 
 
-@pytest.mark.parametrize(("kind", "seq"), [("intent", 4), ("verdict", 5)])
-@pytest.mark.parametrize("heals", [False, True], ids=["stays down", "answers after the page"])
-def test_2_an_entry_the_journal_does_not_take_pages_once_and_waits_no_second_deadline(
-    kind: str, seq: int, heals: bool
-) -> None:
-    """The journal failed and paged, so its `abandoned` is tried once with no wait (#211)."""
-    world = World(retry=RETRY)
-    world.clock.moves = True
-    key = journal_entry_key(ACCOUNT, seq)
+def test_7_a_kept_abandoned_the_journal_turns_in_doubt_is_a_plain_halt(monkeypatch) -> None:
+    """The journal answered with another state, so the send stage reads it, never "not sent"."""
+    from ithildinruntime.execution.order_path import Unstored
+
+    world = World()
+    account = world.account()
 
     def before(number: int, op: str, k: str) -> None:
-        if op == "create" and k == key and not (heals and world.alarms.sent):
+        if number >= CAPS_READS[1] and k == caps_key(ACCOUNT):
             down(number, op, k)
 
     world.store.before = before
-    with pytest.raises(Outage) as raised:
-        world.send()
-    reason = raised.value.reason
-    assert f"the {kind} of {ID} was not stored: StoreUnavailable" in reason
-    assert world.submits == 0
-    assert sum(world.clock.waits) == RETRY.deadline.total_seconds()
-    assert len(world.alarms.sent) == 1 and "The owner's step" in reason
-    if heals:
-        assert f"The journal shows {ID} Abandoned" in reason
-        assert world.state() is OrderState.ABANDONED
-    else:
-        assert f"The abandoned of {ID} was not stored" in reason
+
+    def turned(self, kept, report, once=False):
+        return OrderState.IN_DOUBT
+
+    monkeypatch.setattr(Unstored, "_store", turned)
+    with pytest.raises(Halt) as raised:
+        world.send(account=account)
+    assert not isinstance(raised.value, Outage)
+    assert f"The journal shows {ID} InDoubt, which this call did not do" in raised.value.reason
 
 
 @pytest.mark.parametrize("at", range(CREATES[2] + 1, BEFORE_SUBMIT + 1))

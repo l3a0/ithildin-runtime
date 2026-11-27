@@ -964,8 +964,7 @@ def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
     reason = result.halt.reason
     assert tried == [] and made.submits() == [first]
     down = "since a store stopped answering"
-    # The path's own halt says what became of the order it stopped, so the stage claims nothing.
-    assert "not journaled abandoned" not in reason
+    assert f"{second} was not journaled abandoned by this stage, {down}" in reason
     assert f"stand so: {first} acknowledged, {second} not sent, {down}" in reason
     # The outage's own page and the one naming every leg.
     sent = made.alarms.sent[alarms:]
@@ -1130,6 +1129,34 @@ def test_an_outage_at_a_read_among_the_last_checks_pages_once_and_keeps_its_aban
     made.store.refuse()
     made.account.settle(lambda: None)
     assert made.view().orders[second].state is OrderState.ABANDONED
+
+
+def test_an_outage_at_an_abandon_after_a_failed_send_names_a_store(monkeypatch) -> None:
+    """The send's halt is no outage and the journal answers, then the first abandon meets one."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath.send
+
+    def send(self, name):
+        if name == first:
+            raise Halt("the first leg halted")
+        return real(self, name)
+
+    def abandon(self, name, reason):
+        made.store.refuse(("*", "journal/"))
+        raise self._outage("the journal could not be read: StoreUnavailable")
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    monkeypatch.setattr(OrderPath, "abandon", abandon)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    reason = result.halt.reason
+    down = "since a store stopped answering"
+    assert f"{first}, {second} were not journaled abandoned by this stage, {down}" in reason
+    assert f"The plan's orders stand so: {first} not sent, {second} not sent, {down}" in reason
+    # The abandon's own outage page and the one naming every leg.
+    assert len(made.alarms.sent[alarms:]) == 2
 
 
 def test_a_first_leg_whose_call_failed_with_the_journal_gone_leaves_the_second_unsent(

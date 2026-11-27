@@ -1468,10 +1468,10 @@ class OrderPath:
         kept = raw[:RAW_LIMIT] if raw is not None else None
         return InDoubtEntry(answer.order.client_order_id, reason, kept, cut, at or answer.at)
 
-    def _held_unsent(self, name: str, outage: Outage, at: datetime) -> Outage:
+    def _held_unsent(self, name: str, outage: Outage, at: datetime) -> Halt:
         """Keep the `abandoned` of an order with a `sending` that never left, and try it once.
 
-        The store has just failed and paged, so the one try pages nothing more.
+        The store has just failed and paged, so the one try sends no page about it.
         Where it does not land, the entry waits for the next settle, and the
         outage that is raised says so. A process that dies first leaves the
         `sending` with no answer, which the next recover looks up.
@@ -1489,8 +1489,12 @@ class OrderPath:
                 f"{reason}. The journal did not take the abandoned of {name}: {_said(error)}. "
                 "It is kept and tried again before the next send"
             )
-        if state is not None:
+        if state is OrderState.ABANDONED:
             return Outage(f"{reason}. The journal shows {name} {state}")
+        if state is not None:
+            # The journal answered with another state, such as `InDoubt` where its fold refused
+            # the entry, so this is a plain halt and the send stage reads what it holds.
+            return Halt(f"{reason}. The journal shows {name} {state}, which this call did not do")
         return Outage(
             f"{reason}. The abandoned of {name} is kept and tried again before the next send"
         )
@@ -1546,15 +1550,10 @@ class OrderPath:
             raise self._outage(f"the journal could not be read: {code_of(error)}") from None
 
     def _record(
-        self,
-        view: View,
-        record: Record,
-        until: datetime | None = None,
-        tries: Tries | None = None,
+        self, view: View, record: Record, until: datetime | None = None
     ) -> tuple[JournalAck, View]:
         """Append one entry, built once and resent unchanged."""
-        at = self._shared.clock.now()
-        tries = tries or self._shared.patience.tries(self._report, until)
+        at, tries = self._shared.clock.now(), self._shared.patience.tries(self._report, until)
         return tries(lambda: self._shared.journal.record(view, record, at))
 
     def _recorded(
@@ -1589,20 +1588,7 @@ class OrderPath:
         which may have it at the broker, so it alarms and is left as it is.
         """
         if error is not None:
-            # The journal did not answer by the deadline, so it pages once here and the
-            # `abandoned` is tried once with no wait. Where it does not land, the `intent`
-            # stands, for the next recover to journal it abandoned.
-            outage = self._outage(f"{reason}: {code_of(error)}")
-            try:
-                state = self._abandoned(name, outage.reason, once=True)
-            except _Unjournaled as failed:
-                return Outage(f"{outage.reason}. The abandoned of {name} was not stored: {failed}")
-            except Halt as halt:
-                return Outage(f"{outage.reason}. {name} was not journaled abandoned: {halt.reason}")
-            if state is OrderState.ABANDONED:
-                return Outage(f"{outage.reason}. The journal shows {name} {state}")
-            what = f"{outage.reason}. The journal shows {name} {state}, which this call did not do"
-            return Outage(f"{what}{_alarm(self._shared.alerts, what)}")
+            reason = f"{reason}: {code_of(error)}"
         try:
             state = self._abandoned(name, reason)
         except _Unjournaled as failed:
@@ -1614,17 +1600,9 @@ class OrderPath:
         what = f"{reason}. The journal shows {name} {state}, which this call did not do"
         return Halt(f"{what}{_alarm(self._shared.alerts, what)}")
 
-    def _abandoned(self, name: str, reason: str, once: bool = False) -> OrderState:
-        """Journal `abandoned` for an order with no `sending`, and return the state it is in.
-
-        `once` makes each read and append once, with no wait, for a journal that has
-        just failed and paged.
-        """
-        patience = self._shared.patience
-        journal = self._shared.journal
-        tries = patience.once(self._report) if once else patience.tries(self._report)
-        # Each append gets a deadline of its own unless every call is made once.
-        appends = tries if once else None
+    def _abandoned(self, name: str, reason: str) -> OrderState:
+        """Journal `abandoned` for an order with no `sending`, and return the state it is in."""
+        journal, tries = self._shared.journal, self._shared.patience.tries(self._report)
         shows = "the journal could not be read"
         for _ in range(_STARTS_OVER + 1):
             try:
@@ -1633,14 +1611,12 @@ class OrderPath:
                 if order is None:
                     shows = f"the journal showed no entry of {name}"
                     planned = self._planned(view, name)
-                    _, view = self._record(
-                        view, IntentEntry(planned.seq, planned.order), tries=appends
-                    )
+                    _, view = self._record(view, IntentEntry(planned.seq, planned.order))
                     order = view.orders[name]
                 shows = f"the journal showed {name} {order.state}"
                 if order.state not in _NOT_SENT:
                     return order.state
-                self._record(view, AbandonedEntry(name, _text(reason)), tries=appends)
+                self._record(view, AbandonedEntry(name, _text(reason)))
                 return OrderState.ABANDONED
             except NumberTaken:
                 continue
