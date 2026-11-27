@@ -378,6 +378,28 @@ def test_a_release_that_finds_the_lease_gone_says_what_the_next_take_does(sent: 
         assert world.send(2) is OrderState.ACKNOWLEDGED
 
 
+@pytest.mark.parametrize("sent", [False, True], ids=["a first use", "a journal that sent"])
+def test_a_renewal_that_finds_the_lease_gone_sends_nothing(sent: bool) -> None:
+    orders = (order(1, 2), order(2, 1, gates.USO))
+    world = World(orders=orders, position=Decimal(3)) if sent else World(orders=orders)
+    # A journal that sent planted a lease, which the take rewrites, so the renewal is the second
+    # rewrite there and the first on a first use.
+    replaces: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY):
+            replaces.append(number)
+            if len(replaces) == 1 + sent:
+                world.store.drop(KEY)
+
+    world.store.before = before
+    halted(world, f"the account's lease is gone from {KEY}, so its renewal was refused")
+    assert world.state() is OrderState.ABANDONED
+    world.store.before = lambda *_: None
+    # Its own `sending` is in the journal now, so the next take finds the lease lost.
+    halted(world, "lease is absent", lambda: world.send(2))
+
+
 def test_a_release_whose_first_try_landed_unanswered_leaves_the_lease_free() -> None:
     world = World()
     replaced: list[int] = []
@@ -508,6 +530,8 @@ def test_a_take_of_an_expired_lease_stores_the_list_and_journals_the_takeover_fi
     ran_out = (NOW - timedelta(minutes=1)).isoformat()
     assert f"taken over from {FROZEN} of the run {RUN}, whose lease ran out at {ran_out}" in said
     assert f"the broker's order list is stored at {entry.orders.key}, and finds {late} late" in said
+    # An ordinary takeover names no taker that failed one before it.
+    assert "failed that takeover" not in said
 
 
 def test_a_takeover_owed_names_its_holder_and_the_taker_that_died_holding_it() -> None:
