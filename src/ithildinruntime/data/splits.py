@@ -469,6 +469,10 @@ def _instrument(
             "so it is not the read this release writes"
         )
     for pair in found:
+        if pair.quoted and short:
+            # The stored pairs keep the release a covered row gives them.
+            yield _short(instrument, short)
+            short = []
         cover = covers.get((pair.instrument, pair.earlier, pair.later))
         if pair.quoted and pair.earlier != sessions.before(pair.later).day:
             yield (

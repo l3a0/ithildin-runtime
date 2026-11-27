@@ -697,3 +697,16 @@ def test_6_a_halt_on_the_decisions_own_pair_names_no_covered_row_as_its_release(
     for reason in reasons:
         assert "stays halted for this session" in reason
         assert "covered row reaching" not in reason
+
+
+def test_9_a_run_of_unreached_pairs_ending_at_the_own_pair_keeps_its_covered_row_release() -> None:
+    """The stored pairs name the covered row that releases them, and the own pair its session."""
+    days = list(flat(3))
+    covers = (cover(USO, days[0], days[1], "100.0"), cover(USO, days[1], days[2]))
+    found = snap(flat(3), covers=covers, quoted="100.0")
+    own = replace(found.splits.pairs[-1], close_prices=(), source=None)
+    found = replace(found, splits=replace(found.splits, pairs=(*covers, own)))
+    stored, today = check_splits(found, TABLE)
+    assert f"the sessions {days[1]} and {days[2]}" in stored
+    assert f"A covered row reaching {days[2]} releases it" in stored
+    assert f"the sessions {days[2]} and {DAY}" in today and "stays halted for this session" in today
