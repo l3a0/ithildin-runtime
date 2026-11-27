@@ -453,7 +453,7 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 
 #### Fetch what a row is read from
 
-1. Save every answer fetched for the record of splits, whether or not a row cites it, under `~/.config/ithildin-runtime/splits/<date>/`, where `<date>` is the UTC date of the fetch, never in the repository. Save an issuer's filing as fetched and a vendor's answer as its connector returned it, and list each file's address and UTC fetch time in a `README.md` there.
+1. Save every answer fetched for the record of splits, whether or not a row cites it, under `~/.config/ithildin-runtime/splits/<date>/`, where `<date>` is the UTC date of the fetch, never in the repository. Save an issuer's filing as fetched and a vendor's answer as its connector returned it, and list each file's address and UTC fetch time in a `README.md` there. A later fetch of the date adds an entry and never changes one.
 2. Write the SHA-256 of each file a row cites into the row's `read_from`, beside its address and fetch time. `read_from` holds no comma, because the loader splits the row on commas.
 
 These answers are recorded data, and an issuer's filing can be fetched again while a vendor's answer of that day cannot. So two things must hold for every saved answer, and [#250](https://github.com/l3a0/ithildin-runtime/issues/250) builds how.
