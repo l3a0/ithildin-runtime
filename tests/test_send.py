@@ -974,7 +974,8 @@ def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
 def test_an_outage_at_a_legs_last_checks_pages_once_and_keeps_its_abandoned(monkeypatch) -> None:
     """The real path meets the outage after the `sending`, so the leg was not sent (#211 item 11).
 
-    Its `abandoned` is kept and not tried while the store is down, and the next settle stores it.
+    Its `abandoned` is tried once with no page, kept while the store is down, and stored at the
+    next settle.
     """
     made = world()
     made.ready(close_of(FULL), PAIR)
@@ -1031,6 +1032,38 @@ def test_an_outage_at_an_orders_gate_check_pages_once_and_leaves_it_for_recover(
     made.store.refuse()
     assert made.view().orders[first].state is OrderState.INTENDED
     assert second not in made.view().orders
+
+
+def test_a_sending_missing_at_its_read_back_is_no_outage(monkeypatch) -> None:
+    """The store answered that the entry is gone, so it halts as before and pages no outage."""
+    from ithildinruntime.core import BlobMissing, journal_entry_key
+
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath._just_sending
+    once: list[str] = []
+
+    def just_sending(self, view, cleared, tries):
+        if cleared.name == second:
+            key = journal_entry_key(ACCOUNT, cleared.ack.seq)
+
+            def gone(number: int, op: str, k: str) -> None:
+                if op == "get" and k == key and not once:
+                    once.append(k)
+                    raise BlobMissing(k, "no such key")
+
+            made.store.before = gone
+        return real(self, view, cleared, tries)
+
+    monkeypatch.setattr(OrderPath, "_just_sending", just_sending)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    assert made.submits() == [first] and once
+    assert "could not be read: BlobMissing" in result.halt.reason
+    (page,) = made.alarms.sent[alarms:]
+    assert "The owner's step" not in page
+    assert made.view().orders[second].state is OrderState.ABANDONED
 
 
 def test_an_outage_reading_back_a_legs_sending_pages_once_and_keeps_its_abandoned(

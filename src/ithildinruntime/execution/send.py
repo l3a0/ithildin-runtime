@@ -34,13 +34,13 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    quotes the snapshot holds of each instrument the book holds or has a working
    order in, and of each the plan orders. One that would not last the plan's
    sends halts with nothing asked or sent, and every order of the plan ends
-   `Abandoned`, by this stage or, where the journal stops answering or cannot
-   be read, by the next recover where any order of the plan has an entry. Where any of those
+   `Abandoned`, by this stage or, where a store stops answering or the journal
+   cannot be read, by the next recover where any order of the plan has an entry. Where any of those
    quotes fails at `now` itself, the whole plan is left to the gate. Then
    `OrderPath.ask` about the whole plan. Where any order is refused or halts, nothing is
    sent, and every order of the plan ends `Refused` or `Abandoned`, by this
-   stage or, where the journal stops answering or cannot be read, by the next
-   recover. A store that stops answering at the ask pages once, and nothing more
+   stage or, where a store stops answering or the journal cannot be read, by
+   the next recover. A store that stops answering at the ask pages once, and nothing more
    is asked or journaled. A plan none of whose orders has an entry stays so,
    with nothing sent.
 8. `OrderPath.send` for each order in the plan's order. An answer other than
@@ -546,6 +546,7 @@ class SendStage:
             except Outage as outage:
                 said.append(outage.reason)
                 down = True
+                why = "a store stopped answering"
                 left.append(name)
             except Halt as failed:
                 said.append(failed.reason)

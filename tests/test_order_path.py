@@ -2109,7 +2109,7 @@ def test_7_caps_that_cannot_be_read_again_stop_the_order(fault: str) -> None:
         "unreadable": "the hard caps could not be read again: StoreUnavailable",
     }
     account = world.account()
-    halted(world, said[fault], lambda: world.send(account=account))
+    reason = halted(world, said[fault], lambda: world.send(account=account))
     if fault != "unreadable":
         assert world.state() is OrderState.ABANDONED
         return
@@ -2118,6 +2118,38 @@ def test_7_caps_that_cannot_be_read_again_stop_the_order(fault: str) -> None:
     assert len(world.alarms.sent) == 1, world.alarms.sent
     assert world.state() is OrderState.ABANDONED
     assert account.unstored() == ()
+    assert f"The journal shows {ID} Abandoned" in reason and "is kept" not in reason
+
+
+def test_7_a_refused_abandoned_after_an_outage_is_named_in_the_halt(monkeypatch) -> None:
+    """The one try's halt, such as a fold that refuses the entry, is said, and the entry kept."""
+    from ithildinruntime.execution.order_path import Unstored
+
+    world = World()
+    account = world.account()
+
+    def before(number: int, op: str, k: str) -> None:
+        if number >= CAPS_READS[1] and k == caps_key(ACCOUNT):
+            down(number, op, k)
+
+    def refused(self, kept, report, once=False):
+        raise Halt("the fold refuses it")
+
+    world.store.before = before
+    monkeypatch.setattr(Unstored, "_store", refused)
+    reason = halted(world, "could not be read again", lambda: world.send(account=account))
+    assert f"The journal did not take the abandoned of {ID}: the fold refuses it" in reason
+    assert len(account.unstored()) == 1 and len(world.alarms.sent) == 1
+
+
+def test_2_an_intent_the_journal_does_not_take_pages_once_and_waits_no_second_deadline() -> None:
+    """The journal failed and paged, so its `abandoned` is tried once with no wait (#211)."""
+    world = World(retry=RETRY)
+    world.clock.moves = True
+    world.store.refuse(("create", journal_entry_key(ACCOUNT, 4)))
+    reason = halted(world, f"the intent of {ID} was not stored: StoreUnavailable")
+    assert sum(world.clock.waits) == RETRY.deadline.total_seconds()
+    assert len(world.alarms.sent) == 1 and "The owner's step" in reason
 
 
 @pytest.mark.parametrize("at", range(CREATES[2] + 1, BEFORE_SUBMIT + 1))

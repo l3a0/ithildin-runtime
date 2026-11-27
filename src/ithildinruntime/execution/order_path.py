@@ -326,18 +326,20 @@ class Unstored:
     ) -> OrderState | None:
         """Keep an entry and try it once, for a store that has just failed and paged.
 
-        The one try sends no alarm about the journal, since the outage paged
-        already, and returns the state the order is in where it lands. Where it
-        does not, the entry stays, and each `settle` tries it, as it tries every
-        kept entry. An outage of another blob, such as the hard caps, leaves the
-        journal answering, so the entry lands at once.
+        The one try sends no alarm about the journal's outage, since that paged
+        already, and returns the state the order is in where it lands. Where the
+        store does not answer it, the entry stays, and each `settle` tries it, as
+        it tries every kept entry. An outage of another blob, such as the hard
+        caps, leaves the journal answering, so the entry lands at once. A journal
+        that refuses the entry still pages, as `put` does, and any other halt is
+        raised with the entry kept.
         """
         kept = _Kept(name, record, at, sent)
         with self._lock:
             self._kept.append(kept)
         try:
             return self._store(kept, report, once=True)
-        except Exception:
+        except StoreError:
             return None
 
     def settle(self, report: Callable[[], None]) -> None:
@@ -1479,7 +1481,13 @@ class OrderPath:
             pass
         reason = outage.reason
         record = AbandonedEntry(name, _text(reason))
-        state = self._shared.unstored.hold(name, record, at, "not sent", self._report)
+        try:
+            state = self._shared.unstored.hold(name, record, at, "not sent", self._report)
+        except Exception as error:
+            return Outage(
+                f"{reason}. The journal did not take the abandoned of {name}: {_said(error)}. "
+                "It is kept and tried again before the next send"
+            )
         if state is not None:
             return Outage(f"{reason}. The journal shows {name} {state}")
         return Outage(
@@ -1537,10 +1545,15 @@ class OrderPath:
             raise self._outage(f"the journal could not be read: {code_of(error)}") from None
 
     def _record(
-        self, view: View, record: Record, until: datetime | None = None
+        self,
+        view: View,
+        record: Record,
+        until: datetime | None = None,
+        tries: Tries | None = None,
     ) -> tuple[JournalAck, View]:
         """Append one entry, built once and resent unchanged."""
-        at, tries = self._shared.clock.now(), self._shared.patience.tries(self._report, until)
+        at = self._shared.clock.now()
+        tries = tries or self._shared.patience.tries(self._report, until)
         return tries(lambda: self._shared.journal.record(view, record, at))
 
     def _recorded(
@@ -1575,7 +1588,20 @@ class OrderPath:
         which may have it at the broker, so it alarms and is left as it is.
         """
         if error is not None:
-            reason = f"{reason}: {code_of(error)}"
+            # The journal did not answer by the deadline, so it pages once here and the
+            # `abandoned` is tried once with no wait. Where it does not land, the `intent`
+            # stands, for the next recover to journal it abandoned.
+            outage = self._outage(f"{reason}: {code_of(error)}")
+            try:
+                state = self._abandoned(name, outage.reason, once=True)
+            except _Unjournaled as failed:
+                return Outage(f"{outage.reason}. The abandoned of {name} was not stored: {failed}")
+            except Halt as halt:
+                return Outage(f"{outage.reason}. {name} was not journaled abandoned: {halt.reason}")
+            if state is OrderState.ABANDONED:
+                return Outage(f"{outage.reason}. The journal shows {name} {state}")
+            what = f"{outage.reason}. The journal shows {name} {state}, which this call did not do"
+            return Outage(f"{what}{_alarm(self._shared.alerts, what)}")
         try:
             state = self._abandoned(name, reason)
         except _Unjournaled as failed:
@@ -1587,9 +1613,15 @@ class OrderPath:
         what = f"{reason}. The journal shows {name} {state}, which this call did not do"
         return Halt(f"{what}{_alarm(self._shared.alerts, what)}")
 
-    def _abandoned(self, name: str, reason: str) -> OrderState:
-        """Journal `abandoned` for an order with no `sending`, and return the state it is in."""
-        journal, tries = self._shared.journal, self._shared.patience.tries(self._report)
+    def _abandoned(self, name: str, reason: str, once: bool = False) -> OrderState:
+        """Journal `abandoned` for an order with no `sending`, and return the state it is in.
+
+        `once` makes each read and append once, with no wait, for a journal that has
+        just failed and paged.
+        """
+        patience = self._shared.patience
+        journal = self._shared.journal
+        tries = patience.once(self._report) if once else patience.tries(self._report)
         shows = "the journal could not be read"
         for _ in range(_STARTS_OVER + 1):
             try:
@@ -1598,12 +1630,14 @@ class OrderPath:
                 if order is None:
                     shows = f"the journal showed no entry of {name}"
                     planned = self._planned(view, name)
-                    _, view = self._record(view, IntentEntry(planned.seq, planned.order))
+                    _, view = self._record(
+                        view, IntentEntry(planned.seq, planned.order), tries=tries
+                    )
                     order = view.orders[name]
                 shows = f"the journal showed {name} {order.state}"
                 if order.state not in _NOT_SENT:
                     return order.state
-                self._record(view, AbandonedEntry(name, _text(reason)))
+                self._record(view, AbandonedEntry(name, _text(reason)), tries=tries)
                 return OrderState.ABANDONED
             except NumberTaken:
                 continue
