@@ -564,7 +564,7 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 | `max_open_orders` | A JSON integer | Orders |
 | `moc_cutoff` | A JSON integer | Minutes before the close |
 | `share` | A decimal string | The share of V one stranded leg may lose, strictly between 0 and 1 |
-| `stress_move` | A decimal string | The stress move, as a fraction, at or above the one its record holds |
+| `stress_move` | A decimal string | The stress move, as a fraction, at or above the one its record holds, and for a strategy with a SPY leg at or above 0.24570586, as design.md's `**Why SPY's caps reach back to 1987.**` says |
 | `stress_low`, `stress_high` | Decimal strings | The sane range of the stress move, both ends allowed |
 | `stress_vintage` | 64 lower case hex digits | The SHA-256 of the vintage the stress move was measured over, which names [its record](#the-stress-moves-record) |
 | `stress_through` | `YYYY-MM-DD` | That vintage's last session, as the record holds it |
