@@ -35,6 +35,22 @@ def close_row(ticker: str, close: datetime) -> dict[str, object]:
     return row(ticker, close, close_tag="spot_close", bid=7777.0, ask=7778.0)
 
 
+def gap_close_row(ticker: str, close: datetime, tagged: bool = True) -> dict[str, object]:
+    """The gap row marketlake writes at the equity close when its capture fails.
+
+    Tagged `spot_close` as the close's own cycle and the close+5 guard write it,
+    or untagged as gap marking writes a minute the daemon was dead across.
+    """
+    batch = journal.gap_batch(
+        journal.QUOTES_SURFACE,
+        ticker=ticker,
+        snap_ts=close,
+        error_class="spot_close_unobserved" if tagged else "daemon_dead",
+        close_tag="spot_close" if tagged else None,
+    )
+    return pa.Table.from_batches([batch]).to_pylist()[0]
+
+
 def write(lake: Path, key: str, table: pa.Table, listed: bool = True) -> str:
     sink = pa.BufferOutputStream()
     pq.write_table(table, sink)

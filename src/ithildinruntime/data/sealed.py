@@ -13,9 +13,14 @@ says why. How it goes, in order.
 2. **Each listed partition is linked into the decision's lake root**, one
    `Mirror.partitions` call a key, after the bars are read. Every listed key is
    linked whatever faults before it.
-3. **Each partition has to hold the session's equity close.** marketlake seals
-   at close+15, and its repair by hand can seal a day still open, which the gate
-   would trade on as healthy.
+3. **Each partition has to hold the session's equity close**, as a data row, or
+   as a gap row tagged `spot_close` where the close's capture failed.
+   marketlake seals at close+15, and its repair by hand can seal a day still
+   open, which the gate would trade on as healthy. A gap row tagged `spot_close`
+   is written only at or after the close, so a day that holds one was sealed
+   after it. `NoSpotClose.tagged_gaps` counts those rows, and a count of zero
+   is the fault. l3a0/marketlake#1050 asks marketlake to publish that the row
+   is never written earlier, which its code holds and its README does not say.
 4. **The walk of `cycles` reads five minutes of each leg at a time**, from the
    cut's own minute back to the minute the session opens. A minute is read by
    `lake.loader.load_quotes` at its New York `HH:MM`, then cut with
@@ -209,9 +214,27 @@ class _Reader:
         self.partitions.add(vintage_id(self._root.files[key]))
 
     def _close(self, leg: Leg) -> None:
-        """Fault unless the partition holds a row of the session's equity close."""
-        if self._load(leg, None, "at the equity close") is None:
-            raise Fault(f"{leg.source} holds no row of the session's equity close")
+        """Fault unless the partition holds a row of the session's equity close.
+
+        That row is a data row, or a gap row tagged `spot_close`, which records
+        a close whose capture failed. The runtime substitutes no close price for
+        it, and reads no price at the close anyway.
+        """
+        none = f"{leg.source} holds no row of the session's equity close"
+        try:
+            found = self._load(leg, None, "at the equity close")
+        except _NoClose as missing:
+            if not missing.tagged_gaps:
+                raise Fault(none) from None
+            log.info(
+                "%s's equity close is %d gap rows tagged spot_close, so it was sealed after "
+                "the close",
+                leg.source,
+                missing.tagged_gaps,
+            )
+            return
+        if found is None:
+            raise Fault(none)
 
     def read(self, leg: Leg, parts: Sequence[str]) -> Iterator[pa.Table]:
         """The rows of each minute captured by the cut, newest minute first.
@@ -241,7 +264,11 @@ class _Reader:
                 raise Fault(f"{leg.source} holds a row of ticker {', '.join(wrong)} {where}")
 
     def _load(self, leg: Leg, minute: str | None, where: str) -> pa.Table | None:
-        """marketlake's answer at a minute, or at the equity close, and `None` for no row there."""
+        """marketlake's answer at a minute, or at the equity close.
+
+        `None` is no row at the minute. No data row at the equity close raises
+        `_NoClose`, with marketlake's count of gap rows tagged `spot_close`.
+        """
         snap = None if minute is None else self._hhmm(minute)
         self.calls += 1
         try:
@@ -254,8 +281,9 @@ class _Reader:
                 ) from None
             return None
         except NoSpotClose as error:
-            if minute is None:
-                return None
+            gaps = getattr(error, "tagged_gaps", None)
+            if minute is None and type(gaps) is int and gaps >= 0:
+                raise _NoClose(gaps) from None
             raise _failed(leg, where, error) from None
         except PartitionQuarantined:
             raise Fault(f"{leg.source} is quarantined in marketlake") from None
@@ -269,6 +297,14 @@ class _Reader:
     def _hhmm(self, minute: str) -> str:
         local = datetime.fromisoformat(minute) + self._session.utc_offset
         return local.strftime("%H:%M")
+
+
+class _NoClose(Exception):
+    """No data row at the equity close, with how many gap rows tagged `spot_close` record it."""
+
+    def __init__(self, tagged_gaps: int) -> None:
+        super().__init__(tagged_gaps)
+        self.tagged_gaps = tagged_gaps
 
 
 def _failed(leg: Leg, where: str, error: Exception) -> Fault:
