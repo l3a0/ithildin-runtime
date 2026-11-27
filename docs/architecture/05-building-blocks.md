@@ -589,6 +589,7 @@ classDiagram
         FILLED
         REJECTED
         EXPIRED
+        LOST
     }
     class OrderRecord {
         +OrderIntent intent
@@ -665,6 +666,13 @@ classDiagram
         +list rows
         +bool whole_list
         +bytes raw
+    }
+    class OrderLookup {
+        +str client_order_id
+        +datetime or None since
+        +datetime asked_at
+        +FoundOrder or None found
+        +Ack or None answer
     }
     class PositionsRead {
         +dict positions
@@ -953,6 +961,8 @@ classDiagram
     HaltRecord o-- RestartRecord
     FoundOrder o-- BrokerOrder
     FoundOrder --> Outcome
+    OrderLookup o-- FoundOrder
+    OrderLookup o-- Ack
     CostSchedule o-- CostTerm
     CostTerm --> CostKind
     CostTerm --> CostSide
@@ -1046,6 +1056,11 @@ classDiagram
         +bool cut
         +datetime received_at
     }
+    class LostEntry {
+        +str client_order_id
+        +int read
+        +str reason
+    }
     class FillEntry {
         +Fill fill
         +int read
@@ -1066,6 +1081,7 @@ classDiagram
     IntentEntry ..> DecisionEntry : decision names its number
     FillEntry ..> ReadEntry : read names its number
     DisputedFillEntry ..> ReadEntry : read names its number
+    LostEntry ..> ReadEntry : read names its number
 ```
 
 ### The interfaces
@@ -1442,8 +1458,9 @@ Every call to the broker goes through `OrderPath`.
 - Journaling that an order was never sent, which is `abandon`.
 - Reading the day's loss with no order, which is `loss`.
 - Reading the positions, the open orders, the cash, the broker's own records and the fills, and looking one order up.
+- Settling an order of a plan whose send stage ended, which is `settle`: it abandons one that was never sent, and finds one in doubt in the broker's list and looks it up by the broker's id.
 
-Four parts add the rest. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles an order in doubt, [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels one, [#150](https://github.com/l3a0/ithildin-runtime/issues/150) serves the kill switch and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) reads the broker's clock. The read `Broker.account` supplies cash.
+Three parts add the rest, now that `OrderPath.settle` settles an order in doubt. [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels one, [#150](https://github.com/l3a0/ithildin-runtime/issues/150) serves the kill switch and [#153](https://github.com/l3a0/ithildin-runtime/issues/153) reads the broker's clock. The read `Broker.account` supplies cash.
 
 Nothing else in the package is given a broker, and only the execution worker's entry point builds one. Two tests show it. The import rule keeps every other worker out of `execution`, and a sweep of the source, `tests/test_order_sweep.py`, fails on a submit, a cancel or a search for an order, one of six entries only the order path records, a change to the path from outside it in the spellings its tests plant, or an import of an adapter. The sweep reads what is written, so other spellings pass it. The fake broker catches none of those that replace the gate, because the approval is in the journal like any other. The fake broker reads the stored journal itself, and fails a test whenever an order reaches it with no approval, with no `sending` stored, twice, or other than as planned. The adapter wraps Alpaca's SDK, alpaca-py, so a test hands `OrderPath` a fake and no module sees the SDK's types.
 
@@ -1455,10 +1472,10 @@ The worker builds one `Account` for each broker account and keeps it across deci
 
 Five rules hold whatever a step does.
 
-1. **One call sends an order.** Only the call whose `intent` the journal took goes further. An order that already has an entry is not sent again. Its state is the answer, apart from one left `Intended` or `Approved`, which halts until [#147](https://github.com/l3a0/ithildin-runtime/issues/147) settles it.
+1. **One call sends an order.** Only the call whose `intent` the journal took goes further. An order that already has an entry is not sent again. Its state is the answer, apart from one left `Intended` or `Approved`, which halts, and the next decision's recover journals it `Abandoned`, as [How recover settles an unfinished plan](06-runtime.md#how-recover-settles-an-unfinished-plan) says.
 2. **One acknowledgement sends one order.** The account holds the acknowledgement of each `sending` entry its own journal gave, and the private submit takes it out before it does anything else. So one that was used, belongs to another order or was made up from the journal's bytes sends nothing. The journal could not tell a second use apart, because an order whose answer was not stored is still `Sending`.
 3. **No approval and no `sending` is recorded on a book that moved.** Each is the entry right after the one it was decided on. A number another writer took ends the order `abandoned` and halts the decision. After the `sending`, an entry stops the order where it moves this order, halts the book or is a newer `decision`. Any other does not, because the gate counted every open order at its worst case.
-4. **An answer is kept until the journal takes it.** After the submit the account keeps the entry that says what became of the order, alarms where the store refuses it, and tries it again before any later send and at `Account.settle`, which recover and [#146](https://github.com/l3a0/ithildin-runtime/issues/146)'s stage call before their first view, and the worker once more as its loop ends. Nothing is sent while it still fails. An alarm about a kept entry that could not be sent is tried again at each of those too, until it goes out or the process ends, and one that fails again halts nothing. An alarm a stage or the worker sends through `Account.alarm` is kept and tried again the same way, and the worker's last error names one still owed. Any other alarm of the path is tried once, and its own halt says where it could not be sent. Where the journal has come to show something else of the order, such as another writer's rejection of one this process saw accepted, or the other way round, the entry stays kept until the process ends, and what the halt says of it is written down before a restart. One exception is an answer the journal refused and whose `in_doubt` landed in its place, with its bytes, before the journal moved on. It is done, with an alarm that says both. An order that may have a `sending` stored and was stopped before the call is kept the same way, because only that process knows nothing left. An alert channel that raises anything at all changes none of this, and neither does a clock read after the call. An error the path does not expect, such as `SystemExit` from the store, may be left to replay: an answer already given stays kept, an order not yet called is left in the state its last stored entry gives it, and the worker's own alarm says the error and names no order. Three answers are let go with no entry of their own bytes, each where another writer has since said what became of the order: an accepted order whose `ack` is already journaled under the same id, a rejection of an order already `Rejected`, and one read as a doubt that is already settled, whose alarm names both. [#147](https://github.com/l3a0/ithildin-runtime/issues/147) is the first to write such entries, and it says where those bytes go.
+4. **An answer is kept until the journal takes it.** After the submit the account keeps the entry that says what became of the order, alarms where the store refuses it, and tries it again before any later send and at `Account.settle`, which recover and [#146](https://github.com/l3a0/ithildin-runtime/issues/146)'s stage call before their first view, and the worker once more as its loop ends. Nothing is sent while it still fails. An alarm about a kept entry that could not be sent is tried again at each of those too, until it goes out or the process ends, and one that fails again halts nothing. An alarm a stage or the worker sends through `Account.alarm` is kept and tried again the same way, and the worker's last error names one still owed. Any other alarm of the path is tried once, and its own halt says where it could not be sent. Where the journal has come to show something else of the order, such as another writer's rejection of one this process saw accepted, or the other way round, the entry stays kept until the process ends, and what the halt says of it is written down before a restart. One exception is an answer the journal refused and whose `in_doubt` landed in its place, with its bytes, before the journal moved on. It is done, with an alarm that says both. An order that may have a `sending` stored and was stopped before the call is kept the same way, because only that process knows nothing left. An alert channel that raises anything at all changes none of this, and neither does a clock read after the call. An error the path does not expect, such as `SystemExit` from the store, may be left to replay: an answer already given stays kept, an order not yet called is left in the state its last stored entry gives it, and the worker's own alarm says the error and names no order. Three answers are let go with no entry of their own bytes, each where another writer has since said what became of the order: an accepted order whose `ack` is already journaled under the same id, a rejection of an order already `Rejected`, and one read as a doubt that is already settled, whose alarm names both. Recover's settling of an order in doubt now writes such entries, and where those bytes go is [#211](https://github.com/l3a0/ithildin-runtime/issues/211)'s.
 5. **Every call halts unless the broker's `alias` names the journal's account.** Nothing raises while an account is built, because a worker that fails to start is restarted by the host and read by no person.
 
 ##### How a call names an order
@@ -1518,7 +1535,7 @@ Each read has a type of its own: `PositionsRead`, `OrdersRead`, `FillsRead`, `Ca
 
 A read that fails raises `BrokerUnavailable`, which takes the error or its type, and carries the call's name and that type's name and nothing the broker or its library said. `OrderPath` turns any other error from a call into one, and an answer that is not exactly the read's own type, because the receive loop puts an uncaught error's text in an alarm and in a stored halt. A `Halt` an adapter raises passes through with its reason.
 
-`orders(since)` reads a takeover's whole list, open and closed orders across every page, and [#147](https://github.com/l3a0/ithildin-runtime/issues/147) reads it.
+`orders(since)` reads a takeover's whole list, open and closed orders across every page, and the simulator's `find_order` reads it.
 
 ##### One function lists the differences from the broker
 

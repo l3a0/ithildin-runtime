@@ -255,7 +255,7 @@ class StageDecision:
         answer was lost. A capture that is not stored is held and named by
         every later halt, as `put` holds one. The capture is named in every
         header from here on, and the result lists it. In the send stage a second
-        attempt halts at its claim, so only a takeover (#147) reaches a number
+        attempt halts at its claim, so only a takeover (#211) reaches a number
         above 1.
         """
         run = self._run

@@ -168,7 +168,15 @@ class Broker(Protocol):
 
     def submit(self, intent: OrderIntent) -> Ack: ...
 
-    def find_order(self, intent: OrderIntent, since: datetime, mapped: object) -> FoundOrder: ...
+    def find_order(self, intent: OrderIntent, since: datetime, mapped: object) -> FoundOrder:
+        """Every order the broker holds under the intent, open or ended, sent at or after `since`.
+
+        A filled, cancelled or expired order is listed too, because `whole_list`
+        true with no row is what gives an order in doubt up as lost. `whole_list`
+        says that every page of the list came. `mapped` holds each broker's id the
+        journal has mapped, for an adapter that pairs on an order's details.
+        """
+        ...
 
     def orders(self, since: datetime) -> OrdersRead: ...
 

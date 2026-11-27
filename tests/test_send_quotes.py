@@ -15,9 +15,10 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from ithildinruntime.core import FillBasis, Snapshot, StoreUnavailable, readable_until
+from ithildinruntime.core import FillBasis, Halt, Snapshot, StoreUnavailable, readable_until
 from ithildinruntime.execution import order_path
-from ithildinruntime.execution.send import MARGIN
+from ithildinruntime.execution.account import Account
+from ithildinruntime.execution.send import MARGIN, SendStage
 from tests.support.send_world import CHAN, SendWorld, strategy
 from tests.support.sim_world import FULL, GLD, USO, after, close_of
 
@@ -273,11 +274,15 @@ def test_an_abandon_the_store_refuses_is_named_in_the_halt_and_the_alarm() -> No
     assert made.submits() == []
 
 
-@pytest.mark.parametrize(("refused", "halts"), [("the second", True), ("each", False)])
+@pytest.mark.parametrize(("refused", "unfinished"), [("the second", True), ("each", False)])
 def test_the_next_decision_after_a_refused_abandon_reads_what_the_journal_holds(
-    refused: str, halts: bool
+    refused: str, unfinished: bool
 ) -> None:
-    """A plan with one order ended and one with no entry is unfinished, and one with none is not."""
+    """A plan with one order ended and one with no entry is unfinished, and one with none is not.
+
+    The next recover settles an unfinished plan, journaling the order with no entry
+    `abandoned`, as #147 builds, and sends nothing of it.
+    """
     made = world()
     at = early(DAYS[1])
     made.ready(at, PAIR)
@@ -293,21 +298,68 @@ def test_the_next_decision_after_a_refused_abandon_reads_what_the_journal_holds(
     made.store.before = before
     result = made.send_attempt()
     assert result.halt is not None and "next decision trades" not in result.halt.reason
+    if refused == "each":
+        # The first refusal is an outage, which stops the rest: the second is not tried.
+        first, second = [
+            o.client_order_id for o in made.view().decisions[made.view().decided[at]].orders
+        ]
+        assert first in result.halt.reason and second not in result.halt.reason
+        assert first not in made.states() and second not in made.states()
     made.store.before = lambda number, op, key: None
     sent = list(made.submits())
     later = early(DAYS[2])
     made.ready(later, PAIR, recover=False)
     recovered = made.recover()
-    if halts:
-        assert recovered.halt is not None
-        assert f"the decision at {at.isoformat()} is not settled" in recovered.halt.reason
-        return
     assert recovered.halt is None, recovered.halt.reason
+    if unfinished:
+        orders = made.view().decisions[made.view().decided[at]].orders
+        assert made.states()[orders[1].client_order_id] == "Abandoned"
+        assert made.submits() == sent
     # The next decision trades: its own pair goes out.
     made.ready(later, PAIR)
     nxt = made.send_attempt()
     assert nxt.halt is None, nxt.halt.reason
     assert len(made.submits()) == len(sent) + 2
+
+
+@pytest.mark.parametrize("cause", ["fold", "store"])
+def test_a_quote_halt_whose_journal_cannot_be_read_abandons_nothing_and_promises_nothing(
+    monkeypatch, cause: str
+) -> None:
+    """A journal the quote check cannot read takes no abandon, and its cause is paged.
+
+    The test makes the read fail once the stage starts ending the plan's orders: as a
+    fold that refuses an entry, which pages once, or as a store that stops answering,
+    whose outage pages before the page that nothing is sent. The halt says nothing of
+    the next decision, because a journal the stage cannot read is one the next
+    decision cannot read either.
+    """
+    made = world()
+    at = early(DAYS[1])
+    made.ready(at, PAIR)
+    made.clock.at = at + timedelta(seconds=20) + TICK
+    real = SendStage._none_sent
+    said = "entry 9 is refused" if cause == "fold" else "the journal could not be read"
+
+    def none_sent(self, *args, **kwargs):
+        if cause == "fold":
+            monkeypatch.setattr(Account, "view", lambda *a: (_ for _ in ()).throw(Halt(said)))
+        else:
+            made.store.refuse(("*", "journal/"))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(SendStage, "_none_sent", none_sent)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    monkeypatch.undo()
+    assert result.halt is not None and said in result.halt.reason
+    assert "would not last" in result.halt.reason
+    assert "next decision trades" not in result.halt.reason
+    pages = [a for a in made.alarms.sent[alarms:] if a.startswith("account")]
+    assert len(pages) == (1 if cause == "fold" else 2)
+    assert said in pages[0] and "nothing is sent" in pages[-1] and said in pages[-1]
+    assert "abandoned" not in made.kinds()
+    assert made.submits() == []
 
 
 def test_a_strategy_that_names_the_days_market_order_fills_each_leg_at_its_quote() -> None:

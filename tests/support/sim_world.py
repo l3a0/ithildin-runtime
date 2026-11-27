@@ -299,7 +299,7 @@ class SimWorld:
         found = path.fills(self.clock.at - BEFORE_OPENING)
         listed = {o.broker_order_id for o in path.open_orders().orders}
         view = self.planner.view()
-        # A fill of an order in doubt has no acknowledged order to apply to until #147.
+        # A fill of an order in doubt has no acknowledged order to apply to until a lookup maps it.
         acked = {o.broker_order_id for o in view.orders.values()}
         new = [f for f in found.fills if f.fill_id not in view.fills and f.broker_order_id in acked]
         stage = "execution/recover"
