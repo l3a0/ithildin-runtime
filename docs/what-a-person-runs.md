@@ -254,7 +254,7 @@ These run from the narrowest reach to the widest in the usual case: one halt, on
 
 This records that a person has looked at a halt and why it may be left behind. It never reruns the halted decision, and the next decision runs as usual.
 
-A clear of recover's halt does not end the hold of an unmatched record, fill or order the journal keeps. The next recover halts on the same entry, because nothing releases one until [#150](https://github.com/l3a0/ithildin-runtime/issues/150) builds the release, as [Drill for an order or fill the platform did not send](halts-and-drills.md#drill-for-an-order-or-fill-the-platform-did-not-send) says.
+A clear of recover's halt does not end the hold of an unmatched record, fill or order the journal keeps. The next recover halts on the same entry, because nothing releases one until [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds the release on [#150](https://github.com/l3a0/ithildin-runtime/issues/150)'s release test, as [Drill for an order or fill the platform did not send](halts-and-drills.md#drill-for-an-order-or-fill-the-platform-did-not-send) says.
 
 A halt raised because S3 would not store a capture refuses the clear until the condition in [Rule 1: a write S3 refuses or does not answer](design.md#rule-1-a-write-s3-refuses-or-does-not-answer) holds.
 
