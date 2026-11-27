@@ -67,6 +67,7 @@ from ithildinruntime.core import (
     Ack,
     Alerts,
     BeforeClose,
+    BlobMissing,
     BlobRef,
     BlobStore,
     Book,
@@ -92,6 +93,7 @@ from ithildinruntime.core import (
     OrdersRead,
     OrderState,
     OrderType,
+    Outage,
     Outcome,
     PositionsRead,
     RecordsRead,
@@ -319,6 +321,28 @@ class Unstored:
             f"the next send{kept.added}"
         )
 
+    def hold(
+        self, name: str, record: Record, at: datetime, sent: str, report: Callable[[], None]
+    ) -> OrderState | None:
+        """Keep an entry and try it once, for a store that has just failed and paged.
+
+        The one try sends no alarm about the journal's outage, since that paged
+        already, and returns the state the order is in where it lands. Where the
+        store does not answer it, the entry stays, and each `settle` tries it, as
+        it tries every kept entry. An outage of another blob, such as the hard
+        caps, leaves the journal answering, so the entry lands at once. A journal
+        whose fold refuses the entry and takes the `in_doubt` that stands in for
+        it pages that, as `put` does, and keeps nothing. One that refuses both
+        raises its halt with the entry kept, and the caller's halt names it.
+        """
+        kept = _Kept(name, record, at, sent)
+        with self._lock:
+            self._kept.append(kept)
+        try:
+            return self._store(kept, report, once=True)
+        except StoreError:
+            return None
+
     def settle(self, report: Callable[[], None]) -> None:
         """Try each unsent alarm and each kept entry again, and halt naming each entry left."""
         with self._lock:
@@ -461,15 +485,6 @@ def _doubted(kept: _Kept) -> InDoubtEntry:
         raw, at = record.raw, record.received_at
     reason = f"the journal refused the {kind_of(record)} of an order that was {kept.sent}"
     return InDoubtEntry(kept.name, reason, raw, False, at)
-
-
-class Outage(Halt):
-    """A halt on a store that did not answer, whose alarm has already gone.
-
-    A caller that meets one stops its other writes, since each would alarm on
-    the same outage again. `Unstored`'s halt on an entry the journal did not take
-    is not one: it comes after a broker's answer, which only this process holds.
-    """
 
 
 @dataclass(frozen=True)
@@ -672,6 +687,9 @@ class OrderPath:
             return self._not_sent(client_order_id, off.reason, went)
         except Exception as error:
             if ack.seq not in self._shared.called:
+                if isinstance(error, Outage):
+                    # It paged, and each write the store would refuse would page it again.
+                    raise self._held_unsent(client_order_id, error, went) from None
                 self._not_sent(client_order_id, _said(error), went)
                 raise
             # The broker may have the order, whatever went wrong after its call.
@@ -734,7 +752,8 @@ class OrderPath:
         Each order approved is counted open in the book the next is asked on, as
         a journal holding its `verdict` would count it. It stops at the first
         order the gate refuses or that raises `Halt`, and returns the answer of
-        each it reached. An order the journal already holds an entry of halts,
+        each it reached. An `Outage` is raised as it is, since it paged and is no
+        refusal. An order the journal already holds an entry of halts,
         because a plan is asked about before any of it is journaled. It reads
         no control but the loss stop, which the gate is handed, and `send`
         reads every one again. It journals no order. It settles the account
@@ -767,6 +786,9 @@ class OrderPath:
                 )
                 now = shared.clock.now()
                 verdict = shared.gate.check(order, book, inputs.snapshot, limits, handed, now)
+            except Outage:
+                # It paged, and is no refusal, so the stage asks and journals nothing more.
+                raise
             except Halt as halt:
                 answers.append(Asked(name, None, halt.reason))
                 break
@@ -794,6 +816,8 @@ class OrderPath:
         stopping = shared.controls.strategy(strategy, shared.patience.tries(self._report))
         if stopping is None:
             return None
+        if stopping.down:
+            raise self._outage(stopping.reason)
         if stopping.halts:
             raise Halt(stopping.reason)
         return stopping.reason
@@ -1133,6 +1157,9 @@ class OrderPath:
         tries = shared.patience.tries(self._report, until)
         stopping = shared.controls.stopping(planned.where, tries, with_stop=False)
         if stopping is not None:
+            if stopping.down:
+                # Its `intent` stands, so the next recover journals it abandoned.
+                raise self._outage(stopping.reason)
             if not stopping.halts:
                 return self._switched_off(name, stopping.reason)
             raise self._ended(name, stopping.reason)
@@ -1149,6 +1176,10 @@ class OrderPath:
             # The gate read each quote's age once, and the call comes after two appends. The
             # verdict is no send, so its own append is not cut short.
             ends = min([last, *_aged(inputs.snapshot, {*held(book), order.instrument})])
+        except Outage:
+            # It paged, and an `abandoned` would page it again. Its `intent` stands, so the next
+            # recover journals it abandoned.
+            raise
         except Halt as halt:
             raise self._ended(name, halt.reason) from None
         except Exception as error:
@@ -1226,8 +1257,11 @@ class OrderPath:
         account = self._shared.account
         try:
             data = tries(lambda: self._shared.store.get(caps_key(account)))
-        except StoreError as error:
+        except BlobMissing as error:
+            # The store answered, so this is no outage.
             raise Halt(f"the hard caps could not be read again: {code_of(error)}") from None
+        except StoreError as error:
+            raise self._outage(f"the hard caps could not be read again: {code_of(error)}") from None
         try:
             return parse_caps(data, account)
         except Halt as halt:
@@ -1256,10 +1290,10 @@ class OrderPath:
         except Halt as halt:
             raise self._ended(name, halt.reason) from None
         except StoreError as error:
-            # It may be stored, and only this call knows that nothing followed it.
-            reason = f"the sending of {name} was not stored: {code_of(error)}"
-            self._not_sent(name, reason, went)
-            raise Halt(reason) from None
+            # It may be stored, and only this call knows that nothing followed it. The journal
+            # has stopped answering, so it pages once here and the `abandoned` is kept.
+            outage = self._outage(f"the sending of {name} was not stored: {code_of(error)}")
+            raise self._held_unsent(name, outage, went) from None
         with self._shared.lock:
             self._shared.cleared[ack.seq] = _Cleared(ack, name, approved.last, approved.caps)
         return ack
@@ -1337,7 +1371,7 @@ class OrderPath:
             # The strategy's two are the last blobs read, so a switch hides no other blob's halt.
             stopping = shared.controls.stopping(planned.where, tries, with_stop=True)
             if stopping is not None:
-                raise _stopped(stopping)
+                raise self._outage(stopping.reason) if stopping.down else _stopped(stopping)
             if not tries.waited and shared.clock.monotonic() - began <= _PASS:
                 return order, self._before(name, cleared.last), fired
             if tries.over:
@@ -1365,8 +1399,11 @@ class OrderPath:
         key = journal_entry_key(self._shared.account, ack.seq)
         try:
             stored = tries(lambda: self._shared.store.get(key))
-        except StoreError as error:
+        except BlobMissing as error:
+            # The store answered, so this is no outage.
             raise Halt(f"entry {ack.seq} could not be read: {code_of(error)}") from None
+        except StoreError as error:
+            raise self._outage(f"entry {ack.seq} could not be read: {code_of(error)}") from None
         if sha256_of(stored) != ack.entry_hash:
             raise Halt(f"entry {ack.seq} is not stored as it was acknowledged")
         return order
@@ -1430,6 +1467,44 @@ class OrderPath:
         cut = raw is not None and len(raw) > RAW_LIMIT
         kept = raw[:RAW_LIMIT] if raw is not None else None
         return InDoubtEntry(answer.order.client_order_id, reason, kept, cut, at or answer.at)
+
+    def _held_unsent(self, name: str, outage: Outage, at: datetime) -> Halt:
+        """Keep the `abandoned` of an order with a `sending` that never left, and try it once.
+
+        The store has just failed and paged, so the one try sends no page about it.
+        Where it lands, or the store does not answer it, this gives an `Outage`, and
+        a kept entry waits for the next settle. Where the journal's fold refuses
+        it, and takes its `in_doubt` or refuses that too, this gives a plain
+        `Halt`, so the send stage reads the journal, where another writer may have
+        sent the order. A process that dies first
+        leaves the `sending` with no answer, which the next recover looks up.
+        """
+        try:
+            at = self._shared.clock.now()
+        except Exception:
+            pass
+        reason = outage.reason
+        record = AbandonedEntry(name, _text(reason))
+        try:
+            state = self._shared.unstored.hold(name, record, at, "not sent", self._report)
+        except Exception as error:
+            # The journal answered with a refusal, so this is a plain halt and the send stage
+            # reads what the journal holds, where another writer may have sent the order.
+            return Halt(
+                f"{reason}. The journal did not take the abandoned of {name}: {_said(error)}. "
+                "It is kept and tried again before the next send"
+            )
+        if state is OrderState.ABANDONED:
+            return Outage(f"{reason}. The journal shows {name} {state}")
+        if state is not None:
+            # The journal's fold refused the entry and took the `in_doubt` that stands in for it,
+            # which `Unstored` paged, so this is a plain halt and the send stage reads the journal.
+            return Halt(
+                f"{reason}. The journal refused the abandoned of {name} and shows it {state}"
+            )
+        return Outage(
+            f"{reason}. The abandoned of {name} is kept and tried again before the next send"
+        )
 
     def _not_sent(self, name: str, reason: str, at: datetime) -> OrderState:
         """Journal that an order with a `sending` entry never left, which only this call knows.

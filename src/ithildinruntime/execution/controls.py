@@ -20,6 +20,7 @@ from ithildinruntime.core import (
     SEND_STAGE,
     BlobMissing,
     BlobStore,
+    StoreError,
     account_halts_prefix,
     kill_switch_key,
     loss_stop_key,
@@ -44,10 +45,15 @@ class Where(NamedTuple):
 
 
 class Stopping(NamedTuple):
-    """A control that stops an order, and whether it halts the decision too."""
+    """A control that stops an order, and whether it halts the decision too.
+
+    `down` says the store did not answer by the deadline, so the stop is an
+    outage the order path pages once.
+    """
 
     reason: str
     halts: bool
+    down: bool = False
 
 
 class _Read(NamedTuple):
@@ -55,6 +61,7 @@ class _Read(NamedTuple):
 
     found: str | None
     error: str | None
+    down: bool = False
 
 
 class Controls:
@@ -82,7 +89,7 @@ class Controls:
         for name, key, folder in halting:
             read = self._read(key, folder, tries)
             if read.error is not None:
-                return Stopping(f"{name} unreadable: {read.error}", True)
+                return Stopping(f"{name} unreadable: {read.error}", True, read.down)
             if read.found is not None:
                 return Stopping(f"{name} stands{read.found}", True)
         return self.strategy(strategy, tries)
@@ -100,7 +107,7 @@ class Controls:
         ):
             read = self._read(key, folder, tries)
             if read.error is not None:
-                return Stopping(f"{name} unreadable: {read.error}", True)
+                return Stopping(f"{name} unreadable: {read.error}", True, read.down)
             if read.found is not None:
                 return Stopping(f"strategy off: {name} stands{read.found}", False)
         return None
@@ -119,5 +126,8 @@ class Controls:
         except BlobMissing as missing:
             # A folder that lists answers with an empty list, never with a missing blob.
             return _Read(None, code_of(missing) if folder else None)
+        except StoreError as error:
+            # Refused or unanswered until the deadline, which the order path pages as an outage.
+            return _Read(None, code_of(error), True)
         except Exception as error:
             return _Read(None, code_of(error))

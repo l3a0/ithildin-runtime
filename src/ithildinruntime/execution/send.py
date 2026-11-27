@@ -34,13 +34,15 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    quotes the snapshot holds of each instrument the book holds or has a working
    order in, and of each the plan orders. One that would not last the plan's
    sends halts with nothing asked or sent, and every order of the plan ends
-   `Abandoned`, by this stage or, where the journal stops answering, by the
-   next recover where any order of the plan has an entry. Where any of those
+   `Abandoned`, by this stage or, where a store stops answering or the journal
+   cannot be read, by the next recover where any order of the plan has an entry. Where any of those
    quotes fails at `now` itself, the whole plan is left to the gate. Then
    `OrderPath.ask` about the whole plan. Where any order is refused or halts, nothing is
    sent, and every order of the plan ends `Refused` or `Abandoned`, by this
-   stage or, where the journal stops answering, by the next recover. A plan
-   none of whose orders has an entry stays so, with nothing sent.
+   stage or, where a store stops answering or the journal cannot be read, by
+   the next recover. A store that stops answering at the ask pages once, and nothing more
+   is asked or journaled. A plan none of whose orders has an entry stays so,
+   with nothing sent.
 8. `OrderPath.send` for each order in the plan's order. An answer other than
    `Acknowledged` ends that strategy's plan. An off switch with no leg of that
    strategy at the broker ends it as partly sent, and every other answer halts
@@ -396,7 +398,12 @@ class SendStage:
         abandons, and the next recover journals them instead, where any order
         of the plan has an entry. A plan none of whose orders has one stays so.
         """
-        answers = path.ask(names)
+        try:
+            answers = path.ask(names)
+        except Outage as outage:
+            # It paged, and no order has an entry, so nothing is read or journaled.
+            why = f"the gate could not be asked: {outage.reason}"
+            self._none_sent(path, names, why, [outage.reason], report, down=True)
         refused = next((a for a in answers if not a.approved), None)
         if refused is None:
             return
@@ -518,6 +525,8 @@ class SendStage:
         # was not sent where it is one.
         down = isinstance(halt, Outage)
         view = None if down else self._read(said, report)
+        # Where it was the path's outage, the store that failed may be another than the journal.
+        why = "a store stopped answering" if down else "the journal could not be read"
         # A journal that cannot be read takes no abandon either, and each would say why again.
         down = down or view is None
         left: list[str] = []
@@ -537,14 +546,15 @@ class SendStage:
             except Outage as outage:
                 said.append(outage.reason)
                 down = True
+                why = "a store stopped answering"
                 left.append(name)
             except Halt as failed:
                 said.append(failed.reason)
         view = None if down else self._read(said, report)
         if left:
             said.append(
-                f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned, "
-                "since the journal could not be read, and none of them was sent"
+                f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned "
+                f"by this stage, since {why}, and none of them was sent"
             )
         if view is None:
 
@@ -554,7 +564,7 @@ class SendStage:
                 return f"{name} not sent" if name in left else f"{name} not known"
 
             named = ", ".join(stands(order.client_order_id) for order in orders)
-            legs = f"{named}, since the journal could not be read"
+            legs = f"{named}, since {why}"
         else:
             legs = "; ".join(
                 _leg(order.client_order_id, view.orders.get(order.client_order_id))
