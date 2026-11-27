@@ -135,6 +135,40 @@ def test_1_the_1987_floors_are_the_index_falls_rounded_up(name: str) -> None:
     assert f"{largest_move(bars, 2).move.size:f}" == two
 
 
+DOCS = Path(__file__).parents[1] / "docs"
+
+
+def _section(text: str, opening: str) -> str:
+    """The text from the line that opens with `opening` up to the next heading or blank line."""
+    found = re.search(rf"^[ \t]*{re.escape(opening)}", text, re.MULTILINE)
+    assert found, opening
+    start = found.start()
+    ends = [i for i in (text.find("\n#", start), text.find("\n\n", start)) if i != -1]
+    return text[start : min(ends, default=len(text))]
+
+
+def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
+    # The owner types each floor into the hard caps by hand from what-a-person-runs.md, so a
+    # floor mistyped there, or a close changed in design.md, fails here.
+    design = (DOCS / "design.md").read_text(encoding="utf-8")
+    why = _section(design, "**Why SPY's and QQQ's caps reach back to 1987.**")
+    steps = _section(
+        (DOCS / "what-a-person-runs.md").read_text(encoding="utf-8"),
+        "1. Take the strategy's floor:",
+    )
+    for closes, _, floor in FLOORS.values():
+        for close in closes:
+            assert f" {close} " in why, close
+        assert floor in why and floor in steps, floor
+    spy, qqq = (FLOORS[n][2] for n in ("the-s-and-p-500", "the-nasdaq-100"))
+    assert f"{spy} where a leg is SPY" in steps and f"{qqq} where a leg is QQQ" in steps
+    # Every page that names a floor, to the digits that set it apart, gives it whole.
+    floors = {floor for _, _, floor in FLOORS.values()}
+    for page in sorted(DOCS.rglob("*.md")):
+        for named in re.findall(r"0\.2457058\d*|0\.2145565\d*", page.read_text(encoding="utf-8")):
+            assert named in floors, f"{page.name} names {named}"
+
+
 def test_1_a_tie_goes_to_the_earliest_date_then_to_the_first_leg_by_name() -> None:
     bars = legs((100, 100, 100, 100, 120), (100, 100, 100, 120, 110))
     assert found(bars) == (d("0.2"), USO, DAYS[T0 + 1], DAYS[T0 + 3])
