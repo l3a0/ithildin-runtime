@@ -439,18 +439,19 @@ uv run python -m ithildinruntime.runtime.stress_move --lake <folder> --strategy 
 A larger record binds as soon as the release that carries it runs, whatever the caps hold. It stops binding if that release is rolled back or the record is withdrawn, and the net cap then grows with nothing halted. So the owner takes three steps, the first two before the release that carries the record runs.
 
 1. Compare the dollars of each held leg with the net cap the new m gives. Where one is over it, the gate can refuse an exit of the pair once m is raised, and where each is, both, until the target, a cap, V or the prices move. [#158](https://github.com/l3a0/ithildin-runtime/issues/158) holds what the owner may do about a position then.
-2. Write the caps' `stress_move` up to the new record's, or keep it at a floor the caps hold where that is higher, as [Write the caps of a strategy that holds SPY](#write-the-caps-of-a-strategy-that-holds-spy) says, leaving `stress_vintage` and `stress_through` on the older record. Raise `stress_high` in the same write where the new m is above it, because the caps halt every order otherwise. A rollback then loses nothing.
+2. Write the caps' `stress_move` up to the new record's, or keep it at a floor the caps hold where that is higher, as [Write the caps of a strategy that holds SPY or QQQ](#write-the-caps-of-a-strategy-that-holds-spy-or-qqq) says, leaving `stress_vintage` and `stress_through` on the older record. Raise `stress_high` in the same write where the new m is above it, because the caps halt every order otherwise. A rollback then loses nothing.
 3. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back. Move to the new record before the older one's age passes, whether it is larger or not. For one that is no larger, this step alone is enough.
 
-#### Write the caps of a strategy that holds SPY
+#### Write the caps of a strategy that holds SPY or QQQ
 
-SPY's history starts in 1993, so its record leaves out the S&P 500's fall of October 1987, which the caps cover by hand. design.md's `**Why SPY's caps reach back to 1987.**`, under [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions), gives the reasoning.
+SPY's history starts in 1993 and QQQ's in 1999, so their records leave out the falls of October 1987 of the indexes they track, which the caps cover by hand. design.md's `**Why SPY's and QQQ's caps reach back to 1987.**`, under [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions), gives the reasoning.
 
-1. Write the caps' `stress_move` as the larger of 0.24570586 and the largest m of the strategy's records, and `stress_vintage` and `stress_through` on its record as usual.
-2. Write `stress_low` as 0.24570586 in the same write, so a later write of `stress_move` below the floor halts every order rather than loosening the cap with nothing said.
-3. Write `stress_high` at or above that `stress_move` in the same write, because the caps halt every order otherwise.
-4. Keep `stress_move` at or above the floor at every later write, at the second step of [Raise the stress move](#raise-the-stress-move) and in [Withdraw a record](#withdraw-a-record).
-5. Read `stress_move` and `stress_low` back against 0.24570586 with the other fields, because no record holds the floor.
+1. Take the strategy's floor: 0.24570586 where a leg is SPY, and otherwise 0.21455657 where a leg is QQQ.
+2. Write the caps' `stress_move` as the larger of the floor and the largest m of the strategy's records, and `stress_vintage` and `stress_through` on its record as usual.
+3. Write `stress_low` as the floor in the same write, so a later write of `stress_move` below the floor halts every order rather than loosening the cap with nothing said.
+4. Write `stress_high` at or above that `stress_move` in the same write, because the caps halt every order otherwise.
+5. Keep `stress_move` at or above the floor at every later write, at the second step of [Raise the stress move](#raise-the-stress-move) and in [Withdraw a record](#withdraw-a-record).
+6. Read `stress_move` and `stress_low` back against the floor with the other fields, because no record holds it.
 
 #### Withdraw a record
 
