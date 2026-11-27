@@ -1384,7 +1384,15 @@ class OrderPath:
             pass
         except StoreError as error:
             # A store that did not take the halt is an outage, paged once with the owner's step.
-            return shared.outage(f"{reason}. Its halt was not stored at {key}: {code_of(error)}")
+            # No halt stands, so the page names the step that ends the halts rather than a release.
+            lost = (
+                f"the account's lease is absent at {shared.lease.key}, and the journal holds a "
+                f"sending through entry {view.through.seq}, so the lease was lost. Its halt was "
+                f"not stored at {key}: {code_of(error)}. No halt stands, so each new order halts "
+                "on the absent lease until a person looks the account up on the broker's site "
+                "and clears the lease"
+            )
+            return shared.outage(lost)
         return Halt(f"{reason}{shared.alarm(reason)}")
 
     def _renew(self, tries: Tries) -> None:

@@ -366,8 +366,8 @@ def test_a_takeover_list_whose_key_stands_and_cannot_be_read_is_an_outage() -> N
     with pytest.raises(Outage) as raised:
         world.send(2)
     assert "could not be read" in raised.value.reason
-    (page,) = [a for a in world.alarms.sent if "the takeover of the account's lease failed" in a]
-    assert "The owner's step" in page
+    (page,) = world.alarms.sent
+    assert "the takeover of the account's lease failed" in page and "The owner's step" in page
 
 
 def test_a_takeover_whose_journal_write_is_an_outage_that_paged_pages_no_more() -> None:
@@ -599,8 +599,10 @@ def test_an_absent_lease_whose_halt_the_store_refuses_pages_once_as_an_outage() 
     assert "lease is absent" in reason
     assert "Its halt was not stored at" in reason and "StoreUnavailable AccessDenied" in reason
     # A store that did not take the halt is an outage, which pages once with the owner's step.
-    (said,) = [a for a in world.alarms.sent if "Its halt was not stored" in a]
-    assert "The owner's step" in said
+    (said,) = world.alarms.sent
+    assert "Its halt was not stored" in said and "The owner's step" in said
+    # No halt stands, so the page says what ends the halts rather than naming a release.
+    assert "until a person releases it" not in reason and "clears the lease" in reason
     assert not _halts(world)
 
 
