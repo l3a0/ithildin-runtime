@@ -28,6 +28,7 @@ from ithildinruntime.core import (
     OrderState,
     Outcome,
     StoreUnavailable,
+    account_lease_key,
     decode,
     encode,
     sha256_of,
@@ -54,6 +55,7 @@ from ithildinruntime.execution.brokers.log import (
 )
 from ithildinruntime.execution.brokers.log import after as applied
 from ithildinruntime.execution.brokers.simulated import SimulatedBroker
+from ithildinruntime.execution.lease import free_lease
 from tests.support.order_world import Kill, Wired, order
 from tests.support.sim_world import (
     ACCOUNT,
@@ -1266,14 +1268,17 @@ def test_4_two_orders_sent_at_once_take_two_numbers() -> None:
     early: list[bool] = []
 
     def other() -> None:
-        # A second broker over the same log, so nothing but the log's lock keeps them apart.
-        # It calls the broker itself, since the account's lease keeps two order paths of one
-        # account from sending at once.
+        # A second path over the same log, so nothing but the log's lock keeps them apart. The
+        # account's lease keeps two paths of one store from sending at once, so this one sends
+        # on a copy of the store, with the lease free in it.
         two = SimWorld(made.closes, sim_store=made.sim, opened=False)
-        two.store.blobs, two.store._keys = one.store.blobs, one.store._keys
+        two.store.blobs = dict(one.store.blobs)
+        two.store._keys = sorted(two.store.blobs)
+        two.store.tags = dict(one.store.tags)
+        two.store.put(account_lease_key(ACCOUNT), encode(free_lease(1, False)))
         two.store.quiet = True
         two.log, two.run, two.at, two.clock.at = one.log, one.run, one.at, at
-        two.broker().submit(second)
+        two.send(second)
         done.set()
 
     def hook(count: int, op: str, found: str) -> None:
