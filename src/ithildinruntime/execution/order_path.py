@@ -1485,7 +1485,9 @@ class OrderPath:
         try:
             state = self._shared.unstored.hold(name, record, at, "not sent", self._report)
         except Exception as error:
-            return Outage(
+            # The journal answered with a refusal, so this is a plain halt and the send stage
+            # reads what the journal holds, where another writer may have sent the order.
+            return Halt(
                 f"{reason}. The journal did not take the abandoned of {name}: {_said(error)}. "
                 "It is kept and tried again before the next send"
             )

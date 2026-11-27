@@ -2138,7 +2138,11 @@ def test_7_a_refused_abandoned_after_an_outage_is_named_in_the_halt(monkeypatch)
 
     world.store.before = before
     monkeypatch.setattr(Unstored, "_store", refused)
-    reason = halted(world, "could not be read again", lambda: world.send(account=account))
+    with pytest.raises(Halt, match="could not be read again") as raised:
+        world.send(account=account)
+    reason = raised.value.reason
+    # The journal answered, so the send stage reads it rather than calling the order unsent.
+    assert not isinstance(raised.value, Outage) and world.submits == 0
     assert f"The journal did not take the abandoned of {ID}: the fold refuses it" in reason
     assert len(account.unstored()) == 1 and len(world.alarms.sent) == 1
 
