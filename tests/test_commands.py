@@ -604,6 +604,8 @@ def test_each_command_hands_its_core_the_parts_it_built(
         assert handed["measured"] is True and handed["mirror"] == tmp_path / "mirror"
         assert handed["servers"] is not None and handed["clock"]._servers is handed["servers"]
         assert handed["lake"].lake._root == "lake/"
+        # A real run reads the tracked record of splits and quote-kind table, never a test's.
+        assert "splits" not in handed and "quote_kinds" not in handed
     elif component == "execution":
         assert handed["servers"] is not None and handed["clock"]._servers is handed["servers"]
     else:

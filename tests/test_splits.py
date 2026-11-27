@@ -396,6 +396,7 @@ def test_6_a_split_with_no_row_halts_on_the_residual_where_the_quote_restates_it
     (reason,) = [r for r in found if "outside 0.99 to 1.01" in r]
     assert f"{days[-1]} states a close of {days[-2]} at" in reason
     assert "A split row" in reason
+    assert "or a covered row reaching it, where no split happened" in reason
 
 
 @pytest.mark.parametrize("ratio", [Decimal(2), Decimal("0.5"), Decimal("0.125")])
