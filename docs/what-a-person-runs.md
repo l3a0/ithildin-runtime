@@ -453,8 +453,11 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 
 #### Fetch what a row is read from
 
-1. Fetch each source the row cites and save its bytes as fetched under `~/.config/ithildin-runtime/splits/<date>/`, never in the repository, with a `README.md` there that gives each file's address and the UTC time it was fetched. That folder is the only copy of these bytes until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) gives saved published texts a prefix the replica rule copies. An issuer's filing can be fetched again, and a vendor's answer of that day cannot.
+1. Fetch each source the row cites and save it under `~/.config/ithildin-runtime/splits/<date>/`, never in the repository, with a `README.md` there that gives each file's address and the UTC time it was fetched. Save an issuer's filing as fetched, and a vendor's answer as its connector returned it. Name each file with its UTC fetch time, so a second fetch writes a new file and never replaces one a row cites. An issuer's filing can be fetched again, and a vendor's answer of that day cannot.
 2. Write the SHA-256 of each file into the row's `read_from`, beside its address and fetch time. `read_from` holds no comma, because the loader splits the row on commas.
+3. Make each file read-only with `chmod a-w` once its SHA-256 is in `read_from`, because the files are recorded data.
+
+That folder is the only copy of these answers until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) gives saved published texts a prefix the replica rule copies, and nothing checks their SHA-256s again before then. The price is that one disk holds answers no vendor gives again, with no backup and no alarm, until that copy exists.
 
 #### Write a split row
 

@@ -63,6 +63,7 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 
 ## Prices in what a person runs
 
+- [Write a row of the record of splits](../what-a-person-runs.md#write-a-row-of-the-record-of-splits)
 - [What all of this costs](../what-a-person-runs.md#what-all-of-this-costs)
 
 ## Prices in halts-and-drills.md
