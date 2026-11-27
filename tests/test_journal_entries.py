@@ -839,6 +839,8 @@ def test_3_every_enumeration_an_entry_can_hold_is_frozen_above() -> None:
 
 
 def test_2_this_release_writes_the_committed_bytes_of_every_kind(tmp_path: Path) -> None:
+    """After a merge appends an entry on both sides, scripts/regenerate_journal_fixture.py
+    writes the committed folder again and checks that no entry `main` holds moves."""
     journal = Journal(FolderStore(tmp_path), FIXED, "0123456789abcdef" * 2)
     view = journal.view()
     for record, at in _committed():
