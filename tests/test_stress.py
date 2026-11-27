@@ -150,7 +150,8 @@ def _section(text: str, opening: str) -> str:
 
 def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     # The owner types each floor into the hard caps by hand from what-a-person-runs.md's steps, so
-    # those steps are held whole: each floor with its fund, and SPY's where a strategy holds both.
+    # the step that names the floors is held: each with its fund, and SPY's where a strategy holds
+    # both. The other steps are not checked here.
     design = (DOCS / "design.md").read_text(encoding="utf-8")
     why = _section(design, "**Why SPY's and QQQ's caps reach back to 1987.**")
     steps = _section(
