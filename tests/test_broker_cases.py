@@ -323,7 +323,6 @@ def test_1_each_way_an_order_is_refused_on_the_rule_itself() -> None:
     assert refusal(moc, close, close) is None
     assert refusal(replace(moc, qty=D("-0.000000001")), close, close) is None
     for changes, why in (
-        ({"type": OrderType.MARKET, "time_in_force": TimeInForce.DAY}, "no market order"),
         ({"type": OrderType.MARKET}, "no market order is taken for cls"),
         ({"time_in_force": TimeInForce.DAY}, "no market_on_close order is taken for day"),
         ({"qty": D(0)}, "zero shares"),
@@ -333,17 +332,9 @@ def test_1_each_way_an_order_is_refused_on_the_rule_itself() -> None:
     ):
         assert why in (refusal(replace(moc, **changes), close, close) or ""), changes
     assert "after its session's close" in (refusal(moc, close + MICRO, close) or "")
-
-
-def test_9_a_market_order_for_the_day_is_rejected() -> None:
-    made = world()
-    at = close_of(FULL) - timedelta(minutes=20)
-    market = order(1, 4, at=at, kind=OrderType.MARKET, tif=TimeInForce.DAY)
-    made.decide(at, (market,))
-    assert made.send(market) is OrderState.REJECTED
-    (entry,) = [e for e in entries(made) if isinstance(e, RejectedEntry)]
-    assert "no market order is taken for day" in json.loads(entry.raw)["reason"]
-    assert made.blobs().keys() == {"sim/sim-1/000000000001.json"}
+    # The day's market order is taken too, and #155's cases in tests/test_market_fills.py fill it.
+    day = replace(moc, type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
+    assert refusal(day, close, close) is None
 
 
 # 2 and 14. A cancel and the lookups

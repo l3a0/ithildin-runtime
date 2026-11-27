@@ -19,7 +19,8 @@ it as a target of zero (hard limit 3).
    A plan of more than 99 orders halts, since an order id holds two digits.
 
 `order_type` reads the type a strategy's orders take from its `[execution]`
-section, whose one key is `order`.
+section, whose one key is `order`: `market_on_close` for the closing auction or
+`market` for a market order for the day.
 """
 
 from __future__ import annotations
@@ -48,7 +49,10 @@ __all__ = ["MOST_ORDERS", "Plan", "order_type", "plan_orders"]
 # The most orders one decision may plan, since an order id numbers its place in two digits.
 MOST_ORDERS = 99
 # The order types a strategy's `[execution] order` may name, and what each sends.
-_TYPES = {"market_on_close": (OrderType.MARKET_ON_CLOSE, TimeInForce.CLS)}
+_TYPES = {
+    "market_on_close": (OrderType.MARKET_ON_CLOSE, TimeInForce.CLS),
+    "market": (OrderType.MARKET, TimeInForce.DAY),
+}
 _ZERO = Decimal(0)
 
 
@@ -63,8 +67,7 @@ def order_type(strategy: StrategyConfig) -> tuple[OrderType, TimeInForce]:
     """The type and time in force of a strategy's orders, as its `[execution]` section names them.
 
     A missing or empty section, a key other than `order`, and a type other than
-    `market_on_close` halt naming the strategy. The day's market order is
-    #155's.
+    `market_on_close` and `market` halt naming the strategy.
     """
     section = strategy.section("execution")
     where = f"strategy {strategy.name}'s configuration {strategy.source}"
@@ -76,8 +79,8 @@ def order_type(strategy: StrategyConfig) -> tuple[OrderType, TimeInForce]:
     found = _TYPES.get(named) if isinstance(named, str) else None
     if found is None:
         raise Halt(
-            f"{where} names the order {named!r} in [execution], and only market_on_close is "
-            "sent until #155 adds the day's market order"
+            f"{where} names the order {named!r} in [execution], and only market_on_close and "
+            "market are sent"
         )
     return found
 

@@ -8,8 +8,19 @@ fill rule by order type and no branch on a mode or a test.
   session's close, and is rejected after it. It fills whole at that session's
   official close, at the first call after it that reads a price and finds that
   one. Until then it is working, and it can be cancelled up to the close itself.
-- **Any other order is rejected.** The day's market order gets its fill with
-  #155, which reads the decision's quote.
+- **A market order for the day fills whole at once**, in the call that takes
+  it, a buy at the ask and a sale at the bid of the quote in the snapshot of
+  its decision. `core.quote_faults` judges that quote at the decision time, so
+  a backtest's fills do not move with its clock. A snapshot with no quote of
+  the instrument and a quote with a fault are each a rejection naming why, and
+  never an exception. Before the close the gate's mark halts on both first.
+  Under `reject_later` or `fill_none` it rests instead, and it never fills at a
+  close. One on its way is judged as it arrives. It is missed when it arrives
+  past its close, under another decision's prices, or with a quote that is
+  missing or has a fault, and otherwise it fills. A read of the orders reads no
+  price, so it leaves one of its own decision that arrives before its close on
+  its way, as the last item says.
+- **Any other order is rejected.**
 - **It moves only forward.** A call whose clock reads before the log's newest
   call, or before the decision its prices are of, halts.
 - **No clock and no price stops a cancel, or a read of the orders**, as the
@@ -21,8 +32,9 @@ fill rule by order type and no branch on a mode or a test.
 Every call reads the log forward. Every call but a cancel then does what is due:
 what a fault has someone do to the account, an order that arrives late, a
 rejection that comes later, and the closes. A read of the orders leaves each close
-that needs a price to the next call that reads one. A call then does its own part, stores
-one blob where anything changed, and answers. Where its create fails, nothing this
+that needs a price, and each market order on its way that needs its quote, to the
+next call that reads one. A call then does its own part, stores one blob where anything changed, and
+answers. Where its create fails, nothing this
 process remembers has changed, and the next call finds whether the blob landed.
 One whose number another call took starts over on what it then reads.
 """
@@ -54,6 +66,7 @@ from ithildinruntime.core import (
     OrderType,
     Outcome,
     PositionsRead,
+    Quote,
     ReceivedPage,
     RecordsRead,
     Session,
@@ -65,6 +78,7 @@ from ithildinruntime.core import (
     exceeds_places,
     load_sessions,
     places,
+    quote_faults,
     read_order_id,
     require_utc,
 )
@@ -80,10 +94,19 @@ from .faults import (
     OrderFault,
     ReadFault,
 )
-from .log import SimClose, SimEdit, SimEvents, SimOrder, SimState, SimulatedAccount, after
+from .log import (
+    SimClose,
+    SimEdit,
+    SimEvents,
+    SimOrder,
+    SimState,
+    SimulatedAccount,
+    after,
+    ended,
+)
 from .prices import Prices
 
-__all__ = ["SimulatedBroker", "refusal"]
+__all__ = ["REASON_LIMIT", "SimulatedBroker", "refusal"]
 
 _ZERO = Decimal(0)
 _SHARE_PLACES = places(OrderIntent, "qty")
@@ -91,12 +114,17 @@ _PRICE_PLACES = places(Fill, "price")
 _CONTENDED = "contended_log"
 # How many times a call starts over on a number another call took.
 _STARTS_OVER = 100
+# The longest reason a rejection gives, so its answer stays well inside the journal's raw limit,
+# past which the order path reads an answer as in doubt. A quote's faults quote what it received.
+REASON_LIMIT = 4096
+_TAKEN = frozenset(
+    {(OrderType.MARKET_ON_CLOSE, TimeInForce.CLS), (OrderType.MARKET, TimeInForce.DAY)}
+)
 
 
 def refusal(order: OrderIntent | SimOrder, at: datetime, close: datetime) -> str | None:
-    """Why the account takes no such order at `at`, or `None` for one that rests until `close`."""
-    if (order.type, order.time_in_force) != (OrderType.MARKET_ON_CLOSE, TimeInForce.CLS):
-        # The day's market order among them, whose fill is #155's.
+    """Why the account takes no such order at `at`, or `None` for one it takes."""
+    if (order.type, order.time_in_force) not in _TAKEN:
         return f"no {order.type} order is taken for {order.time_in_force}"
     if not order.qty.is_finite() or exceeds_places(order.qty, _SHARE_PLACES):
         return f"{order.qty} is no number of shares at {_SHARE_PLACES} places"
@@ -114,9 +142,12 @@ _OF_ORDERS = frozenset({"open_orders", "orders", "lookup"})
 
 
 class _Unpriced(Exception):
-    """A close this call needs and has not read, which it reads with the log let go."""
+    """A price this call needs and has not read, which it reads with the log let go.
 
-    def __init__(self, instrument: InstrumentId, session: date, why: str) -> None:
+    `session` is the session of a close, and `None` for the decision's quote.
+    """
+
+    def __init__(self, instrument: InstrumentId, session: date | None, why: str) -> None:
         super().__init__(why)
         self.asked = instrument, session
         self.why = why
@@ -134,8 +165,9 @@ class SimulatedBroker:
         self._clock = clock
         self._prices = prices
         self._faults = faults
-        # Each close this decision's prices gave, so none is read while the log is held.
+        # Each close and quote this decision's prices gave, so none is read while the log is held.
         self._read_closes: dict[tuple[InstrumentId, date], Decimal | None] = {}
+        self._read_quotes: dict[InstrumentId, Quote | None] = {}
 
     @staticmethod
     def open(store: BlobStore, account: str, cash: Decimal) -> None:
@@ -285,7 +317,7 @@ class SimulatedBroker:
         """Do what is due and then `work`, store both as one call, and answer.
 
         `work` gives every event of the call and what reads its answer once they
-        are stored. A close it needs is read with the log let go, so a price that
+        are stored. A close or a quote it needs is read with the log let go, so a price that
         is slow holds no other call.
         """
         lost: list[type[StoreError]] = []
@@ -300,11 +332,16 @@ class SimulatedBroker:
                         return answer()
                 lost.append(taken)
             except _Unpriced as unpriced:
+                instrument, session = unpriced.asked
                 try:
-                    found = self._prices.close(*unpriced.asked)
+                    if session is None:
+                        self._read_quotes[instrument] = self._prices.quote(instrument)
+                    else:
+                        self._read_closes[instrument, session] = self._prices.close(
+                            instrument, session
+                        )
                 except Halt as halt:
                     raise Halt(f"{unpriced.why}: {halt.reason}") from None
-                self._read_closes[unpriced.asked] = found
         raise BrokerUnavailable(_CONTENDED, lost[-1])
 
     def _close_price(self, instrument: InstrumentId, session: date, why: str) -> Decimal | None:
@@ -312,6 +349,13 @@ class SimulatedBroker:
         if (instrument, session) not in self._read_closes:
             raise _Unpriced(instrument, session, why)
         return self._read_closes[instrument, session]
+
+    def _quote(self, instrument: InstrumentId) -> Quote | None:
+        """The decision's quote of an instrument, unjudged, read ahead of the log's lock."""
+        if instrument not in self._read_quotes:
+            why = f"the simulated account {self.alias} cannot read the quote of its order"
+            raise _Unpriced(instrument, None, why)
+        return self._read_quotes[instrument]
 
     def _now(self) -> datetime:
         """The clock's time, or a halt where it is none this account can go on from."""
@@ -348,7 +392,7 @@ class SimulatedBroker:
             if count <= log.calls and count not in log.fired:
                 edit = self._edit(count, after(log.account_now, events), events, now)
                 events = replace(events, edits=(*events.edits, edit))
-        events = self._arrivals(events, now)
+        events = self._arrivals(events, now, of_orders)
         return now, self._closes(events, now, of_orders)
 
     def _edit(self, count: int, state: SimState, events: SimEvents, now: datetime) -> SimEdit:
@@ -377,8 +421,13 @@ class SimulatedBroker:
                 order = replace(self._order_of(intent, now, False), client_order_id=None)
                 return SimEdit(count, None, None, None, replace(order, id=self._next_id(events)))
 
-    def _arrivals(self, events: SimEvents, now: datetime) -> SimEvents:
-        """Each order on its way whose call has come, placed or missed."""
+    def _arrivals(self, events: SimEvents, now: datetime, of_orders: bool) -> SimEvents:
+        """Each order on its way whose call has come, placed or missed.
+
+        A market order of this decision needs its quote to arrive, so a read of the
+        orders, which reads no price, leaves it on its way to the next call that
+        reads one.
+        """
         log = self._log
         for order in log.account_now.delayed:
             name = order.client_order_id or ""
@@ -390,8 +439,20 @@ class SimulatedBroker:
             if refusal(order, now, _close_of(order)) is not None:
                 events = replace(events, missed=(*events.missed, name))
                 continue
+            if order.type is OrderType.MARKET:
+                _, decided, _ = read_order_id(name)
+                if decided != self._prices.decision_at:
+                    events = replace(events, missed=(*events.missed, name))
+                    continue
+                if of_orders:
+                    continue
+                if self._unfilled(order) is not None:
+                    events = replace(events, missed=(*events.missed, name))
+                    continue
             placed = replace(order, id=self._next_id(events), submitted_at=now)
             events = replace(events, placed=(*events.placed, placed))
+            if order.type is OrderType.MARKET:
+                events = self._filled(placed, events, now, fault)
         return events
 
     def _closes(self, events: SimEvents, now: datetime, of_orders: bool) -> SimEvents:
@@ -411,7 +472,8 @@ class SimulatedBroker:
             return SimClose(order.id or "", BrokerState.REJECTED, now, None, None)
         if now <= closed:
             return None
-        if fault is OrderFault.FILL_NONE:
+        if fault is OrderFault.FILL_NONE or order.type is OrderType.MARKET:
+            # A market order fills as it is taken, so one still working at its close never fills.
             return SimClose(order.id or "", BrokerState.EXPIRED, closed, None, None)
         if of_orders:
             return None
@@ -454,14 +516,70 @@ class SimulatedBroker:
         if name in self._log.names or name in entering:
             why = f"the account already holds an order under the id {name}"
             return events, Ack(Outcome.UNKNOWN, None, None, _reason(why), now)
+        market = intent.type is OrderType.MARKET
         if isinstance(fault, Late):
-            order = self._order_of(intent, now, self._had_close(intent.instrument))
+            order = self._order_of(intent, now, not market and self._had_close(intent.instrument))
             return replace(events, delayed=(*events.delayed, order)), None
         if why := refusal(intent, now, self._session.close):
             return events, _rejected(why, now)
-        order = self._order_of(intent, now, self._had_close(intent.instrument))
+        order = self._order_of(intent, now, not market and self._had_close(intent.instrument))
         placed = replace(order, id=self._next_id(events))
-        return replace(events, placed=(*events.placed, placed)), _found(placed, now)
+        if market and (why := self._unfilled(placed)):
+            return events, _rejected(why, now)
+        events = replace(events, placed=(*events.placed, placed))
+        if market:
+            events = self._filled(placed, events, now, fault)
+            (close,) = [c for c in events.closed if c.id == placed.id] or [None]
+            if close is not None:
+                return events, _found(ended(placed, close), now)
+        return events, _found(placed, now)
+
+    # A market order's fill
+
+    def _unfilled(self, order: SimOrder) -> str | None:
+        """Why the decision's quote fills no market order, or `None` where it can."""
+        quote = self._quote(order.instrument)
+        if quote is None:
+            return f"the decision's snapshot holds no quote of {order.instrument}"
+        decided = self._prices.decision_at
+        if faults := quote_faults(quote, decided, decided):
+            return f"the quote of {order.instrument} cannot be read: {'; '.join(faults)}"
+        return None
+
+    def _filled(
+        self, order: SimOrder, events: SimEvents, now: datetime, fault: object
+    ) -> SimEvents:
+        """A market order's fill at once, a buy at the ask and a sale at the bid.
+
+        It rests instead under `reject_later` and `fill_none`, and `fill_part`
+        fills that much and expires the rest.
+        """
+        if fault in (OrderFault.REJECT_LATER, OrderFault.FILL_NONE):
+            return events
+        quote = self._quote(order.instrument)
+        # `_unfilled` passed it, so both sides are prices.
+        price: Decimal = quote.ask if order.qty > 0 else quote.bid  # type: ignore[union-attr,assignment]
+        qty = order.qty
+        if isinstance(fault, FillPart) and fault.qty < qty.copy_abs():
+            qty = fault.qty.copy_sign(qty)
+        number = len(self._log.fills) + sum(c.fill is not None for c in events.closed) + 1
+        fill = Fill(
+            fill_id=f"sim-f-{number}",
+            correction_id=None,
+            broker_order_id=order.id or "",
+            client_order_id=order.client_order_id,
+            instrument=order.instrument,
+            qty=qty,
+            price=price,
+            at_text=_time(now),
+            at=now,
+            received_at=now,
+            excess_places=("price",) if exceeds_places(price, _PRICE_PLACES) else (),
+            basis=FillBasis.QUOTE,
+        )
+        state = BrokerState.FILLED if qty == order.qty else BrokerState.EXPIRED
+        close = SimClose(order.id or "", state, now, fill, self._prices.snapshot())
+        return replace(events, closed=(*events.closed, close))
 
     @property
     def _session(self) -> Session:
@@ -508,7 +626,8 @@ def _close_of(order: SimOrder) -> datetime:
 def _changed(intent: OrderIntent, fault: object) -> OrderIntent:
     """The order as a fault changes it on its way in, which the account's own rule then answers."""
     if fault is OrderFault.BAD_TYPE:
-        return replace(intent, type=OrderType.MARKET)
+        # A market order at the closing auction, which is a pair the account refuses.
+        return replace(intent, type=OrderType.MARKET, time_in_force=TimeInForce.CLS)
     if fault is OrderFault.BAD_QTY:
         return replace(intent, qty=_ZERO)
     return intent
@@ -524,6 +643,8 @@ def _reason(text: str) -> bytes:
 
 
 def _rejected(why: str, now: datetime) -> Ack:
+    if len(why) > REASON_LIMIT:
+        why = f"{why[: REASON_LIMIT - 6]} (cut)"
     return Ack(Outcome.REJECTED, None, None, _reason(why), now)
 
 
