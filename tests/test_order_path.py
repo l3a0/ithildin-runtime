@@ -67,6 +67,7 @@ from tests.support import fake_broker, gates
 from tests.support.broken_paths import (
     BrokenPath,
     DoubledPath,
+    DownAfterCallPath,
     FlippedPath,
     HandedPath,
     TwicePath,
@@ -2329,20 +2330,13 @@ def test_7_a_sending_whose_answer_was_lost_is_never_left_sending(then: str) -> N
         assert "the sending of" in page and "was not stored" in page
 
 
-def test_7_an_outage_after_the_brokers_call_leaves_the_order_in_doubt(monkeypatch) -> None:
+def test_7_an_outage_after_the_brokers_call_leaves_the_order_in_doubt() -> None:
     """Only an outage before the call means nothing left, so one after it is never called unsent."""
-    from ithildinruntime.execution.order_path import OrderPath
-
     world = World()
-    real = OrderPath._submit
-
-    def submit(self, ack):
-        real(self, ack)
-        raise self._outage("a store stopped answering after the call")
-
-    monkeypatch.setattr(OrderPath, "_submit", submit)
+    account = world.account()
+    path = DownAfterCallPath(account._shared, world.broker, world.report)
     # It is returned in doubt, for the send stage to end its plan on.
-    assert world.send() is OrderState.IN_DOUBT
+    assert path.send(world.orders[0].client_order_id) is OrderState.IN_DOUBT
     assert world.submits == 1
     assert world.state() is OrderState.IN_DOUBT
     assert "abandoned" not in world.kinds()
