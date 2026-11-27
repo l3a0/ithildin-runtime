@@ -191,6 +191,13 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
         ("Nasdaq-100", 3): "TQQQ",
     }
     assert f"So a strategy with SPY and QQQ legs takes SPY's, {spy}." in steps
+    # No code knows a leg's index or multiple, so the steps' stop is the only guard for a leg the
+    # floors do not cover, and design.md's proposal behind it is held with it.
+    stop = "Stop where a leg moves against its index, or holds less than one or more than three"
+    assert stop in steps
+    assert "moves against its index, or holds less than one or more than three times it" in why
+    assert "such as IVV or VOO for the S&P 500 and QQQM for the Nasdaq-100" in why
+    assert "takes the move L gives over the same two sessions, 1 − (1 + L × r₁)(1 + L × r₂)" in why
     # Every figure with a decimal point the paragraph holds, and how many times, so a typo in one
     # of two copies fails. The percentages are the falls and the records' moves it compares them
     # with. Its dates and whole percentages are not held here.
@@ -198,7 +205,7 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     assert Counter(re.findall(r"\d+\.\d+", why)) == Counter(
         {**dict.fromkeys((*spx[0], *ndx[0]), 1), "224.84": 2, spy: 2, qqq: 2}
         | {"20.47": 1, "24.57": 1, "15.08": 1, "21.46": 1, "14.52": 1, "17.09": 2}
-        | {floors["S&P 500", 2]: 1, floors["Nasdaq-100", 3]: 1}
+        | {floors["S&P 500", 2]: 1, floors["Nasdaq-100", 3]: 1, "3.37": 1, "3.50": 1}
     )
     for fund, floor in (("SPY", spy), ("QQQ", qqq)):
         leg = f"{fund} leg write a `stress_move` of at least {floor} and a `stress_low` of {floor}"

@@ -444,7 +444,7 @@ A larger record binds as soon as the release that carries it runs, whatever the 
 
 #### Write the caps of a strategy that holds a fund on the S&P 500 or the Nasdaq-100
 
-Every fund on the S&P 500 or the Nasdaq-100 started after 1987, SPY first in 1993 and QQQ in 1999, so its record leaves out that index's fall of October 1987, which the caps cover by hand. design.md's `**Why the caps of funds on the S&P 500 and the Nasdaq-100 reach back to 1987.**`, under [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions), gives the reasoning and the formula.
+Every exchange-traded fund on the S&P 500 or the Nasdaq-100 started after 1987, SPY first in 1993 and QQQ in 1999, so its record leaves out that index's fall of October 1987, which the caps cover by hand. design.md's `**Why the caps of funds on the S&P 500 and the Nasdaq-100 reach back to 1987.**`, under [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions), gives the reasoning and the formula.
 
 **Table:** The 1987 floor of a leg, by the index it tracks and the multiple of that index's daily return it holds
 
@@ -457,10 +457,10 @@ Every fund on the S&P 500 or the Nasdaq-100 started after 1987, SPY first in 199
 | Nasdaq-100 | 2 | QLD | 0.40646524 |
 | Nasdaq-100 | 3 | TQQQ | 0.57572600 |
 
-These floors are exploratory. Each above one times is the fall of an ideal fund that resets daily at the index's close, and none of the funds named at two or three times traded in 1987.
+These floors are exploratory. Each floor at two or three times is the fall of an ideal fund that resets daily at the index's close, and none of the funds named at two or three times traded in 1987.
 
-1. Find each leg's floor in the table. A leg that tracks neither index has no floor, and a multiple above one and at most three times that the table leaves out takes design.md's formula. Stop where a leg moves against its index or holds more than three times it, because this doc proposes that such caps are not written until the owner rules on that leg.
-2. Take the strategy's floor as the largest of its legs' floors, which this doc proposes for every mix. So a strategy with SPY and QQQ legs takes SPY's, 0.24570586.
+1. Find each leg's floor in the table. A leg that tracks neither index has no floor, and a multiple above one and at most three times that the table leaves out takes design.md's formula. Stop where a leg moves against its index, or holds less than one or more than three times it, because design.md proposes that such caps are not written until the owner rules on that leg.
+2. Take the strategy's floor as the largest of its legs' floors, which design.md proposes for every mix. So a strategy with SPY and QQQ legs takes SPY's, 0.24570586.
 3. Write the caps' `stress_move` as the larger of the floor and the largest m of the strategy's records, and `stress_vintage` and `stress_through` on its record as usual.
 4. Write `stress_low` as the floor in the same write, so a later write of `stress_move` below the floor halts every order rather than loosening the cap with nothing said.
 5. Write `stress_high` at or above that `stress_move` in the same write, because the caps halt every order otherwise.
