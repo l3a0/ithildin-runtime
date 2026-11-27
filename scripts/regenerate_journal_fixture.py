@@ -12,13 +12,21 @@ This script writes `_committed()` into an empty folder through that module's
 `write_committed`, the function the bytes test writes through, and prints one
 line per entry. The line says whether the entry matches the committed file
 and the file at a git ref, `origin/main` unless `--against` names another.
-Fetch and merge first, so the ref is current and this branch holds it, then
-run:
+A merge where both sides appended an entry takes five steps.
+
+1. Fetch and merge, so the ref is current and this branch holds it.
+2. Resolve the conflict in `_committed()` with the ref's entries first and
+   this branch's after them. Leave the conflict in the fixture folder, which
+   `--write` replaces.
+3. Run the script, and read each line.
+4. Run it with `--write`.
+5. Mark the folder resolved, and move `replay.json` by hand.
 
     git fetch origin
     git merge origin/main
     uv run python scripts/regenerate_journal_fixture.py
     uv run python scripts/regenerate_journal_fixture.py --write
+    git add tests/fixtures/orders
 
 Each column reads `same`, `differs`, `new` where only this run writes the
 entry, `gone` where only that side holds it, or `-` where neither does.
@@ -32,11 +40,16 @@ three causes.
 2. `_committed()` lost the ref's order in the merge.
 3. This branch changed how an entry the ref holds is written, which the rules
    in docs/architecture/08-crosscutting-concepts.md's `##### What holds a
-   kind still` govern, and which is rewritten by hand.
+   kind still` govern.
 
-This script writes none of the three. It ends with 2, writing nothing, when
-the ref cannot be read or holds no file in the folder, so an unread ref never
-passes.
+This script writes none of the three. For the third, call `write_committed`
+from tests/test_journal_entries.py on an empty folder, read the diff of its
+`journal/fixture-1/` against the committed one, and copy it in by hand.
+
+A traceback, such as from a `_committed()` that still holds conflict markers,
+also ends with 1. The script ends with 2, writing nothing,
+when the ref cannot be listed or holds no file in the folder, so an unread ref
+never passes.
 
 With `--write`, and only once every entry the ref holds reads `same`, it names
 any committed file this run did not write, then replaces the committed folder
@@ -82,12 +95,6 @@ class Entry:
     name: str
     here: str
     there: str
-
-
-def write(into: Path) -> Path:
-    """Write `_committed()` into an empty folder, as the bytes test does, and return the journal."""
-    write_committed(into)
-    return into / "journal" / FIXED
 
 
 def _files(folder: Path) -> dict[str, bytes]:
@@ -170,7 +177,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT, read_ref: ReadRef = g
         return 2
     committed_folder = root / FOLDER
     with tempfile.TemporaryDirectory() as scratch:
-        written_folder = write(Path(scratch))
+        write_committed(Path(scratch))
+        written_folder = Path(scratch) / "journal" / FIXED
         written = _files(written_folder)
         entries = compare(written, _files(committed_folder), at_ref)
         print(f"{'entry':<18} {'committed':<10} {args.against}")

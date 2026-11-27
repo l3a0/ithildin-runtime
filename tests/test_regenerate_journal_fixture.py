@@ -3,7 +3,7 @@
 scripts/regenerate_journal_fixture.py writes `_committed()` from
 tests/test_journal_entries.py and compares each entry with the committed
 folder and with the folder at a git ref. Each case copies the committed
-fixture under `tmp_path`, changes one thing, and runs the script's `main`
+fixture under `tmp_path`, changes what the case names, and runs the script's `main`
 there, so no case moves the real fixture or reads the real checkout's git
 history. Most hand the ref's files in. The cases that read a ref through git
 commit the copy into a repository of their own under `tmp_path`, so a
@@ -242,18 +242,41 @@ def test_a_replay_json_behind_the_entries_is_named_and_left_alone(
     assert replay.read_bytes() == replay_before
 
 
-def test_a_replay_json_that_does_not_parse_is_named_and_the_entries_are_still_compared(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ("<<<<<<< ours\n{}\n=======\n{}\n>>>>>>> theirs\n", "JSONDecodeError"),
+        (None, "FileNotFoundError"),
+    ],
+    ids=["conflicted", "missing"],
+)
+def test_a_replay_json_that_cannot_be_read_is_named_and_the_entries_are_still_compared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str | None, error: str
 ) -> None:
     _copy(tmp_path)
     replay = tmp_path / script.REPLAY
-    replay.write_text("<<<<<<< ours\n{}\n=======\n{}\n>>>>>>> theirs\n")
+    if text is None:
+        replay.unlink()
+    else:
+        replay.write_text(text)
 
     assert script.main([], root=tmp_path, read_ref=_Ref(MAIN)) == 0
 
     out = capsys.readouterr().out
     assert set(_lines(out).values()) == {("same", "same")}
-    assert "afterwards.through is unreadable (JSONDecodeError)" in out
+    assert f"afterwards.through is unreadable ({error})" in out
+
+
+def test_write_builds_a_committed_folder_that_is_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = _copy(tmp_path)
+    shutil.rmtree(folder)
+
+    assert script.main(["--write"], root=tmp_path, read_ref=_Ref(MAIN)) == 0
+
+    assert set(_lines(capsys.readouterr().out).values()) == {("new", "same")}
+    assert _files(folder) == MAIN
 
 
 @pytest.mark.parametrize("files", [None, {}], ids=["unread", "empty"])
@@ -274,6 +297,10 @@ def test_git_ref_reads_the_folder_at_a_commit_and_gives_none_where_it_holds_noth
     tmp_path: Path,
 ) -> None:
     root = _committed_copy(tmp_path)
+    # A changed byte in the working tree shows the bytes come from the commit.
+    changed = root / script.FOLDER / "000000000005.json"
+    changed.write_bytes(_flip(changed.read_bytes()))
+    assert script.git_ref(root, "HEAD") == MAIN
     shutil.rmtree(root / script.FOLDER)
     _git(root, "commit", "-qam", "no fixture")
 
@@ -281,3 +308,15 @@ def test_git_ref_reads_the_folder_at_a_commit_and_gives_none_where_it_holds_noth
     assert script.git_ref(root, "HEAD") is None
     assert script.git_ref(root, "no-such-ref-of-this-repository") is None
     assert script.git_ref(tmp_path / "no-such-folder", "HEAD") is None
+
+
+def test_run_as_a_command_it_ends_with_the_code_main_returns() -> None:
+    run = subprocess.run(
+        [sys.executable, str(SCRIPT), "--against", "no-such-ref-of-this-repository"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert run.returncode == 2, run.stderr
+    assert "could not be read, or holds no file in" in run.stdout
