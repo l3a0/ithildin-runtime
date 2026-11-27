@@ -1126,6 +1126,9 @@ def test_an_outage_at_a_read_among_the_last_checks_pages_once_and_keeps_its_aban
     assert len(sent) == 2, sent
     assert said in sent[0]
     assert "The owner's step" in sent[0] and "The plan's orders stand so" in sent[1]
+    # The path's outage stops every later read, so the legs come from what this call saw.
+    down = "since a store stopped answering"
+    assert f"stand so: {first} acknowledged, {second} not sent, {down}" in reason
     made.store.refuse()
     made.account.settle(lambda: None)
     assert made.view().orders[second].state is OrderState.ABANDONED

@@ -2148,26 +2148,31 @@ def test_7_a_refused_abandoned_after_an_outage_is_named_in_the_halt(monkeypatch)
 
 
 def test_7_a_kept_abandoned_the_journal_turns_in_doubt_is_a_plain_halt(monkeypatch) -> None:
-    """The journal answered with another state, so the send stage reads it, never "not sent"."""
-    from ithildinruntime.execution.order_path import Unstored
+    """The fold refuses the entry and takes its `in_doubt`, so the send stage reads the journal."""
+    from ithildinruntime.journal import Journal
 
     world = World()
     account = world.account()
+    real = Journal.record
 
     def before(number: int, op: str, k: str) -> None:
         if number >= CAPS_READS[1] and k == caps_key(ACCOUNT):
             down(number, op, k)
 
+    def record(self, view, record, at):
+        if isinstance(record, AbandonedEntry):
+            raise Halt("the fold refuses it")
+        return real(self, view, record, at)
+
     world.store.before = before
-
-    def turned(self, kept, report, once=False):
-        return OrderState.IN_DOUBT
-
-    monkeypatch.setattr(Unstored, "_store", turned)
+    monkeypatch.setattr(Journal, "record", record)
     with pytest.raises(Halt) as raised:
         world.send(account=account)
-    assert not isinstance(raised.value, Outage)
-    assert f"The journal shows {ID} InDoubt, which this call did not do" in raised.value.reason
+    assert not isinstance(raised.value, Outage) and world.submits == 0
+    assert f"The journal refused the abandoned of {ID} and shows it InDoubt" in raised.value.reason
+    assert world.state() is OrderState.IN_DOUBT
+    # The outage's page, and the one `Unstored` sends for the order left in doubt.
+    assert len(world.alarms.sent) == 2 and "in doubt" in world.alarms.sent[1]
 
 
 @pytest.mark.parametrize("at", range(CREATES[2] + 1, BEFORE_SUBMIT + 1))

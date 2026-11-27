@@ -1472,9 +1472,11 @@ class OrderPath:
         """Keep the `abandoned` of an order with a `sending` that never left, and try it once.
 
         The store has just failed and paged, so the one try sends no page about it.
-        Where it does not land, the entry waits for the next settle, and the
-        outage that is raised says so. A process that dies first leaves the
-        `sending` with no answer, which the next recover looks up.
+        Where it lands, or the store does not answer it, this gives an `Outage`, and
+        a kept entry waits for the next settle. Wherever the journal answered with
+        a refusal, this gives a plain `Halt`, so the send stage reads the journal,
+        where another writer may have sent the order. A process that dies first
+        leaves the `sending` with no answer, which the next recover looks up.
         """
         try:
             at = self._shared.clock.now()
@@ -1494,9 +1496,11 @@ class OrderPath:
         if state is OrderState.ABANDONED:
             return Outage(f"{reason}. The journal shows {name} {state}")
         if state is not None:
-            # The journal answered with another state, such as `InDoubt` where its fold refused
-            # the entry, so this is a plain halt and the send stage reads what it holds.
-            return Halt(f"{reason}. The journal shows {name} {state}, which this call did not do")
+            # The journal's fold refused the entry and took the `in_doubt` that stands in for it,
+            # which `Unstored` paged, so this is a plain halt and the send stage reads the journal.
+            return Halt(
+                f"{reason}. The journal refused the abandoned of {name} and shows it {state}"
+            )
         return Outage(
             f"{reason}. The abandoned of {name} is kept and tried again before the next send"
         )
