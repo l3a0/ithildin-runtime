@@ -590,12 +590,12 @@ A record is named by its strategy and its vintage, which is the SHA-256 of the b
 | `through` | The last session, a date | The hold |
 | `stress_move` | m, a decimal string of eight places | The hold and the command |
 | `leg`, `moved_from`, `moved_to` | The move that set m | The hold reads `leg`, and the command all three |
-| `one_session`, `one_session_leg`, `one_session_on` | The largest one-session move | A person |
+| `one_session`, `one_session_leg`, `one_session_on` | The largest one-session move | A person, and the reader `one_session` |
 | `series` | A table for each series of each leg: `instrument`, `first`, `last`, `basis`, and `source` and `source_as_of` where the bars have them | A person, and the reader its `instrument` and `last` |
 | `left_out` | A table for each move left out: `instrument`, `sessions` (1 or 2), `moved_from`, `moved_to` | A person |
 | `flagged` | A table for each flag the read raised: `instrument`, `session`, `field`, `rule`, and `what`, which the person who commits the record fills in | A person |
 | `manifest`, `measured_on` | The SHA-256 of the manifest the run read, and the run's date | A person |
-| `withdrawn` | The reason, on a record found wrong, and absent on any other | The hold |
+| `withdrawn` | The reason, on a record found wrong, and absent on any other | The hold, and the reader |
 
 The reader refuses each of these as a halt naming the file, and the record and the key where the fault is in one. No halt names the folder the file sits in.
 

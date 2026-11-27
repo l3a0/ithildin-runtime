@@ -490,15 +490,37 @@ def test_an_empty_kind_field_is_refused_where_unstated_says_the_source_is_silent
         load_price_kinds(path)
 
 
-def test_a_row_with_more_fields_than_its_header_is_refused(tmp_path: Path) -> None:
-    """A comma inside `read_from` would split it, and what follows would be dropped unseen."""
+@pytest.mark.parametrize(
+    ("row", "why"),
+    [("all,x,y", "more fields"), ("all", "fewer fields"), ("", "fewer fields")],
+    ids=["a-comma-inside-read-from", "no-read-from", "no-volume-or-read-from"],
+)
+def test_a_row_whose_fields_differ_from_its_header_is_refused(
+    tmp_path: Path, row: str, why: str
+) -> None:
+    """A comma inside `read_from` splits it, and a row cut short loses its last fields.
+
+    Either way the reader would drop or blank a field unseen, so it halts. A good row
+    comes first, so the check must read past it.
+    """
     head = (
         "added,source,first_session,last_session,price_kind,venues,delay,volume_counted,read_from"
     )
+    good = "2026-11-22,s,2020-01-02,2020-12-31,close,all,none,all,x"
+    cut = "2026-11-22,t,2020-01-02,2020-12-31,close,all,none" + (f",{row}" if row else "")
     path = tmp_path / "kinds.csv"
-    path.write_text(f"{head}\n2026-11-22,s,2020-01-02,2020-12-31,close,all,none,all,x,y\n")
-    with pytest.raises(Halt, match="kinds.csv row 1 holds more fields than its header names"):
+    path.write_text(f"{head}\n{good}\n{cut}\n")
+    with pytest.raises(Halt, match=f"kinds.csv row 2 holds {why} than its header names"):
         load_price_kinds(path)
+
+
+def test_a_master_row_cut_short_is_refused_rather_than_read_as_never_ending(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "master.csv"
+    path.write_text("added,id,ticker,first_session,last_session\n2026-11-22,X,X,2020-01-02\n")
+    with pytest.raises(Halt, match="master.csv row 1 holds fewer fields than its header names"):
+        load_master(path)
 
 
 # The quote-kind contract.

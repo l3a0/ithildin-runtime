@@ -204,9 +204,12 @@ def _rows(path: Path, header: Sequence[str]) -> list[dict[str, str]]:
         raise Halt(f"{path.name} has the header {reader.fieldnames}, not {list(header)}")
     rows = list(reader)
     for n, row in enumerate(rows, 1):
-        # `csv` files the fields past the header under `None`, which no reader asks for.
+        # `csv` files the fields past the header under the key `None`, which no reader asks
+        # for, and gives a field a row stops short of the value `None`.
         if None in row:
             raise Halt(f"{path.name} row {n} holds more fields than its header names")
+        if None in row.values():
+            raise Halt(f"{path.name} row {n} holds fewer fields than its header names")
     return rows
 
 
