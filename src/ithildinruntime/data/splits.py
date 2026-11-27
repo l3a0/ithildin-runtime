@@ -561,7 +561,7 @@ def _residuals(
             released = (
                 _OWN_SESSION
                 if pair.quoted
-                else "or a covered row reaching it where Schwab did not restate"
+                else "or a covered row reaching it, where no split happened"
             )
             yield (
                 f"{instrument}'s {where} of {pair.later.isoformat()} states a close of "
