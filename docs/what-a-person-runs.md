@@ -442,6 +442,14 @@ A larger record binds as soon as the release that carries it runs, whatever the 
 2. Write the caps' `stress_move` up to the new record's, leaving `stress_vintage` and `stress_through` on the older record. Raise `stress_high` in the same write where the new m is above it, because the caps halt every order otherwise. A rollback then loses nothing.
 3. Move `stress_vintage` and `stress_through` to the new record only once the release that carries it would not be rolled back. A release rolled back past the record the caps name halts every order, so before such a rollback move both fields back. Move to the new record before the older one's age passes, whether it is larger or not. For one that is no larger, this step alone is enough.
 
+#### Write the caps of a strategy that holds SPY
+
+SPY's history starts in 1993, so its record leaves out the S&P 500's fall of October 1987, which the caps cover by hand. design.md's `**Why SPY's caps reach back to 1987.**`, under [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions), gives the reasoning.
+
+1. Write the caps' `stress_move` as the larger of 0.24570585 and the largest m of the strategy's records, and `stress_vintage` and `stress_through` on its record as usual.
+2. Write `stress_high` at or above that `stress_move` in the same write, because the caps halt every order otherwise.
+3. Keep the 0.24570585 floor when a later record moves the caps, at the second step of [Raise the stress move](#raise-the-stress-move).
+
 #### Withdraw a record
 
 A withdrawal ends what the record held, so the net cap can grow with nothing halted, and caps that name the record halt every order once the release runs. So before the change merges, the owner writes `stress_move` to what should stand, and moves the caps to another record the running release already carries where they name this one. Where there is no other, a release that carries a new measurement runs first, and the withdrawal comes in a later one. The change adds `withdrawn` with the reason, does the same in `PINNED`, and says which `stress_move`, `stress_vintage` and `stress_through` the owner's caps hold. A record of the same strategy and vintage is refused even beside a withdrawn one, so a right one is measured through another session.
