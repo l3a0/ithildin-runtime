@@ -7,9 +7,10 @@ file that `ithildinruntime.core.sessions` reads and checks by its SHA-256.
 docs/architecture/08-crosscutting-concepts.md's `#### Which clock a schedule
 follows, and how it becomes UTC` gives the reasons.
 
-The table runs from 2006-01-01, before the first session of the span the
-first strategy's backtest reads, through the end of the next calendar year.
-Move `LAST` forward a year, and `FIRST` back for an older backtest, then run:
+The table runs from 1993-01-01, before SPY's first session in Yahoo's daily
+history, 1993-01-29, the oldest bar a stress move reads, through the end of the
+next calendar year.
+Move `LAST` forward a year, and `FIRST` back for an older backtest or stress move, then run:
 
     uv run --no-project --python 3.12 --exclude-newer 2026-11-10 \\
         --with exchange_calendars==4.13.2 python scripts/regenerate_sessions.py
@@ -36,7 +37,7 @@ from zoneinfo import ZoneInfo
 import exchange_calendars
 
 VERSION = "4.13.2"
-FIRST = date(2006, 1, 1)
+FIRST = date(1993, 1, 1)
 LAST = date(2027, 12, 31)
 
 CORE = Path(__file__).resolve().parent.parent / "src" / "ithildinruntime" / "core"

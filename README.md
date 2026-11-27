@@ -1,5 +1,7 @@
 # ithildin-runtime
 
+[![CI](https://github.com/l3a0/ithildin-runtime/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/l3a0/ithildin-runtime/actions/workflows/ci.yml?query=branch%3Amain)
+
 A systematic trading platform built after the one Rishi Narang outlines in
 *Inside the Black Box* (3rd ed., Wiley, 2024). One runtime runs backtest, paper
 and live trading, so what is tested is what runs live.

@@ -8,6 +8,7 @@ adding one means adding it here too.
 
 from __future__ import annotations
 
+import csv
 import re
 from dataclasses import replace
 from datetime import date
@@ -118,6 +119,50 @@ _SCHWAB_READ_FROM = (
     "equal to the cent on 80 of 80 imported bars of GLD and USO. Their volume was not compared "
     "and is stated as the capture row states it because it comes from the same endpoint"
 )
+_YAHOO_138_READ_FROM = {
+    "spy": (
+        "owner's ruling of 2026-11-27 on #138 at "
+        "https://github.com/l3a0/ithildin-runtime/issues/138#issuecomment-7209802208. "
+        "l3a0/marketlake#1043 pins the file at sha256 "
+        "c2aafddba5c921de725a341b10c1a3f7a9424866906479ad0abcea67855832c6. In an "
+        "exploratory comparison Massive's unadjusted daily closes sum to the same cent in "
+        "each of the 21 months from 2025-01-02 to 2026-09-04 and its volume to within "
+        "0.0494 percent. Before 2025 Alpha Vantage's daily closes give the same returns "
+        "over three of the four pairs of sessions that set SPY's and QQQ's largest "
+        "one-session and two-session moves in Yahoo's files. QQQ's one-session return is "
+        "the fourth and agrees once Yahoo's two closes are rounded to the cent. Alpha "
+        "Vantage's daily returns around five more closes of SPY agree with Yahoo's to "
+        "within the precision Yahoo stores each price at. Ten closes of the two funds "
+        "that could hide a larger move are listed there and no second vendor has checked "
+        "them. Every volume is a whole multiple of 100. That the volume is consolidated "
+        "is measured from 2025 on and inferred before it and the price's venues rest on "
+        "the ruling. Yahoo publishes no statement of its close so official close is the "
+        "usual meaning of a Yahoo close for a US ETF"
+    ),
+    "qqq": (
+        "owner's ruling of 2026-11-27 on #138 at "
+        "https://github.com/l3a0/ithildin-runtime/issues/138#issuecomment-7209802208. "
+        "l3a0/marketlake#1043 pins the file at sha256 "
+        "f9edb7d87e161d62ebc27d6618d512726a6fe8ae0dfe49eb4b2911a76f5a8662. In an "
+        "exploratory comparison Massive's unadjusted daily closes sum to the same cent in "
+        "each of the 21 months from 2025-01-02 to 2026-09-04 and its volume to within "
+        "0.0494 percent. Before 2025 Alpha Vantage's daily closes give the same returns "
+        "over three of the four pairs of sessions that set SPY's and QQQ's largest "
+        "one-session and two-session moves in Yahoo's files. QQQ's one-session return is "
+        "the fourth and agrees once Yahoo's two closes are rounded to the cent. Alpha "
+        "Vantage's daily returns around five more closes of SPY agree with Yahoo's to "
+        "within the precision Yahoo stores each price at. Ten closes of the two funds "
+        "that could hide a larger move are listed there and no second vendor has checked "
+        "them. Its source adjusts for QQQ's two-for-one split of 2000-03-20 so prices "
+        "before it read half those that traded and volume twice the shares traded. Every "
+        "volume from the split on is a whole multiple of 100 and every one before it of "
+        "200. That the volume is consolidated is measured from 2025 on and inferred "
+        "before it and the price's venues rest on the ruling. Yahoo publishes no "
+        "statement of its close so official close is the usual meaning of a Yahoo close "
+        "for a US ETF"
+    ),
+}
+
 KIND_ROWS = (
     [
         f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
@@ -138,6 +183,14 @@ KIND_ROWS = (
     + [
         "2026-11-26,schwab:pricehistory,2026-09-04,2026-10-30,official close,consolidated,none,"
         f"consolidated in shares as of the fetch,{_SCHWAB_READ_FROM}"
+    ]
+    + [
+        "2026-11-27,yahoo:spy_daily_yahoo_2026-11-26.csv,1993-01-29,2026-09-04,official close,"
+        "consolidated,none,consolidated in shares to the nearest hundred,"
+        + _YAHOO_138_READ_FROM["spy"],
+        "2026-11-27,yahoo:qqq_daily_yahoo_2026-11-26.csv,1999-03-10,2026-09-04,official close,"
+        "consolidated,none,consolidated in shares to the nearest hundred "
+        "before its source's split adjustment," + _YAHOO_138_READ_FROM["qqq"],
     ]
 )
 
@@ -181,6 +234,14 @@ def test_every_row_held_when_it_was_added_is_still_there_unchanged(
     rows = _data_rows(path)
     assert rows[: len(pinned)] == pinned
     assert len(rows) == len(pinned), f"a row was added to {path.name}, so pin it here too"
+
+
+@pytest.mark.parametrize("path", [MASTER, PRICE_KINDS, QUOTE_KINDS])
+def test_every_row_has_the_fields_its_header_names(path: Path) -> None:
+    """A comma inside a field splits it, and the reader would drop what follows unseen."""
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    head, *rows = list(csv.reader(line for line in lines if not line.startswith("#")))
+    assert [n for n, row in enumerate(rows, 1) if len(row) != len(head)] == []
 
 
 def test_every_file_loads() -> None:
@@ -232,6 +293,28 @@ def test_the_yahoo_rows_name_the_digest_the_chan_rows_compared_with(name: str) -
     (digest,) = re.findall(r"pins the file at sha256 ([0-9a-f]{64}) ", yahoo)
     (chan,) = [r for r in rows if r.startswith("2026-11-22,quant") and f"/{name}.csv," in r]
     assert f"{name}_daily_yahoo_2026-11-22.csv at sha256 {digest}" in chan
+
+
+@pytest.mark.parametrize(
+    ("name", "before", "first"),
+    [("spy", date(1993, 1, 28), date(1993, 1, 29)), ("qqq", date(1999, 3, 9), date(1999, 3, 10))],
+)
+def test_spy_and_qqqs_yahoo_rows_read_the_kind_on_each_side_of_their_edges(
+    name: str, before: date, first: date
+) -> None:
+    """The rows the owner's ruling of 2026-11-27 on #138 states, to the import's last session."""
+    kinds, own = load_price_kinds(), f"yahoo:{name}_daily_yahoo_2026-11-26.csv"
+    # Typed again, so a typo shared by a row and its pin is still caught.
+    counted = (
+        "consolidated in shares to the nearest hundred"
+        + {
+            "spy": "",
+            "qqq": " before its source's split adjustment",
+        }[name]
+    )
+    stated = Kind("official close", "consolidated", "none", counted)
+    days = (before, first, date(2026, 9, 4), date(2026, 9, 8))
+    assert [kinds.kind(own, day) for day in days] == [NOTHING, stated, stated, NOTHING]
 
 
 def test_the_captured_bars_row_reads_the_kind_it_should_on_each_side_of_its_edges() -> None:
@@ -405,6 +488,39 @@ def test_an_empty_kind_field_is_refused_where_unstated_says_the_source_is_silent
     path.write_text(f"{head}\n2026-11-22,s,2020-01-02,2020-12-31,close,all,none,,x\n")
     with pytest.raises(Halt, match="leaves a field empty"):
         load_price_kinds(path)
+
+
+@pytest.mark.parametrize(
+    ("row", "why"),
+    [("all,x,y", "more fields"), ("all", "fewer fields"), ("", "fewer fields")],
+    ids=["a-comma-inside-read-from", "no-read-from", "no-volume-or-read-from"],
+)
+def test_a_row_whose_fields_differ_from_its_header_is_refused(
+    tmp_path: Path, row: str, why: str
+) -> None:
+    """A comma inside `read_from` splits it, and a row cut short loses its last fields.
+
+    Either way the reader would drop or blank a field unseen, so it halts. A good row
+    comes first, so the check must read past it.
+    """
+    head = (
+        "added,source,first_session,last_session,price_kind,venues,delay,volume_counted,read_from"
+    )
+    good = "2026-11-22,s,2020-01-02,2020-12-31,close,all,none,all,x"
+    cut = "2026-11-22,t,2020-01-02,2020-12-31,close,all,none" + (f",{row}" if row else "")
+    path = tmp_path / "kinds.csv"
+    path.write_text(f"{head}\n{good}\n{cut}\n")
+    with pytest.raises(Halt, match=f"kinds.csv row 2 holds {why} than its header names"):
+        load_price_kinds(path)
+
+
+def test_a_master_row_cut_short_is_refused_rather_than_read_as_never_ending(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "master.csv"
+    path.write_text("added,id,ticker,first_session,last_session\n2026-11-22,X,X,2020-01-02\n")
+    with pytest.raises(Halt, match="master.csv row 1 holds fewer fields than its header names"):
+        load_master(path)
 
 
 # The quote-kind contract.
