@@ -270,7 +270,16 @@ def test_a_figure_at_zero_leaves_the_initial_risk_missing() -> None:
 
 @pytest.mark.parametrize(
     ("figure", "adding"),
-    [("0", True), (None, True), ("NaN", True), ("Infinity", True), (None, False), ("NaN", False)],
+    [
+        ("0", True),
+        ("-0.01", True),
+        (None, True),
+        ("NaN", True),
+        ("Infinity", True),
+        (None, False),
+        ("NaN", False),
+        ("Infinity", False),
+    ],
 )
 def test_an_approval_with_a_figure_core_refuses_halts_the_read(
     figure: str | None, adding: bool
@@ -278,13 +287,15 @@ def test_an_approval_with_a_figure_core_refuses_halts_the_read(
     """A hand-written entry of a kind no writer can build halts, and never reads as smaller.
 
     `core.Verdict` refuses an approval with no finite worst loss, and an adding one at or
-    below zero.
+    below zero. The decoder refuses a NaN or an Infinity before `core.Verdict` sees it, and
+    either refusal halts the fold.
     """
     written = Written()
     (gld,) = written.decide(Leg(GLD, 10, "400"))
     written.send(gld)
     written.fill(gld, 10, "200")
-    (more,) = written.decide(Leg(GLD, 5 if adding else -5, "600", adding))
+    # 15*200*0.2 for the add, 10*200*0.2 for the sale, then replaced below.
+    (more,) = written.decide(Leg(GLD, 5 if adding else -5, "600" if adding else "400", adding))
     journal = written.journal
     # The add's verdict is the newest entry. A second journal holds the same entries, with that
     # verdict's worst loss written by hand as `figure`, which `core.Verdict` refuses to build.

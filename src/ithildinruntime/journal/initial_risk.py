@@ -9,8 +9,8 @@ comes from the journal alone` says how this module reads it. In short:
   are read from the book each view gives, as the gate reads them. So an entry
   the fold refuses halts this read with the fold's reason, and so does what
   halts the book: a journal with no entry, a fill in dispute and anything kept
-  as unmatched. A live order in a state outside `NOT_SENT` and `WORKING` halts
-  it too.
+  as unmatched. While a strategy with a position open holds no share, an order
+  of it in a state outside `NOT_SENT` and `WORKING` halts it too.
 - A strategy is flat when it holds no share and has no order working or in
   doubt. A position opens at the `sending` entry of an order of a flat
   strategy, and closes at the first entry after which the strategy is flat.
@@ -81,8 +81,9 @@ def positions(journal: Journal) -> tuple[Position, ...]:
     nothing else. It halts where the fold halts and where the book of the
     newest view halts, which an empty journal, a fill in dispute and anything
     kept as unmatched do, since a position read past them could close where
-    the record does not say it did. It halts on a live order in a state
-    outside `NOT_SENT` and `WORKING` too.
+    the record does not say it did. While a strategy with a position open
+    holds no share, an order of it in a state outside `NOT_SENT` and `WORKING`
+    halts it too.
     """
     # The reading through no entry, which every reading of this journal folds from.
     view = journal.view(through=0)
@@ -116,7 +117,7 @@ def positions(journal: Journal) -> tuple[Position, ...]:
                     )
                 )
     # No entry releases a dispute or an unmatched entry yet, so the newest view's book halts on
-    # each one the read passed, and on a journal that holds no entry. The entries #203 and #150
+    # each one the read passed, and on a journal that holds no entry. The entries #203 and #151
     # build to release them must be read here before either ships.
     view.book  # noqa: B018
     found.extend(held.values())
