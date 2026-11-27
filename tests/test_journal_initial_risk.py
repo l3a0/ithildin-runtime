@@ -19,7 +19,16 @@ from decimal import Decimal
 
 import pytest
 
-from ithildinruntime.core import Halt, InstrumentId, OrderIntent, OrderState, encode, sha256_of
+from ithildinruntime.core import (
+    Halt,
+    InstrumentId,
+    OrderIntent,
+    OrderState,
+    OrderType,
+    TimeInForce,
+    encode,
+    sha256_of,
+)
 from ithildinruntime.journal import (
     IntentEntry,
     Journal,
@@ -47,6 +56,7 @@ from tests.support.journals import (
     fill,
     filled,
     in_doubt,
+    lost,
     opening,
     planned,
     read,
@@ -56,7 +66,8 @@ from tests.support.journals import (
 )
 
 D = Decimal
-HOUR = timedelta(hours=1)
+# Each decision a minute after the last, so every one falls before the session's close at 20:00.
+MINUTE = timedelta(minutes=1)
 
 
 @dataclass(frozen=True)
@@ -68,6 +79,7 @@ class Leg:
     worst_loss: str
     adding: bool = True
     approved: bool = True
+    closing: bool = False
 
 
 class Written:
@@ -88,10 +100,10 @@ class Written:
     def decide(self, *legs: Leg, strategy: str = CHAN) -> list[OrderIntent]:
         """A read, a decision planning `legs` in order, and each one's intent and verdict."""
         self.decisions += 1
-        at = AT + self.decisions * HOUR
+        at = AT + self.decisions * MINUTE
         reading = self.put(read(at))
         orders = [
-            planned(place, leg.qty, leg.instrument, strategy, at)
+            closing(planned(place, leg.qty, leg.instrument, strategy, at), leg.closing)
             for place, leg in enumerate(legs, start=1)
         ]
         decided = self.put(decision(*orders, at=at, read=reading))
@@ -112,6 +124,13 @@ class Written:
     def fill(self, order: OrderIntent, qty: int, price: str) -> int:
         made = fill(f"{broker(order)}-{qty}", broker(order), qty, price, order.instrument)
         return self.put(filled(made, self.reading))
+
+
+def closing(order: OrderIntent, auction: bool) -> OrderIntent:
+    """The order as a closing-auction order where `auction`, the one kind a list can give up."""
+    if not auction:
+        return order
+    return replace(order, type=OrderType.MARKET_ON_CLOSE, time_in_force=TimeInForce.CLS)
 
 
 def broker(order: OrderIntent) -> str:
@@ -415,7 +434,7 @@ def test_every_state_is_read_on_purpose() -> None:
     s = OrderState
     assert NOT_SENT == {s.INTENDED, s.APPROVED}
     assert WORKING == {s.SENDING, s.IN_DOUBT, s.ACKNOWLEDGED, s.PARTLY_FILLED}
-    assert ENDED == {s.REFUSED, s.ABANDONED, s.FILLED, s.REJECTED, s.EXPIRED}
+    assert ENDED == {s.REFUSED, s.ABANDONED, s.FILLED, s.REJECTED, s.EXPIRED, s.LOST}
     assert NOT_SENT | WORKING | ENDED == set(OrderState)
 
 
@@ -449,3 +468,23 @@ def test_a_journal_held_after_every_position_closed_halts_the_read(kind: str) ->
     said = "is in dispute" if kind == "dispute" else "keeps an unmatched fill"
     with pytest.raises(Halt, match=said):
         positions(written.journal)
+
+
+def test_an_order_given_up_as_lost_counts_and_then_keeps_no_position_open() -> None:
+    """It was sent, so it counts, and once it ends the strategy can be flat again."""
+    written = Written()
+    (gld,) = written.decide(Leg(GLD, 10, "400"))
+    written.send(gld)
+    written.fill(gld, 10, "200")
+    (more,) = written.decide(Leg(GLD, 5, "600", closing=True))
+    written.put(SendingEntry(more.client_order_id))
+    written.put(in_doubt(more.client_order_id))
+    (sell,) = written.decide(Leg(GLD, -10, "400", False))
+    written.send(sell)
+    written.fill(sell, -10, "200")
+    asked = written.put(read(AT + timedelta(days=1)))
+    given_up = written.put(lost(more.client_order_id, asked))
+    (position,) = positions(written.journal)
+    assert position.closed == given_up
+    assert more.client_order_id in [one.client_order_id for one in position.counted]
+    assert position.initial_risk == D("600")
