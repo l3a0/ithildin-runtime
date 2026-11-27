@@ -78,7 +78,8 @@ class SimOrder:
     """One order as the account holds it, or as it is on its way.
 
     - `id` is the broker's, and `None` for one that has not arrived.
-    - `session` is the session whose close it fills at, and `read_close` whether
+    - `session` is the session it rests in, whose close a market-on-close order
+      fills at and a market order expires at, and `read_close` whether
       the decision that sent it had read a close of that session.
     """
 

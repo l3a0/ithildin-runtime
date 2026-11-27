@@ -19,6 +19,12 @@ It also compares this repository's pyarrow with the one the pinned commit's own
 `uv.lock` holds, which the contract says to pin. A raise that moved one of the
 two without the other shows there, whatever `main` holds.
 
+Where a rule says to raise the pin, or to wait for a deploy before raising it,
+the run also prints the step a raise owes until l3a0/marketlake#1050 publishes
+it: re-read how marketlake writes a gap row tagged `spot_close`, which the read
+of a sealed day relies on. It prints the step and checks none of it, because
+the rule is in marketlake's code and not in its contract.
+
 It exits 0 when nothing differs, 1 when something does, naming what and which
 rule applies, and 2 when either side could not be read, so an unread side
 never passes. It fetches both commits from marketlake's public repository with
@@ -81,6 +87,18 @@ MATCH_PIN = (
     "Rule: set pyarrow here to the version at the commit this repository pins now, or at the "
     "raised one where a rule says to raise now. The two pins move in one pull request."
 )
+
+
+REREAD = (
+    "Rule: the pull request that raises the pin re-reads, at the new commit, which of "
+    "marketlake's writers write a gap row tagged `spot_close` and when, checks that none writes "
+    "it before the equity close, "
+    "and names the commit it read, until l3a0/marketlake#1050 publishes that rule. "
+    "docs/architecture/07-deployment.md's `#### What says the marketlake pin is due a raise` "
+    "names the writers."
+)
+# The rules that lead to a raise, which owes the re-read above.
+RAISES = (RAISE_NOW, RAISE_TOGETHER, WAIT)
 
 
 UNREAD = "The check could not run, so it says nothing of the pin"
@@ -200,6 +218,8 @@ def differences(pin: Pin, pinned: Side, main: Side) -> list[str]:
             "marketlake's at the pin."
         )
         said.append(MATCH_PIN)
+    if any(rule in said for rule in RAISES):
+        said.append(REREAD)
     return said
 
 
