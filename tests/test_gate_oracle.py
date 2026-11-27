@@ -229,14 +229,27 @@ def _split(seed: int, made: World) -> World:
     if row.new_shares == row.old_shares:
         row = replace(row, new_shares=3)
     snap = made.snapshot
-    if draw.random() < 0.2:
-        # A series its source adjusted after the split, which trades through it.
-        adjusted = {
-            k: {"1d": tuple(replace(b, source_as_of=first) for b in by["1d"])}
-            for k, by in snap.bars.items()
-        }
-        snap = replace(snap, bars=adjusted)
-    return made.at(snapshot=replace(snap, splits=replace(snap.splits, rows={i: (row,)})))
+    shape = draw.choice(("as built", "adjusted", "mixed", "raw"))
+    if shape != "as built":
+        # Adjusted after the split, which trades through it, raw, or the newest bar alone raw.
+        def bar_of(b: object, n: int, count: int) -> object:
+            if shape == "raw" or (shape == "mixed" and n == count - 1):
+                return replace(b, basis="raw", source_as_of=None)
+            return replace(b, source_as_of=first)
+
+        snap = replace(
+            snap,
+            bars={
+                k: {"1d": tuple(bar_of(b, n, len(by["1d"])) for n, b in enumerate(by["1d"]))}
+                for k, by in snap.bars.items()
+            },
+        )
+    covered = {}
+    if draw.random() < 0.5:
+        # The instrument's first covered session, on either side of the split.
+        covered = {i: DAYS[DAYS.index(first) + draw.choice((-2, 0, 1))]}
+    split_read = replace(snap.splits, rows={i: (row,)}, covered_from=covered)
+    return made.at(snapshot=replace(snap, splits=split_read))
 
 
 def _records(seed: int, made: World) -> tuple[StressRecord, ...]:

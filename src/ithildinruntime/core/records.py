@@ -114,6 +114,7 @@ __all__ = [
     "Valuation",
     "Verdict",
     "adjusted_for",
+    "not_adjusted_for",
 ]
 
 InstrumentId = NewType("InstrumentId", str)
@@ -441,8 +442,10 @@ class SplitsRead(_Record):
     - `rows` maps each instrument the decision reads to every split row known
       by the decision, after withdrawals and corrections, by first session.
     - `covered_from` maps an instrument to the first session of its earliest
-      covered row, where it has one. A split before it falls before the
-      record checked any captured bar of the instrument.
+      covered row, where it has one. That row starts on the instrument's first
+      captured bar, or on the last session of Schwab's import before it, as
+      tests/test_data_files.py pins, so a split before it falls before the
+      platform held any captured bar of the instrument.
     - `pairs` holds what covered each pair the read checked, in order.
     """
 
@@ -463,6 +466,26 @@ def adjusted_for(bar: Bar, first_session: date) -> bool:
         and bar.source_as_of is not None
         and bar.source_as_of >= first_session
     )
+
+
+def not_adjusted_for(bar: Bar, first_session: date, covered_from: date | None) -> bool:
+    """Whether a bar a decision reads leaves a split of that first session unaccounted for.
+
+    A series its source adjusted for the split accounts for it. A raw bar
+    before the split does not. A raw bar on or after it is on the new scale,
+    which a book or a share cap written before the split is not, so it
+    accounts for the split only where the split falls before `covered_from`,
+    the first session of the instrument's earliest covered row, before which
+    the platform held no captured bar of it. With no covered row, nothing
+    says so, and the bar does not. data/splits.py halts on such a bar from the
+    split's first session, and risk/gate.py refuses an order that adds on one
+    before it.
+    """
+    if adjusted_for(bar, first_session):
+        return False
+    if bar.basis != "raw" or bar.session < first_session:
+        return True
+    return covered_from is None or first_session >= covered_from
 
 
 @dataclass(frozen=True)

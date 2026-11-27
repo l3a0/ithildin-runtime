@@ -69,6 +69,7 @@ def load(path: Path) -> SplitRecord:
 
 
 SPLIT = "2026-11-27,split,USO,2020-04-29,,1,8,2020-04-22T13:30:00Z,a filing"
+# Its last session is the fifth before the day it was added, the latest a covered row may reach.
 COVERED = "2026-11-27,covered,GLD,2026-10-30,2026-11-19,,,,two lists"
 
 
@@ -111,12 +112,13 @@ def test_1_a_known_at_at_the_open_of_the_first_session_passes(tmp_path: Path) ->
         ("2026-11-27,split,USO,2020-04-29,,8,8,2020-04-22T13:30:00Z,x", "new shares equal to old"),
         ("2026-11-27,split,USO,2020-04-29,,1,8,2020-04-22T13:30:00,x", "no UTC instant"),
         ("2026-11-27,split,USO,2020-04-29,,1,8,2020-04-22T09:30:00-04:00,x", "no UTC instant"),
-        ("2026-11-27,split,USO,2020-04-29,,1,8,2020-04-29T13:30:01Z,x", "after the open"),
+        ("2026-11-27,split,USO,2020-04-29,,1,8,2020-04-29T13:30:00.000001Z,x", "after the open"),
         ("2026-11-27,split,USO,2020-04-25,,1,8,2020-04-22T13:30:00Z,x", "no session on"),
         ("2026-11-27,split,USO,2020-04-29,2020-05-01,1,8,2020-04-22T13:30:00Z,x", "fills"),
         ("2026-11-27,split,USO,2020-04-29,,1,8,2020-04-22T13:30:00Z,", "names nothing"),
         ("2026-11-27,covered,GLD,2026-11-19,2026-10-30,,,,x", "first session is after its last"),
         ("2026-11-27,covered,GLD,2026-10-30,2026-11-21,,,,x", "no session on"),
+        ("2026-11-27,covered,GLD,2026-10-30,2026-11-20,,,,x", "is not 5 sessions before"),
         ("2026-11-27,covered,GLD,2026-10-30,2026-11-19,1,,,x", "fills new_shares"),
         ("2026-11-27,withdrawn,USO,2020-04-29,,,,,x", "no split row on that key"),
         ("2026-11-27,split,USO,2020-04-29,,1,8,x", "holds 8 fields, not 9"),
@@ -245,8 +247,10 @@ def snap(
         )
     quotes = {}
     if quoted is not None:
-        quotes = {instrument: quote(instrument, 60, 60.1, at)}
         newest = held[-1].session
+        # Priced at the newest close, so a quote's midpoint reads no step.
+        mid = held[-1].close
+        quotes = {instrument: quote(instrument, mid - Decimal("0.01"), mid + Decimal("0.01"), at)}
         covers += (
             cover(instrument, newest, DAY, str(quoted), source=QUOTE, covered=quote_covered),
         )
@@ -342,7 +346,10 @@ def test_7_a_pair_a_covered_row_holds_reads_no_step() -> None:
     closes = {**flat(3), WINDOW[-1]: "50.00"}
     days = list(closes)
     row = made.covered("USO", WINDOW[0], WINDOW[-1])
-    covers = tuple(cover(USO, p, s, covered=row) for p, s in zip(days, days[1:], strict=False))
+    # Each pair also holds a sealed day's close, so the covered row alone keeps the step out.
+    covers = tuple(
+        cover(USO, p, s, "100.0", covered=row) for p, s in zip(days, days[1:], strict=False)
+    )
     assert check_splits(snap(closes, covers=covers), TABLE) == []
 
 
@@ -532,3 +539,92 @@ def test_10_an_adjusted_window_meets_no_refusal() -> None:
     }
     known = replace(made.NO_SPLITS, rows={GLD: (row,)})
     assert world.at(snapshot=replace(world.snapshot, bars=bars, splits=known)).check().approved
+
+
+def test_8_a_split_on_the_instruments_first_covered_session_halts_and_one_before_it_does_not() -> (
+    None
+):
+    """The first covered row starts where the platform first held a captured bar."""
+    on = made.split("USO", date(2026, 10, 30), 1, 8)
+    (reason,) = check_splits(window_snap((on,), covered_from=date(2026, 10, 30)), TABLE)
+    assert "not adjusted for it" in reason
+    before = made.split("USO", date(2026, 10, 29), 1, 8)
+    assert check_splits(window_snap((before,), covered_from=date(2026, 10, 30)), TABLE) == []
+
+
+def test_8_a_raw_window_wholly_after_a_split_the_platform_captured_across_still_halts() -> None:
+    """A book or a share cap written before the split is on the old scale until #190 and #191."""
+    row = made.split("USO", date(2026, 10, 1), 1, 8)
+    (reason,) = check_splits(window_snap((row,), covered_from=date(2026, 9, 8)), TABLE)
+    assert "not adjusted for it" in reason
+
+
+def test_8_one_bar_not_adjusted_in_a_window_halts_however_many_are() -> None:
+    row = made.split("USO", date(2026, 10, 1), 1, 8)
+    adjusted = [replace(bar(USO, d, Decimal(100)), source_as_of=date(2026, 11, 22)) for d in WINDOW]
+    mixed = (*adjusted[:-1], replace(adjusted[-1], basis="raw", source_as_of=None))
+    found = check_splits(window_snap((row,), bars=mixed, covered_from=None), TABLE)
+    assert any("not adjusted for it" in r for r in found)
+    assert not any(
+        "not adjusted for it" in r
+        for r in check_splits(window_snap((row,), bars=tuple(adjusted), covered_from=None), TABLE)
+    )
+
+
+def test_8_a_raw_bar_is_adjusted_for_no_split_whatever_date_it_carries() -> None:
+    row = made.split("USO", date(2026, 10, 1), 1, 8)
+    dated = tuple(replace(raw(USO, d, 100), source_as_of=date(2026, 11, 22)) for d in WINDOW)
+    found = check_splits(window_snap((row,), bars=dated, covered_from=date(2026, 9, 8)), TABLE)
+    assert any("not adjusted for it" in r for r in found)
+
+
+def test_9_a_split_with_no_row_still_halts_beside_an_old_recorded_one() -> None:
+    """USO's row of 2020 skips the checks on its own session alone."""
+    closes = {**flat(5)}
+    days = list(closes)
+    closes[days[-1]] = Decimal("50.00")
+    covers = tuple(cover(USO, p, s, "100.0") for p, s in zip(days, days[1:], strict=False))
+    old = made.split("USO", date(2020, 4, 29), 1, 8)
+    (reason,) = check_splits(snap(closes, covers=covers, rows=(old,)), TABLE)
+    assert "only a quote covers" in reason
+
+
+def test_10_a_split_on_the_decisions_own_session_refuses_an_order_that_adds_too() -> None:
+    """Data's stage halts that decision first, and the gate refuses it as well."""
+    record = made.record(made.split("GLD", gates.TODAY, 2, 1, known_at=gates.DECISION))
+    world = gates.World(intent=gates.order(1), book=gates.book(positions={"chan": {GLD: 5}}))
+    bars = {
+        i: {"1d": tuple(replace(b, basis="raw") for b in by["1d"])}
+        for i, by in world.snapshot.bars.items()
+    }
+    known = replace(made.NO_SPLITS, rows={GLD: record.known(GLD, gates.DECISION)})
+    verdict = world.at(snapshot=replace(world.snapshot, bars=bars, splits=known)).check()
+    assert verdict.limit is Limit.SPLIT
+
+
+@pytest.mark.parametrize(("mid", "halts"), [(50, True), (800, True), (75, False), (100, False)])
+def test_6_a_split_on_the_decisions_own_session_the_quote_does_not_restate_halts_on_the_step(
+    mid: int, halts: bool
+) -> None:
+    """The quote's midpoint against the newest stored close, where only the quote covers the pair.
+
+    A two-for-one or a one-for-eight halts. A four-for-three reads as a move, the gap the
+    owner accepted on shadow and paper.
+    """
+    found = snap(flat(), quoted="100.0")
+    priced = {USO: quote(USO, mid - Decimal("0.01"), mid + Decimal("0.01"), AT)}
+    found = replace(found, quotes=priced)
+    reasons = check_splits(found, TABLE)
+    assert any("only a quote covers" in r for r in reasons) is halts
+    if halts:
+        (reason,) = reasons
+        assert f"own quote of {DAY} has a midpoint" in reason and f" {mid}." not in reason
+
+
+def test_6_a_covered_row_over_the_decisions_own_pair_reads_no_step_on_its_quote() -> None:
+    row = made.covered("USO", WINDOW[0], DAY)
+    days = list(flat())
+    covers = tuple(cover(USO, p, s, covered=row) for p, s in zip(days, days[1:], strict=False))
+    found = snap(flat(), covers=covers, quoted="100.0", quote_covered=row)
+    found = replace(found, quotes={USO: quote(USO, Decimal("49.99"), Decimal("50.01"), AT)})
+    assert check_splits(found, TABLE) == []

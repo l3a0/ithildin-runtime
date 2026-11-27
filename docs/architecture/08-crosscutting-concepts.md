@@ -418,7 +418,7 @@ The bucket's lifecycle expires heartbeats and the noncurrent versions a lease's 
 
 #### Split records and saved broker statements
 
-Split records and saved broker statements are recorded facts. Wherever they sit, nothing may overwrite or silently drop one, every read verifies its checksum, and a copy leaves the machine from the first session. Split records are `src/ithildinruntime/data/splits.csv`, whose rows are only ever added and which `tests/test_data_files.py` pins row by row. Git keeps every version of it, so no resync or lifecycle rule can lose a row, every decision's snapshot names the SHA-256 of the bytes it read, and the file leaves the machine with every push. marketlake's `actions/` ledger is not the place, for the reasons [#189](https://github.com/l3a0/ithildin-runtime/issues/189) records, among them a lifecycle rule in its `infra/live/bucket.tf` that expires a replaced version of the ledger after 30 days. No issue holds the place for saved broker statements yet.
+Split records and saved broker statements are recorded facts. Wherever they sit, nothing may overwrite or silently drop one, every read verifies its checksum, and a copy leaves the machine from the first session. Split records are `src/ithildinruntime/data/splits.csv`, whose rows are only ever added and which `tests/test_data_files.py` pins row by row in CI. A read of it checks no checksum. What holds it is git, which keeps every version and checks each by its hash, so no resync or lifecycle rule can lose a row, and the file leaves the machine with every push. Every decision's snapshot names the SHA-256 of the bytes it read, so a replay names the version a decision used. marketlake's `actions/` ledger is not the place, for the reasons [#189](https://github.com/l3a0/ithildin-runtime/issues/189) records, among them a lifecycle rule in its `infra/live/bucket.tf` that expires a replaced version of the ledger after 30 days. No issue holds the place for saved broker statements yet.
 
 ### How recorded blobs are checked
 
@@ -596,11 +596,13 @@ A record is named by its strategy and its vintage, which is the SHA-256 of the b
 | `flagged` | A table for each flag the read raised: `instrument`, `session`, `field`, `rule`, and `what`, which the person who commits the record fills in | A person |
 | `manifest`, `measured_on` | The SHA-256 of the manifest the run read, and the run's date | A person |
 | `withdrawn` | The reason, on a record found wrong, and absent on any other | The hold |
+| `splits` | The SHA-256 of `data/splits.csv` as the measure read it, absent on a record measured before that file existed | A person |
+| `split_rows` | A table for each split row of the record's instruments that file held: `instrument`, `first_session`, `new_shares`, `old_shares`, present only beside `splits` | A person |
 
 The reader refuses each of these as a halt naming the file, and the record and the key where the fault is in one. No halt names the folder the file sits in.
 
 1. A file that is absent or cannot be read, such as one that is not TOML.
-2. A key it does not know, or one left out.
+2. A key it does not know, or one left out. `withdrawn`, `splits` and `split_rows` may be left out, and `split_rows` with no `splits` is refused.
 3. A value of another form, such as an m at or below zero or a flag with an empty `what`.
 4. A `leg` that is none of the record's instruments, because the hold counts a record by its leg.
 5. A `through` that is not the last session of each leg's `series`, because the stress move's age counts from it.

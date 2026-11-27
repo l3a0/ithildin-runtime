@@ -484,7 +484,8 @@ class LakeSource:
     def _stated_close(self, root: LakeRoot, pair: Pair) -> tuple[StatedClose | None, int]:
         """The sealed day's stated close, kept for the run by its partition's SHA-256.
 
-        The count is 1 where this read opened the day, and 0 where the run held it.
+        The count is 1 where this read opened the day, and 0 where the run held
+        it. An answer that holds a fault is not kept.
         """
         try:
             ticker = self._master.ticker(pair.instrument, pair.later)
@@ -502,8 +503,10 @@ class LakeSource:
         found = stated_close(self._mirror, root, ticker, pair.later)
         if found is None:
             return None, 0
-        with self._answers.lock:
-            self._answers.closes[cache] = found
+        # A day whose read failed is read again by the next decision, as a failed bar is.
+        if found.fault is None:
+            with self._answers.lock:
+                self._answers.closes[cache] = found
         return found, 1
 
     def _prune(self, latest: date) -> None:

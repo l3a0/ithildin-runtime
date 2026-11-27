@@ -439,3 +439,62 @@ def test_15_a_bad_row_halts_every_decision(lake: Path, tmp_path: Path, monkeypat
     )
     with pytest.raises(Halt, match="splits.csv line 2 is of kind 'splat'"):
         made_source.read(AT)
+
+
+# The run's cache of sealed days, and the judge of a stored snapshot
+
+
+def test_4_a_failed_read_of_a_sealed_day_is_read_again_by_the_next_decision(
+    lake: Path, tmp_path: Path
+) -> None:
+    from tests.test_data_source import Counting
+
+    key = f"quotes/ticker=USO/date={SEALED_DAYS[3]}.parquet"
+    bucket = Counting(FolderBucket(lake))
+    bucket.refuse[key] = OSError("the bucket")
+    read = source(lake, tmp_path, bucket=bucket)
+    assert any(key in r for r in read.read(AT).halts)
+    del bucket.refuse[key]
+    again = read.read(AT)
+    assert again.halts == () and again.split_days == 1
+
+
+def test_4_the_cache_keeps_no_sealed_day_older_than_the_lookback(
+    lake: Path, tmp_path: Path
+) -> None:
+    read = source(lake, tmp_path)
+    assert read.read(AT).split_days == 40
+    later = made.DAYS[made.DAYS.index(DAY) + 61]
+    read._prune(later)
+    assert read._answers.closes == {}
+    assert read.read(AT).split_days == 40
+
+
+@pytest.mark.parametrize("change", ["a fault", "two values", "no cover", "a known split row"])
+def test_11_judge_halts_a_stored_snapshot_on_each_check_of_the_record(
+    lake: Path, tmp_path: Path, change: str
+) -> None:
+    """A redelivery whose read differs is judged by its first capture, through `judge`."""
+    from ithildinruntime.data.source import judge
+
+    found = decide(lake, tmp_path, DAY, splits=SHORT)
+    assert found.data.halt is None
+    read = found.snapshot.splits
+    sealed = next(c for c in read.pairs if c.source == SEALED)
+    rest = tuple(c for c in read.pairs if c != sealed)
+    changed = {
+        "a fault": replace(read, pairs=(*rest, replace(sealed, fault="a made-up fault"))),
+        "two values": replace(read, pairs=(*rest, replace(sealed, close_prices=("1.0", "2.0")))),
+        "no cover": replace(read, pairs=rest),
+        "a known split row": replace(
+            read, rows={**read.rows, USO: (recorded.split("USO", WINDOW[30], 2, 1, line=9),)}
+        ),
+    }[change]
+    said = {
+        "a fault": "a made-up fault",
+        "two values": "states 2 values of the close",
+        "no cover": "names no cover for 1 pairs",
+        "a known split row": "line 9",
+    }[change]
+    stored = replace(found.snapshot, splits=changed)
+    assert any(said in r for r in judge(stored, SETTINGS.instruments, measured=False))

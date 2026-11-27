@@ -32,7 +32,11 @@ and on to the quote's where the decision read one.
    decision's own quote is checked under a covered row too.
 3. **The step.** On a pair of two stored bars that a quote alone covers, a
    close-to-close fall of 30 percent or more, or a rise of 42.9 percent or
-   more, halts. Those are the two steps of one size in the logarithm.
+   more, halts. Those are the two steps of one size in the logarithm. On the
+   pair to the decision's own quote, which only that quote covers, the
+   quote's midpoint against the newest stored close halts at the same bounds,
+   so a split on the decision's own session that Schwab does not restate halts
+   that decision too.
 4. **A recorded split.** A split row known by the decision halts it from the
    row's first session on, wherever a bar the decision reads of that
    instrument is not already adjusted for the split, until #190 and #191 let a
@@ -63,10 +67,11 @@ from ithildinruntime.core import (
     Halt,
     InstrumentId,
     PairCover,
+    Quote,
     Series,
     Snapshot,
     SplitRow,
-    adjusted_for,
+    not_adjusted_for,
     series_of,
 )
 from ithildinruntime.core.sessions import SessionTable
@@ -112,6 +117,8 @@ LOW, HIGH = Decimal("0.95"), Decimal("1.05")
 FALL, RISE = Decimal("0.70"), Decimal("1.429")
 _CONTEXT = Context(prec=28)
 _RAW = "raw"
+# How many sessions before the day both vendor lists were read a covered row ends, at least.
+_LATE = 5
 _FILE = "data/splits.csv"
 _RELEASED_BY_A_ROW = (
     "#190 and #191 build trading through a split, and a withdrawn row ends a false one"
@@ -239,6 +246,14 @@ def _row(n: int, line: str, name: str, master: SecurityMaster, sessions: Session
         last = _session(raw["last_session"], where, "last_session", sessions)
         if first > last:
             raise _bad(where, "is a covered row whose first session is after its last")
+        # A vendor can post a split days late, so a row stops 5 sessions before its lists.
+        before = [d for d in sorted(sessions.sessions) if d < added]
+        if len(before) < _LATE or last > before[-_LATE]:
+            raise _bad(
+                where,
+                f"is a covered row whose last session, {last.isoformat()}, is not 5 sessions "
+                f"before the day it was added, {added.isoformat()}",
+            )
         empty = ("new_shares", "old_shares", "known_at")
     else:
         empty = ("last_session", "new_shares", "old_shares", "known_at")
@@ -411,7 +426,8 @@ def split_halts(snapshot: Snapshot, day: date) -> list[str]:
         for row in rows:
             if row.first_session > day:
                 continue
-            if not any(_unadjusted(bar, row, read.covered_from.get(instrument)) for bar in bars):
+            covered_from = read.covered_from.get(instrument)
+            if not any(not_adjusted_for(b, row.first_session, covered_from) for b in bars):
                 continue
             reasons.append(
                 f"{instrument} has a recorded split of {row.new_shares} new shares for "
@@ -420,17 +436,6 @@ def split_halts(snapshot: Snapshot, day: date) -> list[str]:
                 f"{_RELEASED_BY_A_ROW}"
             )
     return reasons
-
-
-def _unadjusted(bar: Bar, row: SplitRow, covered_from: date | None) -> bool:
-    if adjusted_for(bar, row.first_session):
-        return False
-    if bar.basis != _RAW:
-        return True
-    if bar.session < row.first_session:
-        return True
-    # A raw bar on the new scale, which a book or a cap written before the split is not.
-    return covered_from is None or row.first_session >= covered_from
 
 
 def _instrument(
@@ -475,6 +480,8 @@ def _instrument(
         yield from _residuals(instrument, pair, cover, closes)
         if cover.covered is None and cover.source == SEALED:
             yield from _step(instrument, pair, closes)
+        elif cover.covered is None and pair.quoted:
+            yield from _quoted_step(instrument, pair, closes, snapshot.quotes.get(instrument))
     if short:
         yield _short(instrument, short)
 
@@ -543,6 +550,29 @@ def _step(instrument: InstrumentId, pair: Pair, closes: Mapping[date, Decimal]) 
             f"of {pair.earlier.isoformat()}, a fall of 30 percent or more or a rise of 42.9 "
             "percent or more that only a quote covers. A split row, or a covered row that says "
             "the move was real, releases it"
+        )
+
+
+def _quoted_step(
+    instrument: InstrumentId, pair: Pair, closes: Mapping[date, Decimal], quote: Quote | None
+) -> Iterator[str]:
+    """The step from the newest stored close to the decision's own quote's midpoint.
+
+    A split on the decision's own session that Schwab's `close_price` does not
+    restate leaves the newest bar on the old scale and the quote on the new
+    one, and only the quote covers the pair. A quote with no bid or no ask
+    halts on its own check.
+    """
+    before = closes.get(pair.earlier)
+    if quote is None or quote.bid is None or quote.ask is None or before is None or before <= 0:
+        return
+    step = _CONTEXT.divide(_CONTEXT.add(quote.bid, quote.ask), _CONTEXT.multiply(before, 2))
+    if step <= FALL or step >= RISE:
+        yield (
+            f"{instrument}'s own quote of {pair.later.isoformat()} has a midpoint {_shown(step)} "
+            f"times its close of {pair.earlier.isoformat()}, a fall of 30 percent or more or a "
+            "rise of 42.9 percent or more that only a quote covers. A split row, or a covered "
+            "row that says the move was real, releases it"
         )
 
 

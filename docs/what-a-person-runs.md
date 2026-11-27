@@ -468,7 +468,7 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 
 1. Read both vendor lists for the instrument on one day.
 2. Where neither lists a split in the span other than the record's own rows, write a covered row from the span's first session to a last session at least 5 sessions before that day. A list that cannot be read stops the row.
-3. Start it no earlier than the instrument's first raw bar, or the last session of Schwab's import before it, because a list shows no split only inside the span it reaches.
+3. Start an instrument's first covered row on its first raw bar, or on the last session of Schwab's import before it, never earlier and never later. A list shows no split only inside the span it reaches, and a split before the first covered row reads as one the platform held no captured bar across, so a later start would let a split's halt end while a book or a cap written before it is on the old scale. `tests/test_data_files.py` pins each instrument's start.
 
 A halt that says the record of splits does not reach a pair of sessions is released by a covered row reaching the later one. A halt on a step of 30 percent down or 42.9 percent up is released by a split row, or by a covered row once both lists show the move was real.
 

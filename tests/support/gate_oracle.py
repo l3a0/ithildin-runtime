@@ -56,20 +56,27 @@ class Answer:
 
 
 def _split_ahead(snapshot: Snapshot, instrument: str, close: datetime) -> bool:
-    """A split row whose first session is after the session the close ends, on a bar not adjusted.
+    """A split row whose first session is the session the close ends or later, on a bar it misses.
 
-    A bar is adjusted for a split where its basis is `adjusted` and its source
-    adjusted it on or after the split's first session.
+    A bar accounts for a split where its basis is `adjusted` and its source
+    adjusted it on or after the split's first session, or where it is raw, on
+    or after the split, and the split falls before the instrument's first
+    covered session.
     """
     today = close.astimezone(ZoneInfo("America/New_York")).date()
     bars = snapshot.bars.get(instrument, {}).get("1d", ())
+    covered = snapshot.splits.covered_from.get(instrument)
 
-    def adjusted(bar: object, first: date) -> bool:
+    def accounts(bar: object, first: date) -> bool:
         as_of = getattr(bar, "source_as_of", None)
-        return getattr(bar, "basis", None) == "adjusted" and as_of is not None and as_of >= first
+        basis = getattr(bar, "basis", None)
+        if basis == "adjusted" and as_of is not None and as_of >= first:
+            return True
+        session = getattr(bar, "session", None)
+        return basis == "raw" and session >= first and covered is not None and first < covered
 
     return any(
-        row.first_session > today and not all(adjusted(b, row.first_session) for b in bars)
+        row.first_session >= today and not all(accounts(b, row.first_session) for b in bars)
         for row in snapshot.splits.rows.get(instrument, ())
     )
 

@@ -628,3 +628,22 @@ def test_an_unstated_field_of_each_kind_reads_as_itself(tmp_path: Path) -> None:
 def test_a_quote_file_with_another_header_is_refused(tmp_path: Path, head: str) -> None:
     with pytest.raises(Halt, match="has the header"):
         quote_kinds(tmp_path, head=head)
+
+
+def test_each_instruments_earliest_covered_row_starts_where_its_captured_bars_do() -> None:
+    """A split before it reads as one the platform held no captured bar across.
+
+    data/splits.py takes a raw bar after a split as on the scale the platform first
+    held only where the split falls before this session, so a later start would let a
+    split's halt end while a book written before it is on the old scale. SPY and QQQ are
+    captured from 2026-09-08. GLD and USO are captured from 2026-11-02, and their rows
+    start on 2026-10-30, the last session of Schwab's import before it, so the pair across
+    that change is covered too.
+    """
+    record = load_splits(master=load_master(), sessions=load_sessions())
+    assert {i: record.covered_from(InstrumentId(i)) for i in ("SPY", "QQQ", "GLD", "USO")} == {
+        "SPY": date(2026, 9, 8),
+        "QQQ": date(2026, 9, 8),
+        "GLD": date(2026, 10, 30),
+        "USO": date(2026, 10, 30),
+    }

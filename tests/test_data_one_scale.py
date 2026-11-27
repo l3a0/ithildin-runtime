@@ -23,9 +23,12 @@ from ithildinruntime.core import Bar, InstrumentId, Snapshot, moves, series_of
 from ithildinruntime.data.reference import SCHWAB_IMPORT, KindRow, PriceKinds
 from ithildinruntime.data.source import judge
 from ithildinruntime.data.spikes import MOVE
+from ithildinruntime.data.splits import check_splits
 from tests.support import made_lake as made
 from tests.support.spreads import GLD, USO, synthetic
 from tests.test_captured_bars import KINDS, Decided, decide
+
+TABLE = made.TABLE
 
 SEAM = date(2026, 11, 2)
 YAHOO = "yahoo:{}_daily_yahoo_2026-11-22.csv"
@@ -191,9 +194,12 @@ def test_2_a_pair_that_differs_in_one_field_or_origin_halts_on_the_stored_snapsh
     stored = replace(first.snapshot, bars={**first.snapshot.bars, USO: {"1d": bars}})
     one, two = bars[len(IMPORTED) - 1], bars[len(IMPORTED)]
     assert (one.session, two.session) == (IMPORTED[-1], SEAM)
-    # The record of splits halts too, since its stored covers are of the bars as read.
-    assert judge(stored, (GLD, USO), measured=False)[0] == (
-        reason("USO", one.session, two.session, str(series_of(one)), str(series_of(two)))
+    # The record of splits halts too where the change moves where its pairs start, since its
+    # stored covers are of the bars as read, and it adds nothing else.
+    found = judge(stored, (GLD, USO), measured=False)
+    assert found == (
+        reason("USO", one.session, two.session, str(series_of(one)), str(series_of(two))),
+        *check_splits(stored, TABLE),
     )
 
 
@@ -203,14 +209,15 @@ def test_2_the_pair_in_the_other_order_halts(first: Decided) -> None:
     captured, imported = held[len(IMPORTED)], held[len(IMPORTED) - 1]
     after = replace(imported, session=held[len(IMPORTED) + 1].session, source_as_of=SEAM)
     stored = replace(first.snapshot, bars={**first.snapshot.bars, USO: {"1d": (captured, after)}})
-    assert judge(stored, (GLD, USO), measured=False)[0] == (
+    assert judge(stored, (GLD, USO), measured=False) == (
         reason(
             "USO",
             SEAM,
             after.session,
             CAPTURED_SERIES,
             f"adjusted from {SCHWAB_IMPORT} as of {SEAM}",
-        )
+        ),
+        *check_splits(stored, TABLE),
     )
 
 

@@ -51,7 +51,6 @@ from ithildinruntime.core import (
     TimeInForce,
     Valuation,
     Verdict,
-    adjusted_for,
     classify,
     exact_product,
     exact_total,
@@ -61,6 +60,7 @@ from ithildinruntime.core import (
     hold_to_record,
     load_sessions,
     mark,
+    not_adjusted_for,
     places,
     position,
     quotient,
@@ -427,17 +427,20 @@ def _refusals(
 
 
 def _split_ahead(instrument: InstrumentId, snapshot: Snapshot, session: Session) -> bool:
-    """Whether a known split of the instrument takes effect after the decision's session.
+    """Whether a known split of the instrument takes effect on or after the decision's session.
 
-    Only where a bar the decision reads of it is not already adjusted for the
-    split, so a position added now would be held across a split that halts
-    every decision on it from its first session. The alert #11 builds names
-    the row from the snapshot the verdict read, since a verdict holds no reason.
+    Only where a bar the decision reads of it leaves the split unaccounted for,
+    by `core.not_adjusted_for`, the rule data's halt reads, so a position added
+    now would be held across a split that halts every decision on it from its
+    first session. On that session data's stage halts the decision first, and
+    this refuses it too. The alert #11 builds names the row from the snapshot
+    the verdict read, since a verdict holds no reason.
     """
     bars = snapshot.bars.get(instrument, {}).get(DAILY, ())
+    covered_from = snapshot.splits.covered_from.get(instrument)
     return any(
-        row.first_session > session.day
-        and any(not adjusted_for(b, row.first_session) for b in bars)
+        row.first_session >= session.day
+        and any(not_adjusted_for(b, row.first_session, covered_from) for b in bars)
         for row in snapshot.splits.rows.get(instrument, ())
     )
 
