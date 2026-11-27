@@ -15,11 +15,11 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from ithildinruntime.core import Halt, Snapshot, StoreUnavailable, readable_until
+from ithildinruntime.core import FillBasis, Halt, Snapshot, StoreUnavailable, readable_until
 from ithildinruntime.execution import order_path
 from ithildinruntime.execution.account import Account
 from ithildinruntime.execution.send import MARGIN, SendStage
-from tests.support.send_world import CHAN, SendWorld
+from tests.support.send_world import CHAN, SendWorld, strategy
 from tests.support.sim_world import FULL, GLD, USO, after, close_of
 
 DAYS = [FULL, after(FULL), after(FULL, 2)]
@@ -360,3 +360,21 @@ def test_a_quote_halt_whose_journal_cannot_be_read_abandons_nothing_and_promises
     assert said in pages[0] and "nothing is sent" in pages[-1] and said in pages[-1]
     assert "abandoned" not in made.kinds()
     assert made.submits() == []
+
+
+def test_a_strategy_that_names_the_days_market_order_fills_each_leg_at_its_quote() -> None:
+    """#155: the send stage plans market orders for the day, and each fills at once."""
+    made = SendWorld(CLOSES, strategies=(strategy(execution='[execution]\norder = "market"\n'),))
+    made.ready(close_of(FULL), {CHAN: {GLD: 0, USO: 0}})
+    assert made.send_stage().halt is None
+    at = early(DAYS[1])
+    made.ready(at, PAIR)
+    result = made.send_stage()
+    assert result.halt is None, result.halt.reason
+    assert set(made.states().values()) == {"Acknowledged"}
+    quotes = made.snapshot(at).quotes
+    fills = made.broker().fills(at).fills
+    assert [(f.instrument, f.qty, f.price, f.basis) for f in fills] == [
+        (GLD, 3, quotes[GLD].ask, FillBasis.QUOTE),
+        (USO, -5, quotes[USO].bid, FillBasis.QUOTE),
+    ]

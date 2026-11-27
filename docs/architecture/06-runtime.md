@@ -680,7 +680,7 @@ The steps run in this order.
 
 #### What the first slice builds of these steps
 
-`execution/send.py` builds steps 1 to 5 and step 7 for market-on-close orders alone, in the plan's order. Four parts wait on later issues.
+`execution/send.py` builds steps 1 to 5 and step 7 for market-on-close orders and market orders for the day, in the plan's order. Four parts wait on later issues.
 
 1. Cancels and replacements, and so an open order under a target that wants a change, which halts until [#149](https://github.com/l3a0/ithildin-runtime/issues/149) builds them.
 2. The clock's check against the broker, which is [#153](https://github.com/l3a0/ithildin-runtime/issues/153)'s and [#165](https://github.com/l3a0/ithildin-runtime/issues/165)'s.
