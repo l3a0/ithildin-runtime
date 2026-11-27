@@ -165,11 +165,12 @@ class Account:
         never halts.
 
         Each stage's handler calls it before its first view of the journal. An
-        order in doubt halts recover, so an answer held back until the next
-        send would never be written. It leaves the loss stop's firing to the
-        order path's own settle, so a blob S3 will not take holds up no read of
-        the broker. `stop` completes the firing too, as the worker's last
-        settle does, whose failure joins the entries'.
+        order a lookup leaves in doubt halts recover, so an answer held back
+        until the next send would never be written. It leaves the loss stop's
+        firing to the order path's settle before each send, hold, ask and loss,
+        so a blob S3 will not take holds up no read of the broker. `stop`
+        completes the firing too, as the worker's last settle does, whose
+        failure joins the entries'.
         """
         held = self._held()
         if stop:

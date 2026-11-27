@@ -338,7 +338,7 @@ def test_4_a_create_that_lands_after_a_call_read_forward_is_in_the_next_read() -
 
 
 def test_4_a_create_that_lands_after_the_close_is_taken_and_fills() -> None:
-    """The account took it in time, and no call could know, so #147 halts on its fill."""
+    """The account took it in time, and no call could know, so recover keeps its fill unmatched."""
     made, store, (first, _) = slow()
     made.clock.at = close_of(FULL) + timedelta(minutes=5)
     found = made.broker().find_order(first, made.at, {})

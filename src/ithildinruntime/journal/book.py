@@ -55,6 +55,7 @@ from .entries import (
     FillEntry,
     InDoubtEntry,
     IntentEntry,
+    LostEntry,
     OpeningEntry,
     OutsideRecordEntry,
     ReadEntry,
@@ -72,7 +73,7 @@ from .entries import (
     named,
     record_of,
 )
-from .orders import DOUBTFUL, ENDED, MOVES, OPEN, Move, moved
+from .orders import DOUBTFUL, ENDED, MOVES, OPEN, Move, lost_from, may_be_lost, moved
 from .stop import Latched, is_latch_entry, latched, refusal
 
 __all__ = ["Dispute", "Repeat", "Unmatched", "View", "after", "empty"]
@@ -496,6 +497,8 @@ def _worked_out(view: View, entry: JournalEntry) -> Step:
             step.order(kind, *_next(step, record.client_order_id, Move.REJECTED))
         case InDoubtEntry():
             step.order(kind, *_next(step, record.client_order_id, Move.IN_DOUBT))
+        case LostEntry():
+            _lost(step, record)
         case FillEntry():
             _fill(step, record)
         case DisputedFillEntry():
@@ -600,6 +603,25 @@ def _ack(step: Step, record: AckEntry) -> None:
         )
     step.add(step.view._shared.brokers, broker, record.client_order_id)
     step.order("ack", order, state, broker_order_id=broker)
+
+
+def _lost(step: Step, record: LostEntry) -> None:
+    """A closing-auction order in doubt that a whole list, asked for after its close, omitted."""
+    order, state = _next(step, record.client_order_id, Move.LOST)
+    _require_read(step, record.read)
+    if not may_be_lost(order.intent):
+        raise Halt(
+            f"entry {step.seq} gives up on {record.client_order_id}, which is no closing-auction "
+            "order, and a broker may hold one of another kind for the next session's open"
+        )
+    asked, after = step.view.reads[record.read].at, lost_from(record.client_order_id)
+    if asked < after:
+        raise Halt(
+            f"entry {step.seq} gives up on {record.client_order_id} on the list entry "
+            f"{record.read} names, asked for at {asked.isoformat()}, before {after.isoformat()}, "
+            "when the order could still arrive"
+        )
+    step.order("lost", order, state)
 
 
 def _fill(step: Step, record: FillEntry) -> None:

@@ -42,6 +42,10 @@ ROWS = [
         "runs/paper/2026-11-02/20261102T204000Z/execution/send/broker-read-1.json",
     ),
     (
+        core.lookup_key("paper", RUN, AT, "execution/recover", 3),
+        "runs/paper/2026-11-02/20261102T204000Z/execution/recover/lookup-3.json",
+    ),
+    (
         core.attempt_key("paper", RUN, AT, "data", "snapshot", 2),
         "runs/paper/2026-11-02/20261102T204000Z/data/snapshot.attempt-2.json",
     ),
@@ -167,6 +171,7 @@ def test_a_part_that_would_break_a_key_is_refused(build) -> None:
         lambda: core.output_key("paper", RUN, AT, "data", "result"),
         lambda: core.output_key("paper", RUN, AT, "execution/send", "claim"),
         lambda: core.output_key("paper", RUN, AT, "execution/send", "broker-read-1"),
+        lambda: core.output_key("paper", RUN, AT, "execution/recover", "lookup-1"),
         lambda: core.attempt_key("paper", RUN, AT, "data", "snap.x", 2),
         lambda: core.account_halt_key("paper1", "data-worker", "stale", FIRED, 1),
         lambda: core.account_halt_key("paper1", "data", "worker-stale", FIRED, 1),
