@@ -1033,6 +1033,34 @@ def test_an_outage_at_an_orders_gate_check_pages_once_and_leaves_it_for_recover(
     assert second not in made.view().orders
 
 
+def test_an_outage_reading_back_a_legs_sending_pages_once_and_keeps_its_abandoned(
+    monkeypatch,
+) -> None:
+    """The read back of the `sending` among the last checks is an outage like the rest."""
+    from ithildinruntime.core import journal_entry_key
+
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath._just_sending
+
+    def just_sending(self, view, cleared, tries):
+        if cleared.name == second:
+            made.store.refuse(("get", journal_entry_key(ACCOUNT, cleared.ack.seq)))
+        return real(self, view, cleared, tries)
+
+    monkeypatch.setattr(OrderPath, "_just_sending", just_sending)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    assert made.submits() == [first]
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2, sent
+    assert "could not be read" in sent[0] and "The owner's step" in sent[0]
+    made.store.refuse()
+    assert "could not be read" in result.halt.reason
+    assert made.view().orders[second].state is OrderState.ABANDONED
+
+
 @pytest.mark.parametrize(
     ("key", "said"),
     [
