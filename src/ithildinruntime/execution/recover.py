@@ -10,8 +10,10 @@ in this order. docs/architecture/06-runtime.md's `#### What recover does, step b
 step` says why each comes where it does.
 
 1. Data's result and its snapshot.
-2. The answers this process still owes the journal, and a view of the journal. An
-   order nothing has settled halts here with an alarm.
+2. The answers this process still owes the journal, a view of the journal, and
+   each plan a send stage left unfinished, settled by `OrderPath.settle`, which
+   sends none of its orders. An order that stays unsettled halts here with an
+   alarm.
 3. Five reads of the broker, the records after the cash and the fills last.
 4. The capture, `account.json`, stored before anything in it is compared.
 5. A `read` entry that names the capture, and then whether each read is whole.
@@ -41,6 +43,7 @@ stage's alarm is the only page about an order a crash left.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -78,16 +81,18 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.journal import (
     OPEN,
+    DecisionEntry,
     View,
 )
 
 from .account import Account
-from .sync import UNSETTLED, journal_read, read_broker
+from .order_path import OrderPath, Outage
+from .sync import UNSETTLED, journal_read, keeper, read_broker
 
 __all__ = ["RecoverStage", "differences", "fills_since"]
 
-# The format of the stage's four files and of its result header. Format 2's capture holds the
-# records read, which format 1's does not.
+# The format of the stage's files, each lookup it stores included, and of its result header.
+# Format 2's capture holds the records read, which format 1's does not.
 _FORMAT = 2
 # How long before the bound's own time the records and the fills are asked from, so one the
 # broker posts late is still fetched.
@@ -95,6 +100,8 @@ _LATE = timedelta(days=1)
 # The issue that copies the first decision's valuation to a later one of its session.
 _SECOND = "#183"
 _RECEIVED = datetime(2000, 1, 1, tzinfo=UTC)
+# A stored lookup's key, which names its decision.
+_STORED = re.compile(r"runs/\S+?/lookup-[0-9]+\.json")
 
 
 class _Item(Protocol):
@@ -172,9 +179,9 @@ class RecoverStage:
         if view.opened_at is None:
             # A journal with no entry has no book, whose own halt says so.
             _ = view.book
-        self._require_settled(view, report)
-
         path = account.path(brokers(at), report)
+        view = self._settled(decision, path, view, at, report)
+
         made = read_broker(path, fills_since(view))
         capture = decision.capture(ACCOUNT_OUTPUT, AccountRead, made, differences)
         # The capture that counts, which is an earlier attempt's where there was one.
@@ -210,33 +217,77 @@ class RecoverStage:
 
     # Step 2
 
-    def _require_settled(self, view: View, report: Callable[[], None]) -> None:
-        """Halt on a plan a crash left unfinished, with an alarm for each of its orders.
+    def _settled(
+        self,
+        decision: StageDecision,
+        path: OrderPath,
+        view: View,
+        at: datetime,
+        report: Callable[[], None],
+    ) -> View:
+        """Settle each plan a send stage left unfinished, and halt on any order it cannot.
 
-        A crash writes no `in_doubt` entry, so this can be the first a person
-        hears of the order. #147 settles one.
+        The receive loop runs recover only once the last decision's send stage
+        has a result, so each such plan's stage has ended. Each order of it is
+        settled by `OrderPath.settle`, which sends nothing. An order in doubt or
+        lost alarms, since a crash writes no entry and this can be the first a
+        person hears of it.
         """
-        orders = view.orders
-        said: list[str] = []
-        for entry in view.decisions.values():
-            planned = {o.client_order_id: orders.get(o.client_order_id) for o in entry.orders}
-            if _finished(planned.values()):
+        plans = [entry for entry in view.decisions.values() if not _settled_plan(entry, view)]
+        if not plans:
+            return view
+        stage = self._run.stage
+
+        keep = keeper(decision, self._run.deployment, self._run.run, stage, at)
+        failed: list[str] = []
+        added = ""
+        for planned in [o for entry in plans for o in entry.orders]:
+            name = planned.client_order_id
+            try:
+                settled = path.settle(name, keep, stage, at)
+            except Outage as outage:
+                # Every later order would meet the same outage, so nothing more is tried. Its
+                # own alarm went, and this one names each order, which nothing else does.
+                names = ", ".join(o.client_order_id for e in plans for o in e.orders)
+                when = ", ".join(e.decision_at.isoformat() for e in plans)
+                left = (
+                    f"nothing more is settled of the decisions at {when}, whose orders are {names}"
+                )
+                step = "Look each up on the broker's site"
+                page = f"the journal stopped answering, so {left}. {step}"
+                added = self._alarm(page, report) or added
+                said = [*failed, outage.reason, left[0].upper() + left[1:]]
+                raise Halt(f"account {self._account.alias}: {'. '.join(said)}{added}") from None
+            except Halt as halt:
+                failed.append(halt.reason)
+                added = self._alarm(halt.reason, report) or added
                 continue
-            stands = [_stands(name, order) for name, order in planned.items()]
-            when = f"the decision at {entry.decision_at.isoformat()}"
-            added = ""
-            for one in stands:
-                why = f"{one}, in {when}, whose orders are not settled"
-                added = self._alarm(why, report) or added
-            said.append(f"{when} is not settled: {'; '.join(stands)}{added}")
+            if settled.said:
+                added = self._alarm(settled.said, report) or added
+        view = self._account.view(report)
+        said: list[str] = []
+        for entry in plans:
+            if _settled_plan(entry, view):
+                continue
+            stands = [
+                _stands(o.client_order_id, view.orders.get(o.client_order_id)) for o in entry.orders
+            ]
+            when = entry.decision_at.isoformat()
+            said.append(f"the decision at {when} is not settled: {'; '.join(stands)}")
         if said:
-            raise Halt(f"account {self._account.alias}: {'. '.join(said)}")
+            raise Halt(f"account {self._account.alias}: {'. '.join([*failed, *said])}{added}")
+        return view
 
     def _alarm(self, reason: str, report: Callable[[], None]) -> str:
-        """Send an alarm once in this process, and say what a halt adds where it went nowhere."""
-        if reason in self._said:
+        """Send an alarm once in this process, and say what a halt adds where it went nowhere.
+
+        A stored lookup's key is under each decision's own prefix, so it is left out of
+        what makes two alarms the same cause.
+        """
+        cause = _STORED.sub("a stored lookup", reason)
+        if cause in self._said:
             return ""
-        self._said.add(reason)
+        self._said.add(cause)
         return self._account.alarm(reason, report)
 
     # Step 8
@@ -379,6 +430,11 @@ def _moved(first: AccountRead, later: AccountRead) -> list[str]:
 def _by_id(read: AccountRead) -> list[BrokerOrder]:
     """The open orders sorted by the broker's id, so one listed twice stays twice."""
     return sorted(read.open_orders.orders, key=lambda order: order.broker_order_id)
+
+
+def _settled_plan(entry: DecisionEntry, view: View) -> bool:
+    """Whether each order of a plan stands where a lookup or a fill alone moves it on."""
+    return _finished(view.orders.get(o.client_order_id) for o in entry.orders)
 
 
 def _finished(orders: Iterable[OrderRecord | None]) -> bool:

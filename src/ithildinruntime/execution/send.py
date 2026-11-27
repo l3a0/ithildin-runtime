@@ -34,10 +34,13 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    quotes the snapshot holds of each instrument the book holds or has a working
    order in, and of each the plan orders. One that would not last the plan's
    sends halts with nothing asked or sent, and every order of the plan ends
-   `Abandoned` where the journal takes it. Where any of those quotes fails at
-   `now` itself, the whole plan is left to the gate. Then `OrderPath.ask`
-   about the whole plan. Where any order is refused or halts, nothing is
-   sent, and every order of the plan ends `Refused` or `Abandoned`.
+   `Abandoned`, by this stage or, where the journal stops answering, by the
+   next recover where any order of the plan has an entry. Where any of those
+   quotes fails at `now` itself, the whole plan is left to the gate. Then
+   `OrderPath.ask` about the whole plan. Where any order is refused or halts, nothing is
+   sent, and every order of the plan ends `Refused` or `Abandoned`, by this
+   stage or, where the journal stops answering, by the next recover. A plan
+   none of whose orders has an entry stays so, with nothing sent.
 8. `OrderPath.send` for each order in the plan's order. An answer other than
    `Acknowledged` ends that strategy's plan. An off switch with no leg of that
    strategy at the broker ends it as partly sent, and every other answer halts
@@ -109,7 +112,7 @@ from ithildinruntime.journal import DOUBTFUL, NOT_SENT, DecisionEntry, View
 
 from .account import Account
 from .inputs import read_inputs
-from .order_path import OrderPath
+from .order_path import OrderPath, Outage
 from .orders import order_type, plan_orders
 from .recover import fills_since
 from .sync import journal_read, read_broker, recorded
@@ -388,7 +391,10 @@ class SendStage:
         an `intent` and a `verdict` for each, or an `intent` and an `abandoned`
         for one that raised. Then each order still `Approved` and each with no
         entry is journaled `abandoned`. The caps can be rewritten between the
-        two asks, so an order the second approves is abandoned too.
+        two asks, so an order the second approves is abandoned too. A store
+        that stops answering, or a journal that cannot be read, stops those
+        abandons, and the next recover journals them instead, where any order
+        of the plan has an entry. A plan none of whose orders has one stays so.
         """
         answers = path.ask(names)
         refused = next((a for a in answers if not a.approved), None)
@@ -396,11 +402,18 @@ class SendStage:
             return
         reason = refused.reason
         said = [reason]
+        why = f"a partner in its plan was refused: {reason}"
+        # A store that stopped answering alarmed once already, and each later read or abandon
+        # would page the same outage, so none is tried once one is met.
+        down = False
         try:
             path.hold(names)
+        except Outage as outage:
+            said.append(outage.reason)
+            down = True
         except Halt as halt:
             said.append(halt.reason)
-        self._none_sent(path, names, f"a partner in its plan was refused: {reason}", said, report)
+        self._none_sent(path, names, why, said, report, down=down)
 
     def _none_sent(
         self,
@@ -410,20 +423,30 @@ class SendStage:
         said: list[str],
         report: Callable[[], None],
         then: str = "",
+        down: bool = False,
     ) -> None:
         """Journal each order of the plan not yet ended `abandoned` for `why`, alarm and halt.
 
         `then` says what follows, and is added only where every order ended.
         Where the journal refused an `abandoned`, the halt names it and says
         nothing of the next decision, which depends on what the journal holds.
+        `down` says a store has stopped answering. Its alarm went, and each later
+        read or abandon would page the same outage, so none is tried, and one
+        that is met stops the rest. A journal that cannot be read takes no
+        abandon either. The next recover journals each order left so, where any
+        order of the plan has an entry.
         """
-        view = self._account.view(report)
-        ended = True
-        for name in names:
+        view = None if down else self._read(said, report)
+        ended = view is not None
+        for name in [] if view is None else names:
             order = view.orders.get(name)
             if order is None or order.state in NOT_SENT:
                 try:
                     path.abandon(name, why)
+                except Outage as outage:
+                    said.append(outage.reason)
+                    ended = False
+                    break
                 except Halt as halt:
                     said.append(halt.reason)
                     ended = False
@@ -449,24 +472,24 @@ class SendStage:
         went: dict[str, list[str]] = {}
         for place, order in enumerate(orders):
             name, strategy = order.client_order_id, order.strategy
+            sent = [n for names in went.values() for n in names]
             try:
                 if strategy in ended:
                     path.abandon(name, f"{strategy}'s plan ended: {ended[strategy]}")
                     continue
                 state = path.send(name)
             except Halt as halt:
-                self._failed(path, orders, place, halt.reason, report)
+                self._failed(path, orders, place, halt, sent, report)
             except Exception as error:
-                self._failed(
-                    path, orders, place, f"the call for {name} raised {error_name(error)}", report
-                )
+                why = Halt(f"the call for {name} raised {error_name(error)}")
+                self._failed(path, orders, place, why, sent, report)
             if state is OrderState.ACKNOWLEDGED:
                 went.setdefault(strategy, []).append(name)
                 continue
             if state is OrderState.ABANDONED and not went.get(strategy):
                 ended[strategy] = f"{name} was not sent, since {strategy} is off"
                 continue
-            self._failed(path, orders, place, f"the order {name} is {state}", report)
+            self._failed(path, orders, place, Halt(f"the order {name} is {state}"), sent, report)
         return ended
 
     def _failed(
@@ -474,36 +497,71 @@ class SendStage:
         path: OrderPath,
         orders: tuple[OrderIntent, ...],
         place: int,
-        reason: str,
+        halt: Halt,
+        sent: list[str],
         report: Callable[[], None],
     ) -> None:
         """Abandon every order not yet sent from `place` on, alarm naming each leg, and halt.
 
         The order at `place` is abandoned only where it has no entry or was
         left before its `sending`, as an error the path did not expect can leave
-        it. An order the broker may hold is left as it stands.
+        it. An order the broker may hold is left as it stands. `sent` names each
+        order this call saw acknowledged. A store that did not answer has
+        alarmed once already, so once one is met no other write or read is tried,
+        and the legs this call cannot read back are named from `sent`. The order
+        at `place` may be at the broker unless the path's halt is an `Outage`,
+        so where the journal cannot be read it is named not known, never unsent.
         """
+        reason = halt.reason
         said = [reason]
-        view = self._read(said, report)
-        for order in orders[place:]:
+        # The path raises an `Outage` only before the broker's call, so the order at `place`
+        # was not sent where it is one.
+        down = isinstance(halt, Outage)
+        view = None if down else self._read(said, report)
+        # A journal that cannot be read takes no abandon either, and each would say why again.
+        down = down or view is None
+        left: list[str] = []
+        for at, order in enumerate(orders[place:], start=place):
             name = order.client_order_id
             found = None if view is None else view.orders.get(name)
             if found is not None and found.state not in NOT_SENT:
                 continue
+            if view is None and at == place and not isinstance(halt, Outage):
+                # It may be at the broker, and only the journal could say.
+                continue
+            if down:
+                left.append(name)
+                continue
             try:
                 path.abandon(name, f"an earlier order of its plan stopped: {reason}")
-            except Halt as halt:
-                said.append(halt.reason)
-        view = self._read(said, report)
+            except Outage as outage:
+                said.append(outage.reason)
+                down = True
+                left.append(name)
+            except Halt as failed:
+                said.append(failed.reason)
+        view = None if down else self._read(said, report)
+        if left:
+            said.append(
+                f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned, "
+                "since the journal could not be read, and none of them was sent"
+            )
         if view is None:
-            names = ", ".join(order.client_order_id for order in orders)
-            legs = f"not known, since the journal could not be read: {names}"
+
+            def stands(name: str) -> str:
+                if name in sent:
+                    return f"{name} acknowledged"
+                return f"{name} not sent" if name in left else f"{name} not known"
+
+            named = ", ".join(stands(order.client_order_id) for order in orders)
+            legs = f"{named}, since the journal could not be read"
         else:
             legs = "; ".join(
                 _leg(order.client_order_id, view.orders.get(order.client_order_id))
                 for order in orders
             )
         what = f"{'. '.join(said)}. The plan's orders stand so: {legs}"
+        # The one alarm that names every leg, beside the outage's own where there was one.
         added = self._account.alarm(what, report)
         raise Halt(f"{what}{added}")
 

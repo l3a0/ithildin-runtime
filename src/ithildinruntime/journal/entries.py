@@ -60,6 +60,7 @@ __all__ = [
     "FillEntry",
     "InDoubtEntry",
     "IntentEntry",
+    "LostEntry",
     "OpeningEntry",
     "OutsideRecordEntry",
     "ReadEntry",
@@ -230,6 +231,20 @@ class InDoubtEntry:
 
 
 @dataclass(frozen=True)
+class LostEntry:
+    """The platform stopped waiting for an order in doubt, so whether it was sent is unproved.
+
+    `read` is the number of the `read` entry whose file holds the whole order
+    list that omitted it, asked for after the order's time in force ran out. Only
+    a closing-auction order is given up so.
+    """
+
+    client_order_id: str
+    read: int
+    reason: str
+
+
+@dataclass(frozen=True)
 class FillEntry:
     """One fill, and the number of the `read` entry whose file holds it."""
 
@@ -354,6 +369,7 @@ Record = (
     | AckEntry
     | RejectedEntry
     | InDoubtEntry
+    | LostEntry
     | FillEntry
     | DisputedFillEntry
     | ExpiredEntry
@@ -385,6 +401,7 @@ KINDS: Mapping[str, type] = MappingProxyType(
         "unmatched_record": UnmatchedRecordEntry,
         "unmatched_fill": UnmatchedFillEntry,
         "unmatched_order": UnmatchedOrderEntry,
+        "lost": LostEntry,
         "stop_fired": StopFiredEntry,
         "stop_stored": StopStoredEntry,
         "stop_cleared": StopClearedEntry,

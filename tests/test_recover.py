@@ -37,12 +37,15 @@ from ithildinruntime.core import (
     DecisionResult,
     Fill,
     FillsRead,
+    FoundOrder,
     Halt,
     HaltRecord,
     HardCaps,
     InstrumentId,
+    Limit,
     OrdersRead,
     OrderState,
+    OrderType,
     Outcome,
     OutputFile,
     PositionsRead,
@@ -50,6 +53,7 @@ from ithildinruntime.core import (
     RecordsRead,
     StageKind,
     StoreUnavailable,
+    TimeInForce,
     Valuation,
     attempt_key,
     caps_key,
@@ -740,7 +744,7 @@ def odd_fill(fill_id: str = SECRET, order: str = SECRET, **changes: object) -> F
     return Fill(**fields | changes)  # type: ignore[arg-type]
 
 
-# The orders nothing has settled, which step 2 halts on
+# The plans a send stage left unfinished, which step 2 settles
 
 
 AT1 = close_of(DAYS[1]).isoformat()
@@ -758,6 +762,11 @@ def journaled(world: RecoverWorld, *steps: tuple[str, int]) -> None:
                 world._record(IntentEntry(seq, order))
             case "verdict":
                 world._record(planted_verdict(name, len(world.rows())))
+            case "refused":
+                planted = planted_verdict(name, len(world.rows()))
+                too_large = {"limit": Limit.MAX_ORDER_QTY, "value": D(2), "bound": D(1)}
+                refused = replace(planted.verdict, approved=False, **too_large)
+                world._record(replace(planted, verdict=refused))
             case "sending":
                 world._record(SendingEntry(name))
             case "in_doubt":
@@ -769,49 +778,38 @@ def journaled(world: RecoverWorld, *steps: tuple[str, int]) -> None:
 
 
 SENT = [("intent", 1), ("verdict", 1), ("sending", 1)]
-NONE_TWO = f"the order {TWO} has no entry"
+_S = OrderState
+# Each order is journaled by hand, so the broker holds none of them. An order in doubt is
+# then lost, since the next decision's list is asked for a session after its close.
 STUCK = {
-    "intended": ([("intent", 1)], f"{ONE} is Intended, its sending stored never", NONE_TWO),
-    "approved": (
-        [("intent", 1), ("verdict", 1)],
-        f"{ONE} is Approved, its sending stored never",
-        NONE_TWO,
-    ),
-    "sending": (SENT, f"{ONE} is Sending, its sending stored at {AT1}", NONE_TWO),
-    "in doubt": (
-        [*SENT, ("in_doubt", 1)],
-        f"{ONE} is InDoubt, its sending stored at {AT1}",
-        NONE_TWO,
-    ),
-    "a leg acknowledged and its partner with no entry": (
-        [*SENT, ("ack", 1)],
-        f"{ONE} is Acknowledged, its sending stored at {AT1}",
-        NONE_TWO,
+    "intended": ([("intent", 1)], _S.ABANDONED, _S.ABANDONED),
+    "approved": ([("intent", 1), ("verdict", 1)], _S.ABANDONED, _S.ABANDONED),
+    "sending": (SENT, _S.LOST, _S.ABANDONED),
+    "in doubt": ([*SENT, ("in_doubt", 1)], _S.LOST, _S.ABANDONED),
+    "a leg refused and its partner with no entry": (
+        [("intent", 1), ("refused", 1)],
+        _S.REFUSED,
+        _S.ABANDONED,
     ),
     "a leg abandoned and its partner with no entry": (
         [("intent", 1), ("abandoned", 1)],
-        f"{ONE} is Abandoned, its sending stored never",
-        NONE_TWO,
+        _S.ABANDONED,
+        _S.ABANDONED,
     ),
     "a leg abandoned and its partner intended": (
         [("intent", 1), ("abandoned", 1), ("intent", 2)],
-        f"{ONE} is Abandoned, its sending stored never",
-        f"{TWO} is Intended, its sending stored never",
+        _S.ABANDONED,
+        _S.ABANDONED,
     ),
     "a leg abandoned and its partner approved": (
         [("intent", 1), ("abandoned", 1), ("intent", 2), ("verdict", 2)],
-        f"{ONE} is Abandoned, its sending stored never",
-        f"{TWO} is Approved, its sending stored never",
+        _S.ABANDONED,
+        _S.ABANDONED,
     ),
     "a leg abandoned and its partner in doubt": (
         [("intent", 1), ("abandoned", 1), *((kind, 2) for kind, _ in SENT), ("in_doubt", 2)],
-        f"{ONE} is Abandoned, its sending stored never",
-        f"{TWO} is InDoubt, its sending stored at {AT1}",
-    ),
-    "a leg acknowledged and its partner sending": (
-        [*SENT, ("ack", 1), *((kind, 2) for kind, _ in SENT)],
-        f"{ONE} is Acknowledged, its sending stored at {AT1}",
-        f"{TWO} is Sending, its sending stored at {AT1}",
+        _S.ABANDONED,
+        _S.LOST,
     ),
 }
 
@@ -826,48 +824,47 @@ def planned_pair(*steps: tuple[str, int]) -> RecoverWorld:
 
 
 @pytest.mark.parametrize("case", STUCK)
-def test_2_a_plan_a_crash_left_halts_with_each_order_and_alarms_for_each(case: str) -> None:
-    steps, *said = STUCK[case]
+def test_2_a_plan_a_crash_left_is_settled_and_nothing_is_sent(case: str) -> None:
+    steps, one, two = STUCK[case]
     world = planned_pair(*steps)
     calls: list[str] = []
-    stage = world.stage(brokers=doctored(world, calls=calls))
-    result = world.attempt(stage)
-    reason = halts(world, said[0], [], [], DATA_KEYS, result)
-    when = f"the decision at {AT1}"
-    assert reason == (
-        f"account {ACCOUNT}: {when} is not settled: the order {'; the order '.join(bare(said))}"
-    )
-    assert world.alarms.sent == [
-        f"account {ACCOUNT}: the order {one}, in {when}, whose orders are not settled"
-        for one in bare(said)
+    result = world.attempt(world.stage(brokers=doctored(world, calls=calls)))
+    assert result.halt is None, result.halt.reason
+    orders = world.view().orders
+    assert (orders[ONE].state, orders[TWO].state) == (one, two)
+    doubted = [o for o in (one, two) if o is _S.LOST]
+    # Each order in doubt is found in the list alone, and nothing is submitted.
+    assert calls[: len(doubted)] == ["find_order"] * len(doubted)
+    assert "submit" not in calls
+    lost = [n for n, o in ((ONE, one), (TWO, two)) if o is _S.LOST]
+    assert [a.split(": ", 1)[1].split(":")[0] for a in world.alarms.sent] == [
+        f"the order {name} is lost" for name in lost
     ]
-    assert calls == []
-    # A cause that stands pages once in a process, and again after a restart.
-    world.prepare(close_of(DAYS[3]))
-    # The worker keeps one stage for its run, and this world keys a run by its session.
-    later = world.stage(brokers=doctored(world, calls=calls))
-    later._said = stage._said
-    again = world.attempt(later)
-    assert again.halt is not None and again.halt.reason.endswith(reason.split(": ", 1)[1])
-    assert len(world.alarms.sent) == len(bare(said))
-    world.restart()
-    world.attempt()
-    assert len(world.alarms.sent) == 2 * len(bare(said))
+    # A second attempt settles nothing more and sends no alarm of a lost order again.
+    kinds = world.kinds()
+    again = world.attempt(world.stage(brokers=doctored(world, calls=calls)))
+    assert again.halt is None
+    assert sum(" is lost: " in a for a in world.alarms.sent) == len(lost)
+    assert "lost" not in world.kinds()[len(kinds) :]
 
 
-def bare(said: list[str]) -> list[str]:
-    return [one.removeprefix("the order ") for one in said]
+def test_2_a_leg_acknowledged_by_hand_and_its_partner_sending_settles_the_partner() -> None:
+    """The acknowledged leg is the broker's to move on, so recover's lookup of it halts."""
+    world = planned_pair(*SENT, ("ack", 1), *((kind, 2) for kind, _ in SENT))
+    result = world.attempt()
+    assert result.halt is not None and "its lookup found no such order" in result.halt.reason
+    orders = world.view().orders
+    assert (orders[ONE].state, orders[TWO].state) == (_S.ACKNOWLEDGED, _S.LOST)
 
 
-def test_2_an_alarm_about_a_plan_that_could_not_be_sent_is_in_the_reason() -> None:
+def test_2_an_alarm_about_a_lost_order_that_could_not_be_sent_is_owed() -> None:
     world = planned_pair(*SENT)
     world.alarms.error = RuntimeError(SECRET)
-    halts(world, "The alarm could not be sent, and is tried again", [], [], DATA_KEYS)
-    # Both alarms were tried, and each is owed until the channel takes it.
-    assert len(world.alarms.sent) == 2 and len(world.account.unsent()) == 2
+    assert world.attempt().halt is None
+    assert len(world.alarms.sent) == 1 and len(world.account.unsent()) == 1
     world.alarms.error = None
     world.account.settle(lambda: None)
-    assert len(world.alarms.sent) == 4 and world.account.unsent() == ()
+    assert len(world.alarms.sent) == 2 and world.account.unsent() == ()
 
 
 @pytest.mark.parametrize(
@@ -881,11 +878,13 @@ def test_2_an_alarm_about_a_plan_that_could_not_be_sent_is_in_the_reason() -> No
 def test_2_a_plan_that_stands_halts_nothing(steps: list) -> None:
     """A crash right after the `decision` entry sent nothing, so the next decision goes on."""
     world = planned_pair(*steps)
+    before = world.kinds()
     assert world.attempt().halt is None
     assert world.alarms.sent == []
+    assert world.kinds()[len(before)] == "read"
 
 
-def test_2_every_unfinished_plan_is_named_not_the_newest_alone() -> None:
+def test_2_every_unfinished_plan_is_settled_not_the_newest_alone() -> None:
     world = planned_pair(*SENT)
     world.store.put(
         result_key(DEPLOYMENT, world.run, world.at, RECOVER_STAGE), b"a halted recover's result"
@@ -894,7 +893,144 @@ def test_2_every_unfinished_plan_is_named_not_the_newest_alone() -> None:
     world.plan(())
     world.prepare(close_of(DAYS[3]))
     result = world.attempt()
-    assert result.halt is not None and f"{ONE} is Sending" in result.halt.reason
+    assert result.halt is None, result.halt.reason
+    orders = world.view().orders
+    assert (orders[ONE].state, orders[TWO].state) == (_S.LOST, _S.ABANDONED)
+
+
+def test_2_a_store_that_stops_answering_mid_settle_pages_once_and_names_every_order() -> None:
+    world = planned_pair(*SENT, *((kind, 2) for kind, _ in SENT))
+
+    def find_order(*args):
+        world.store.refuse(("*", "journal/"))
+        return world.broker().find_order(*args)
+
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=find_order)))
+    assert result.halt is not None
+    reason = result.halt.reason
+    assert "the journal could not be read" in reason
+    assert f"Nothing more is settled of the decisions at {AT1}, whose orders are {ONE}, {TWO}" in (
+        reason
+    )
+    # The outage's own page, and one naming every order, and none for each order after it.
+    assert sum("could not be read" in a for a in world.alarms.sent) == 1
+    (names,) = [a for a in world.alarms.sent if "the journal stopped answering" in a]
+    assert ONE in names and TWO in names
+    assert names.endswith("Look each up on the broker's site")
+
+
+def _other_row(world: RecoverWorld):
+    """A list answer whose one row is the order sent under ONE, for other shares."""
+    since = close_of(DAYS[0])
+    (row,) = [o for o in world.broker().orders(since).orders if o.client_order_id == ONE]
+    return FoundOrder(Outcome.ACCEPTED, (replace(row, qty=row.qty + 1),), True, b"[]")
+
+
+def sent_pair_in_doubt() -> RecoverWorld:
+    """Day 1's pair, the first leg in doubt after a lost answer and the second never tried."""
+    world = RecoverWorld(flat_prices())
+    at = close_of(DAYS[1])
+    one, two = world.decide(at, world.orders(at, [(10, GLD), (-20, USO)]))
+    world.faults = Faults(orders={one.client_order_id: OrderFault.LOSE_ANSWER})
+    world.restart()
+    world.send(one)
+    journaled(world, ("intent", 2))
+    world.faults = Faults()
+    world.restart()
+    world.prepare(close_of(DAYS[2]))
+    return world
+
+
+def test_2_a_store_that_stops_answering_while_a_row_is_kept_as_unmatched_stops_settling() -> None:
+    world = sent_pair_in_doubt()
+    answer = _other_row(world)
+    held: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if op == "create" and key.startswith("journal/") and "read" in world.kinds(world.before):
+            held.append(number)
+            raise StoreUnavailable(key, "the store's own text")
+
+    world.store.before = before
+    alarms = len(world.alarms.sent)
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=lambda *a: answer)))
+    assert result.halt is not None and "Nothing more is settled" in result.halt.reason
+    # The halt still says why the row was kept.
+    assert "differs in qty" in result.halt.reason
+    sent = world.alarms.sent[alarms:]
+    assert sum("was not stored" in a for a in sent) == 1, sent
+
+
+def test_2_a_row_kept_as_unmatched_pages_once_across_two_decisions() -> None:
+    world = sent_pair_in_doubt()
+    answer = _other_row(world)
+    stage = world.stage(brokers=doctored(world, find_order=lambda *a: answer))
+    first = world.attempt(stage)
+    assert first.halt is not None and "differs in qty" in first.halt.reason
+    paged = len(world.alarms.sent)
+    world.prepare(close_of(DAYS[3]))
+    later = world.stage(brokers=doctored(world, find_order=lambda *a: answer))
+    later._said = stage._said
+    again = world.attempt(later)
+    assert again.halt is not None and "differs in qty" in again.halt.reason
+    assert world.kinds().count("unmatched_order") == 1
+    assert len(world.alarms.sent) == paged
+
+
+def test_2_an_outage_after_an_order_that_could_not_be_settled_keeps_that_order_s_cause() -> None:
+    world = planned_pair(*SENT, ("intent", 2))
+
+    def find_order(*args):
+        world.store.refuse(("*", "journal/"))
+        raise TimeoutError("PKFAKEKEY")
+
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=find_order)))
+    assert result.halt is not None
+    reason = result.halt.reason
+    assert f"the order list that maps {ONE} could not be read" in reason
+    assert "Nothing more is settled" in reason and "PKFAKEKEY" not in reason
+
+
+def test_2_an_order_that_cannot_be_settled_does_not_stop_the_next_one() -> None:
+    world = planned_pair(*SENT, ("intent", 2))
+    world.faults = Faults(reads={("orders", 1): ReadFault.FAILS})
+    world.restart()
+    result = world.attempt()
+    assert result.halt is not None and "could not be read" in result.halt.reason
+    orders = world.view().orders
+    assert (orders[ONE].state, orders[TWO].state) == (_S.IN_DOUBT, _S.ABANDONED)
+
+
+def test_2_a_cause_that_stands_pages_once_in_a_process_whatever_file_each_decision_stores() -> None:
+    world = planned_pair(*SENT)
+    world.faults = Faults(reads={("orders", n): ReadFault.SHORT for n in (1, 2)})
+    world.restart()
+    stage = world.stage()
+    first = world.attempt(stage)
+    assert first.halt is not None and "did not come whole" in first.halt.reason
+    whole = [a for a in world.alarms.sent if "did not come whole" in a]
+    world.prepare(close_of(DAYS[3]))
+    later = world.stage()
+    later._said = stage._said
+    again = world.attempt(later)
+    assert again.halt is not None and "did not come whole" in again.halt.reason
+    assert [a for a in world.alarms.sent if "did not come whole" in a] == whole
+    assert len(whole) == 1
+
+
+def test_2_an_order_of_the_day_a_list_omits_is_never_given_up_as_lost() -> None:
+    """A broker may hold a day order that arrives after its close for the next session's open."""
+    world = RecoverWorld(flat_prices())
+    at = close_of(DAYS[1])
+    (made,) = world.orders(at, [(10, GLD)])
+    day = replace(made, type=OrderType.MARKET, time_in_force=TimeInForce.DAY)
+    world.decide(at, (day,))
+    journaled(world, *SENT, ("in_doubt", 1))
+    world.prepare(close_of(DAYS[2]))
+    result = world.attempt()
+    assert result.halt is not None
+    assert "only a closing-auction order is given up as lost" in result.halt.reason
+    assert world.view().orders[ONE].state is _S.IN_DOUBT
 
 
 def test_2_an_answer_this_process_owes_is_settled_before_the_view() -> None:
@@ -1143,6 +1279,8 @@ LOOKUPS = {
     "another client order id": (says(client_order_id=SECRET), OTHER),
     "another instrument": (says(instrument=USO), OTHER),
     "other shares": (says(qty=D(4)), OTHER),
+    "another type": (says(type=OrderType.MARKET), OTHER),
+    "another time in force": (says(time_in_force=TimeInForce.DAY), OTHER),
     "another id on the answer": (
         lambda b, n: replace(says(state=BrokerState.EXPIRED)(b, n), broker_order_id="sim-o-1"),
         OTHER,
