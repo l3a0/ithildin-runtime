@@ -526,7 +526,8 @@ class Supervisor:
         A halt of each strategy, at keys of its own, stops every new order, since
         execution's controls read those too, and a later start stores the run's halt
         from one of them. Where none can be stored either, the supervisor stays up and
-        tries again on each tick, because a restart would know nothing of the halt.
+        tries again on each tick, because a restart would know nothing of the halt,
+        until it is asked to stop, when it makes one more try and ends with 3.
         """
         strategies = sorted(s.name for s in self._table.strategies)
         # One time for every try, so a halt whose create landed unanswered is not written twice.
@@ -552,19 +553,16 @@ class Supervisor:
                     said += (
                         f", and no halt of {', '.join(unheld)} could be stored, so it is not held"
                     )
-                if asked:
-                    # A stop by `systemctl stop` or a shutdown gets no restart from the host.
-                    after = (
-                        "It was asked to stop, so if the supervisor's unit shows stopped, start it "
-                        "by hand once the store answers. That start finds the halt in its place "
-                        "and stores the run's halt"
-                    )
-                else:
-                    after = (
-                        "The host restarts the supervisor, which tries the halt again once the "
-                        "store answers. A restart that ends with 5 or 6 does not, so start the "
-                        "supervisor's unit by hand once the store answers"
-                    )
+                # One wording whether or not a stop was asked, since a stop can arrive while a
+                # write is still being tried, before the supervisor can see it.
+                after = (
+                    "The host restarts the supervisor after this exit, unless a `systemctl stop` "
+                    "or a shutdown ended it. A start in this session finds the halt in its place "
+                    "and stores the run's halt. So if `systemctl status` shows the supervisor's "
+                    "unit is not running, or a restart ended with 5 or 6, start it by hand in this "
+                    "session once the store answers. A start in a later session holds every "
+                    "strategy instead"
+                )
                 self._alerts.alarm(
                     f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
                     f"{_said(error)}. In its place {said}. Pull the account's kill switch now. "

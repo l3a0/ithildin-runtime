@@ -1413,9 +1413,10 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     assert any(held in a for a in world.alarms())
     assert any("Pull the account's kill switch" in a for a in world.alarms())
     assert any(
-        "which tries the halt again once the store answers" in a
-        and "A restart that ends with 5 or 6 does not" in a
-        and "It was asked to stop" not in a
+        "The host restarts the supervisor after this exit" in a
+        and "or a restart ended with 5 or 6" in a
+        and "start it by hand in this session once the store answers" in a
+        and "A start in a later session holds every strategy instead" in a
         for a in world.alarms()
     )
     assert _stop_of(world) is None
@@ -1735,8 +1736,13 @@ def test_a_stop_asked_once_the_store_takes_halts_in_place_stores_them(world: Wor
     assert world.supervisor().run(TODAY).code == EXIT_FAILED
     assert world.held() and not any("nothing records the halt" in a for a in world.alarms())
     (alarm,) = [a for a in world.alarms() if "In its place a halt holds" in a]
-    assert "It was asked to stop, so if the supervisor's unit shows stopped" in alarm
-    assert "The host restarts the supervisor" not in alarm
+    assert "unless a `systemctl stop` or a shutdown ended it" in alarm
+    assert "start it by hand in this session once the store answers" in alarm
+    # The start by hand the alarm asks for stores the run's halt and no stop.
+    _refusing(world, lambda call, key: False)
+    world.most_ticks = 2000
+    assert world.supervisor().run(TODAY).code == EXIT_HALTED
+    assert world.blob(halt) is not None and _stop_of(world) is None
 
 
 def test_halts_in_place_are_tried_at_one_key_each(world: World) -> None:
