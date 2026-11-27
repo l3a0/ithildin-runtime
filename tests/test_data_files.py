@@ -641,7 +641,10 @@ def test_each_instruments_earliest_covered_row_starts_where_its_captured_bars_do
     that change is covered too.
     """
     record = load_splits(master=load_master(), sessions=load_sessions())
-    assert {i: record.covered_from(InstrumentId(i)) for i in ("SPY", "QQQ", "GLD", "USO")} == {
+    named = sorted({row.id for row in load_master().rows})
+    covered = {i: start for i in named if (start := record.covered_from(i)) is not None}
+    # An instrument gains a covered row only with a pin here of where its captured bars begin.
+    assert covered == {
         "SPY": date(2026, 9, 8),
         "QQQ": date(2026, 9, 8),
         "GLD": date(2026, 10, 30),

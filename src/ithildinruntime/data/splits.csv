@@ -8,8 +8,8 @@
 #   knowable. Its key is its instrument and first session, and the newest row on a key
 #   wins, so a new `split` row on the key corrects the ratio.
 # - A `covered` row says the record holds every split of its instrument from its first
-#   session to its last. Its last session is at least 5 sessions before the day both
-#   vendor lists were read.
+#   session to its last. Its `added` is the day both vendor lists were read, and its last
+#   session is at least 5 sessions before it.
 # - A `withdrawn` row ends the split row on its key, which was added on an earlier date.
 # Two `split` or `withdrawn` rows of one key added on one date are refused. `read_from`
 # names what the row was read from, with each fetched file's address, time and SHA-256,

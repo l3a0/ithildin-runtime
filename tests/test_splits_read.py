@@ -464,13 +464,24 @@ def test_4_the_cache_keeps_no_sealed_day_older_than_the_lookback(
 ) -> None:
     read = source(lake, tmp_path)
     assert read.read(AT).split_days == 40
+    # A lookback ending one session past the decision's own drops the oldest day alone.
+    oldest = SEALED_DAYS[0]
+    first = made.DAYS[made.DAYS.index(oldest) + len(WINDOW) - 1]
+    read._prune(first)
+    assert {c[0] for c in read._answers.closes} == {
+        f"quotes/ticker={t}/date={d}.parquet" for t in ("GLD", "USO") for d in SEALED_DAYS
+    }
+    read._prune(made.DAYS[made.DAYS.index(first) + 1])
+    assert {c[0][-18:-8] for c in read._answers.closes} == {str(d) for d in SEALED_DAYS[1:]}
     later = made.DAYS[made.DAYS.index(DAY) + 61]
     read._prune(later)
     assert read._answers.closes == {}
     assert read.read(AT).split_days == 40
 
 
-@pytest.mark.parametrize("change", ["a fault", "two values", "no cover", "a known split row"])
+@pytest.mark.parametrize(
+    "change", ["a fault", "two values", "no cover", "a known split row", "the quote's step"]
+)
 def test_11_judge_halts_a_stored_snapshot_on_each_check_of_the_record(
     lake: Path, tmp_path: Path, change: str
 ) -> None:
@@ -489,12 +500,18 @@ def test_11_judge_halts_a_stored_snapshot_on_each_check_of_the_record(
         "a known split row": replace(
             read, rows={**read.rows, USO: (recorded.split("USO", WINDOW[30], 2, 1, line=9),)}
         ),
+        "the quote's step": read,
     }[change]
     said = {
         "a fault": "a made-up fault",
         "two values": "states 2 values of the close",
         "no cover": "names no cover for 1 pairs",
         "a known split row": "line 9",
+        "the quote's step": "has a midpoint",
     }[change]
     stored = replace(found.snapshot, splits=changed)
+    if change == "the quote's step":
+        held = stored.quotes[USO]
+        half = replace(held, bid=held.bid / 2, ask=held.ask / 2)
+        stored = replace(stored, quotes={**stored.quotes, USO: half})
     assert any(said in r for r in judge(stored, SETTINGS.instruments, measured=False))

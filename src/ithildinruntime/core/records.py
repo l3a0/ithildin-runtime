@@ -479,7 +479,7 @@ def not_adjusted_for(bar: Bar, first_session: date, covered_from: date | None) -
     the platform held no captured bar of it. With no covered row, nothing
     says so, and the bar does not. data/splits.py halts on such a bar from the
     split's first session, and risk/gate.py refuses an order that adds on one
-    before it.
+    up to and on it.
     """
     if adjusted_for(bar, first_session):
         return False

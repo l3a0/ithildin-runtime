@@ -120,6 +120,11 @@ _RAW = "raw"
 # How many sessions before the day both vendor lists were read a covered row ends, at least.
 _LATE = 5
 _FILE = "data/splits.csv"
+# What releases a halt on the decision's own pair, which no covered row can yet reach.
+_OWN_SESSION = (
+    "and a real move stays halted for this session. From the next session the pair meets the "
+    "sealed day's checks, which a covered row releases once one can reach it"
+)
 _RELEASED_BY_A_ROW = (
     "#190 and #191 build trading through a split, and a withdrawn row ends a false one"
 )
@@ -530,12 +535,17 @@ def _residuals(
             continue
         residual = _CONTEXT.divide(ratio, close)
         if not LOW <= residual <= HIGH:
+            released = (
+                _OWN_SESSION
+                if pair.quoted
+                else "or a covered row reaching it where Schwab did not restate"
+            )
             yield (
                 f"{instrument}'s {where} of {pair.later.isoformat()} states a close of "
                 f"{pair.earlier.isoformat()} at {_shown(residual)} times the stored close, outside "
                 f"{LOW} to {HIGH}, as a split or a distribution with no row would. A split row "
                 f"for {pair.later.isoformat()}, a correction or a withdrawn row in {_FILE} "
-                "releases it, or a covered row reaching it where Schwab did not restate"
+                f"releases it, {released}"
             )
 
 
@@ -564,16 +574,25 @@ def _quoted_step(
     halts on its own check.
     """
     before = closes.get(pair.earlier)
-    if quote is None or quote.bid is None or quote.ask is None or before is None or before <= 0:
+    bid = quote.bid if quote is not None else None
+    ask = quote.ask if quote is not None else None
+    # A side that is missing, not finite or at or below zero halts on the quote's own check.
+    if bid is None or ask is None or not _usable(bid) or not _usable(ask):
         return
-    step = _CONTEXT.divide(_CONTEXT.add(quote.bid, quote.ask), _CONTEXT.multiply(before, 2))
+    if before is None or before <= 0:
+        return
+    step = _CONTEXT.divide(_CONTEXT.add(bid, ask), _CONTEXT.multiply(before, 2))
     if step <= FALL or step >= RISE:
         yield (
             f"{instrument}'s own quote of {pair.later.isoformat()} has a midpoint {_shown(step)} "
             f"times its close of {pair.earlier.isoformat()}, a fall of 30 percent or more or a "
-            "rise of 42.9 percent or more that only a quote covers. A split row, or a covered "
-            "row that says the move was real, releases it"
+            f"rise of 42.9 percent or more that only a quote covers. A split row releases it, "
+            f"{_OWN_SESSION}"
         )
+
+
+def _usable(price: Decimal) -> bool:
+    return price.is_finite() and price > 0
 
 
 def _ratio(said: str) -> Decimal | None:

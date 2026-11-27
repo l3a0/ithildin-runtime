@@ -32,6 +32,7 @@ from ithildinruntime.core import (
 )
 from tests.support import splits
 from tests.support.gate_oracle import Answer, answer
+from tests.support.gate_oracle import _split_ahead as split_ahead
 from tests.support.gates import (
     CENT,
     CHAN,
@@ -224,7 +225,7 @@ def _split(seed: int, made: World) -> World:
     if draw.random() >= 0.6:
         return made
     i = made.intent.instrument
-    first = DAYS[DAYS.index(TODAY) + draw.choice((-1, 0, 1, 1, 3, 3))]
+    first = DAYS[DAYS.index(TODAY) + draw.choice((-1, 0, 0, 0, 1, 3))]
     row = splits.split(str(i), first, draw.choice((2, 1)), draw.choice((1, 8)) or 1)
     if row.new_shares == row.old_shares:
         row = replace(row, new_shares=3)
@@ -247,7 +248,7 @@ def _split(seed: int, made: World) -> World:
     covered = {}
     if draw.random() < 0.5:
         # The instrument's first covered session, on either side of the split.
-        covered = {i: DAYS[DAYS.index(first) + draw.choice((-2, 0, 1))]}
+        covered = {i: DAYS[DAYS.index(first) + draw.choice((-2, 0, 1, 1))]}
     split_read = replace(snap.splits, rows={i: (row,)}, covered_from=covered)
     return made.at(snapshot=replace(snap, splits=split_read))
 
@@ -409,6 +410,12 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
             close = world.snapshot.bars[i]["1d"][-1].close
             middle = price(world.snapshot, i)
             seen["four prices apart"] += len({q.bid, q.ask, q.last, close, middle}) == 5
+        snap = world.snapshot
+        uncovered = replace(snap, splits=replace(snap.splits, covered_from={}))
+        seen["refused or released by the first covered session"] += verdict.adding and (
+            split_ahead(snap, intent.instrument, CLOSE)
+            != split_ahead(uncovered, intent.instrument, CLOSE)
+        )
         seen["approved"] += verdict.approved
         if verdict.limit is not None:
             seen[f"refused on {verdict.limit}"] += 1
@@ -437,6 +444,7 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
         "a quote beside a close",
         "a midpoint at five places",
         "four prices apart",
+        "refused or released by the first covered session",
         *(f"refused on {limit}" for limit in Limit if limit is not Limit.CLOSE_ENTRY),
     ):
         assert seen[kind] > 10, (kind, seen)

@@ -449,7 +449,7 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 
 ### Write a row of the record of splits
 
-`src/ithildinruntime/data/splits.csv` records every split of every instrument the platform reads, and the spans of sessions over which it holds every split. Every decision halts on a split it does not hold, and on a pair of sessions no covered row and no quote covers, so a person writes a row before a split's first session and when the covered rows fall behind. The design doc's rule that [a split reads as neither a gain nor a loss](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) says why. Rows are only ever added, by a pull request the owner merges, and `tests/test_data_files.py` pins each by hand.
+`src/ithildinruntime/data/splits.csv` records every split of every instrument the platform reads, and the spans of sessions over which it holds every split. Every decision halts on a split it does not hold, apart from the three kinds the design doc's rule names as still reading as a move, and on a pair of sessions no covered row and no quote covers, so a person writes a row before a split's first session and when the covered rows fall behind. The design doc's rule that [a split reads as neither a gain nor a loss](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) says why. Rows are only ever added, by a pull request the owner merges, and `tests/test_data_files.py` pins each by hand.
 
 #### Fetch what a row is read from
 
@@ -462,11 +462,11 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 2. Read Alpha Vantage's `SPLITS` and Massive's `GET /stocks/v1/splits` for the ticker on the same day.
 3. Write the row only where all three agree on the ratio and the first session on the new scale. Where they disagree, write nothing and take the question to the owner.
 4. Write `new_shares` and `old_shares` as whole numbers, such as 1 and 8 for a one-for-eight reverse split, and `known_at` as the UTC instant the filing became public. Where EDGAR accepted it before a session's open, write that open, as USO's row does for 2020-04-22.
-5. Merge it before the split's first session. From `known_at` the gate refuses an order that adds on the instrument, and from the first session every decision on it halts until [#190](https://github.com/l3a0/ithildin-runtime/issues/190) and [#191](https://github.com/l3a0/ithildin-runtime/issues/191) land.
+5. Merge it before the split's first session. From `known_at` the gate refuses an order that adds on the instrument, and from the first session every decision that reads bars of it not already adjusted for it halts until [#190](https://github.com/l3a0/ithildin-runtime/issues/190) and [#191](https://github.com/l3a0/ithildin-runtime/issues/191) land.
 
 #### Write a covered row
 
-1. Read both vendor lists for the instrument on one day.
+1. Read both vendor lists for the instrument on one day, and write that day as the row's `added`, since the loader measures the 5 sessions from it.
 2. Where neither lists a split in the span other than the record's own rows, write a covered row from the span's first session to a last session at least 5 sessions before that day. A list that cannot be read stops the row.
 3. Start an instrument's first covered row on its first raw bar, or on the last session of Schwab's import before it, never earlier and never later. A list shows no split only inside the span it reaches, and a split before the first covered row reads as one the platform held no captured bar across, so a later start would let a split's halt end while a book or a cap written before it is on the old scale. `tests/test_data_files.py` pins each instrument's start.
 

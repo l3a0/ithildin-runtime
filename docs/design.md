@@ -2555,7 +2555,7 @@ The price is seven things.
    The record of splits does, under the rule that [a split reads as neither a gain nor
    a loss](#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails),
    which checks every pair of sessions of a `raw` series and halts on a split it does
-   not hold, apart from one smaller than three for two that Schwab does not restate.
+   not hold, apart from the three kinds that rule names as still reading as a move.
    Nor does this halt compare bars of two
    snapshots, such as a mark with a V worked out from an earlier one, which
    [#183](https://github.com/l3a0/ithildin-runtime/issues/183) holds.
@@ -3345,7 +3345,7 @@ Rishi K. Narang's *Inside the Black Box* (3rd ed., Wiley, 2024) draws the boxes 
    4. A split row known by the decision halts every decision on its instrument from its first session, wherever a bar the decision reads is not already adjusted for it. A raw bar on or after the split counts as adjusted only where the split falls before the instrument's first covered row, which is how USO's split of 2020 halts nothing.
    5. From a split row's `known_at` to its first session the gate refuses an order that adds on that instrument, as `SPLIT`, so a strategy can be flat by the split and add nothing it would then be frozen in.
 
-   What neither check catches past the covered rows is a split smaller than three for two that Schwab does not restate, and one that moves the price by less than 5 percent, which the residual's bounds pass whether Schwab restates it or not. Each reads as a move. It stands on shadow and paper until Schwab's restatement on a split's own session has been measured once, and the seventh condition of the charter's [Live step](team-charter.md#5-release) keeps it off live ([2026-11-26](#2026-11-26)). Inside a covered row the two vendor lists stand for the record, so a split both lists missed there reads as a move too.
+   What neither check catches past the covered rows is a split smaller than three for two that Schwab does not restate, and one that moves the price by less than 5 percent, which the residual's bounds pass whether Schwab restates it or not. Each reads as a move. The first stands on shadow and paper until Schwab's restatement on a split's own session has been measured once, and the seventh condition of the charter's [Live step](team-charter.md#5-release) keeps it off live ([2026-11-26](#2026-11-26)). That measurement does not close the second, and nothing keeps it off live. The price is that such a split reads as a move of less than 5 percent on any account, as an unrecorded distribution of that size would. Inside a covered row the two vendor lists stand for the record, so a split both lists missed there reads as a move too.
 
    **Table:** What each halt of the record of splits stops, and what releases it
 

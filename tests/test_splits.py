@@ -657,3 +657,20 @@ def test_10_a_split_before_the_first_covered_session_refuses_nothing_on_its_own_
         covered_from={GLD: later},
     )
     assert world.at(snapshot=replace(world.snapshot, bars=bars, splits=known)).check().approved
+
+
+@pytest.mark.parametrize("bid", [None, Decimal("NaN"), Decimal("Infinity"), Decimal(0)])
+def test_6_a_quote_with_an_unusable_side_meets_no_step_and_raises_nothing(bid: object) -> None:
+    """Its own check halts on such a side, as `core.quote_faults` does."""
+    found = snap(flat(), quoted="100.0")
+    found = replace(found, quotes={USO: replace(found.quotes[USO], bid=bid)})
+    assert not any("midpoint" in r for r in check_splits(found, TABLE))
+
+
+def test_6_a_halt_on_the_decisions_own_pair_names_no_covered_row_as_its_release() -> None:
+    """No covered row can reach the decision's own session, which ends 5 sessions before it."""
+    found = snap(flat(), quoted="50.0")
+    found = replace(found, quotes={USO: quote(USO, Decimal("49.99"), Decimal("50.01"), AT)})
+    for reason in check_splits(found, TABLE):
+        assert "stays halted for this session" in reason
+        assert "covered row reaching it" not in reason
