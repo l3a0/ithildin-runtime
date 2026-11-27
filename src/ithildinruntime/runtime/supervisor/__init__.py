@@ -552,12 +552,23 @@ class Supervisor:
                     said += (
                         f", and no halt of {', '.join(unheld)} could be stored, so it is not held"
                     )
+                if asked:
+                    # A stop by `systemctl stop` or a shutdown gets no restart from the host.
+                    after = (
+                        "It was asked to stop, so if the supervisor's unit shows stopped, start it "
+                        "by hand once the store answers. That start finds the halt in its place "
+                        "and stores the run's halt"
+                    )
+                else:
+                    after = (
+                        "The host restarts the supervisor, which tries the halt again once the "
+                        "store answers. A restart that ends with 5 or 6 does not, so start the "
+                        "supervisor's unit by hand once the store answers"
+                    )
                 self._alerts.alarm(
                     f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
                     f"{_said(error)}. In its place {said}. Pull the account's kill switch now. "
-                    "The host restarts the supervisor, which tries the halt again once the store "
-                    "answers. A restart that ends with 5 or 6 does not, so start the supervisor's "
-                    "unit by hand once the store answers"
+                    f"{after}"
                 )
                 return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
             if asked:

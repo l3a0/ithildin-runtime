@@ -36,11 +36,14 @@ Each command ends with one of these codes, which #202's units read.
   stores the run's halt from it rather than a stop. Where the halt cannot be
   stored, each strategy is halted in its place and the alarm says to pull the
   kill switch. Where none of those can be stored either, the supervisor does not
-  end, and tries the halt again on each tick until one lands.
+  end, and tries the halt again on each tick until one lands, unless it is asked
+  to stop, when it ends with 3.
 - 2: a setting is missing or malformed, the credential file it names cannot be
   read, or the release pin file is missing or empty, named in one line on
   standard error and in an alarm line.
-- 3: the supervisor halted the run, which stores no stop.
+- 3: the supervisor halted the run, which stores no stop, or was asked to stop
+  before a run's halt it could not store, or any halt in its place, had landed,
+  and alarms that nothing records the halt.
 - 4: the supervisor found a result still missing an hour after the close.
 - 5: the hold check after an unclean stop could not finish, or the start could
   not be recorded or its records read, so the supervisor writes no plan and no release file.

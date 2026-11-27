@@ -1415,6 +1415,7 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     assert any(
         "which tries the halt again once the store answers" in a
         and "A restart that ends with 5 or 6 does not" in a
+        and "It was asked to stop" not in a
         for a in world.alarms()
     )
     assert _stop_of(world) is None
@@ -1733,6 +1734,9 @@ def test_a_stop_asked_once_the_store_takes_halts_in_place_stores_them(world: Wor
     world.most_ticks = 1
     assert world.supervisor().run(TODAY).code == EXIT_FAILED
     assert world.held() and not any("nothing records the halt" in a for a in world.alarms())
+    (alarm,) = [a for a in world.alarms() if "In its place a halt holds" in a]
+    assert "It was asked to stop, so if the supervisor's unit shows stopped" in alarm
+    assert "The host restarts the supervisor" not in alarm
 
 
 def test_halts_in_place_are_tried_at_one_key_each(world: World) -> None:
