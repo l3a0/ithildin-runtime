@@ -62,6 +62,7 @@ __all__ = [
     "IntentEntry",
     "LostEntry",
     "OpeningEntry",
+    "PauseEntry",
     "OutsideRecordEntry",
     "ReadEntry",
     "Record",
@@ -358,6 +359,35 @@ class StopClearedEntry:
     fired: int
 
 
+@dataclass(frozen=True)
+class PauseEntry:
+    """A run that stopped with no clean-shutdown record, journaled as a pause of the account.
+
+    The supervisor writes it once, after the halt blob of each strategy it
+    holds, so a crash between the two leaves halts that a rerun finds. It moves
+    no order and changes nothing in the book.
+
+    - `run` is the run that stopped uncleanly, in `deployment`.
+    - `since` is the run's last decision this journal records, or `None` where
+      it records none, which is where the pause runs from.
+    - `strategies` names each strategy held, in sorted order.
+    - `reason` says why the stop counts as unclean.
+    - `boots` names each boot of the machines a start of the run found lost,
+      in sorted order, and `ended` says whether the run had ended. A pause
+      covers only what it names: one written while the run still went on
+      covers those boots and not the run's own end, so a later unclean end or
+      another lost machine is paused again.
+    """
+
+    deployment: str
+    run: str
+    since: datetime | None
+    strategies: tuple[str, ...]
+    reason: str
+    boots: tuple[str, ...]
+    ended: bool
+
+
 Record = (
     OpeningEntry
     | ReadEntry
@@ -380,6 +410,7 @@ Record = (
     | StopFiredEntry
     | StopStoredEntry
     | StopClearedEntry
+    | PauseEntry
 )
 
 KINDS: Mapping[str, type] = MappingProxyType(
@@ -405,6 +436,7 @@ KINDS: Mapping[str, type] = MappingProxyType(
         "stop_fired": StopFiredEntry,
         "stop_stored": StopStoredEntry,
         "stop_cleared": StopClearedEntry,
+        "pause": PauseEntry,
     }
 )
 _NAMES: Mapping[type, str] = MappingProxyType({kind: name for name, kind in KINDS.items()})
@@ -499,6 +531,15 @@ def _past_bounds(record: Record) -> Iterator[str]:
             yield from _blobs(*record.inputs.values())
         case IntentEntry():
             yield from _shares(record.order)
+        case PauseEntry():
+            if list(record.strategies) != sorted(set(record.strategies)):
+                yield "the strategies held are not sorted, or one is named twice"
+            if record.since is not None and record.since.utcoffset() != timedelta(0):
+                yield "the pause's start is not a time in UTC"
+            if list(record.boots) != sorted(set(record.boots)):
+                yield "the boots covered are not sorted, or one is named twice"
+            if record.ended == bool(record.boots):
+                yield "a pause covers either the run's end or the boots of lost machines"
         case VerdictEntry():
             yield from _blobs(record.snapshot, record.constraints, record.valuation)
             if not record.caps or not is_sha256(record.caps_sha256):

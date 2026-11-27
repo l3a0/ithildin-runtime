@@ -12,6 +12,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [Measure a stress move](#measure-a-stress-move)
   - [Count how often quotes would be refused](#count-how-often-quotes-would-be-refused)
   - [Measure the capture lag](#measure-the-capture-lag)
+  - [The processes a VM runs](#the-processes-a-vm-runs)
   - [Set up the test environment](#set-up-the-test-environment)
 
 ## What a person runs
@@ -540,6 +541,44 @@ python -m lake.live_upload lag --date <YYYY-MM-DD>
 
 Nothing runs this on a schedule. [#11](https://github.com/l3a0/ithildin-runtime/issues/11)
 is asked for the alarm.
+
+### The processes a VM runs
+
+Each component runs as its own process, from a command that `pyproject.toml` installs. The host's units start them, which [#202](https://github.com/l3a0/ithildin-runtime/issues/202) builds, so a person runs one only to try it. [The supervisor](architecture/05-building-blocks.md#package-layout-and-the-import-rule) explains why the supervisor starts no worker itself.
+
+**Table:** The commands a VM runs, and what each does
+
+| Command | What it does |
+| --- | --- |
+| `ithildin-supervisor` | Holds every strategy after a stop that left no clean-shutdown record, writes the day's plan and the local release file, halts the run past an order's deadline, and writes the run's stop after the close |
+| `ithildin-data` | Starts the time servers, waits for the day's plan and cuts each decision's snapshot |
+| `ithildin-alpha`, `ithildin-cost`, `ithildin-risk`, `ithildin-portfolio` | Wait for the day's plan and run their stages |
+| `ithildin-execution` | Starts the time servers, waits for the day's plan, recovers and sends |
+
+#### What a command reads
+
+A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOML file the VM's provisioning step writes in memory-backed storage. The file names the environment, the mirror's directory, marketlake's bucket and prefix, the resolved release pin file and the local release file, the unit user's AWS credential file, which is the one credential the command reads, and may name the local heartbeat file. `runtime/settings.py` lists each key. Everything else about an environment is in the release's table in `runtime/deployment.py`.
+
+#### What each exit code means
+
+**Table:** Each exit code of a command, and what a person does about it
+
+| Code | Meaning | What a person does |
+| --- | --- | --- |
+| 0 | The run's stop is stored, SIGTERM ended a worker, or the day has no session | Nothing |
+| 2 | A setting is missing or malformed, the credential file it names cannot be read, or the release pin file is missing or empty. The one line on standard error and an alarm line name it | Fix the settings file, the credential file or the pin file, then start the unit again |
+| 3 | The supervisor halted the run, past an order's deadline, on a journal or a deadline it could not read, or on halts standing in for an earlier halt of the run, or ones it could not read. It also ends with 3 where it was asked to stop before a run's halt it could not store, or any halt in its place, had landed, whose alarm says nothing records the halt | Read the alarm and settle each order it names at the broker. The next session's start holds every strategy. Where the alarm says nothing records the halt, leave the supervisor's unit stopped for the rest of the session, since a start in this session judges the run afresh and stores the run's stop unless an order is still late. Keep the kill switch pulled until each position is confirmed at the broker |
+| 4 | A result was still missing an hour after the close | Read the alarm, which names each stage and decision. Start the supervisor's unit again once the result lands, which stores the stop, or the run's halt where one is owed. Otherwise the next session's start holds every strategy |
+| 5 | The hold check after an unclean stop could not finish, or this start could not be recorded or its records read, so no plan and no release file are written. Workers this machine released earlier in the session run on with no supervisor, and no other worker starts | Read the alarm, which names what failed, and start the supervisor's unit again once the cause is fixed. The strategies it held stay held after a later start succeeds, and each later start alarms on them until they are cleared. An alarm that says the check stored no halt of its own means it held nothing, though a halt written earlier may still stand: pull the account's kill switch |
+| 6 | The supervisor could not store the day's plan or write the local release file, or a worker found a plan it cannot read or one of another mode. Where the supervisor ends this way, workers this machine released earlier in the session run on with no supervisor until a person starts its unit and the start succeeds. A start on a release other than the stored plan's ends with 6 again | Read the alarm, which names the step. A plan of another release means a pin moved during the session. Otherwise start the unit again once the cause is fixed. Execution's unit restarts it on its own, and the alarm repeats until the cause is fixed |
+| 7 | SIGTERM ended the supervisor before the run's stop was stored, so nothing watches the rest of the session. It alarms | The host restarts it only after a SIGTERM from outside systemd. After a `systemctl stop` or a shutdown, start the supervisor's unit by hand |
+| 1, or any other | A failure, whose traceback is in the host's journal, or a run's halt the supervisor could not read or store, which alarms | The host restarts it. Read the journal. Where the alarm says the run's halt could not be stored, each strategy the alarm names is halted in its place, and pull the account's kill switch first. A start in this session that finds one of those halts stores the run's halt from it and ends with 3, and one that cannot read those halts at the stop stores no stop and ends with 1. A restart that ends with 5 or 6 does not try the halt again, and the host does not restart one that a `systemctl stop` or a shutdown ended, so where `systemctl status` shows the unit is not running, start it by hand in this session once the store answers. A start in a later session holds every strategy instead. Where no halt of any strategy could be stored in its place either, the supervisor does not end: it tries the halt again on each tick until one lands, and alarms once it does, unless it is asked to stop, when it ends with 3. The store alarms on each try it fails. |
+
+The host restarts a process that ends with 1 or 7, or that a signal ends, such as one killed for running out of memory. The supervisor's unit carries `RestartPreventExitStatus=2 3 4 5 6`, and each worker's but execution's `RestartPreventExitStatus=2 6`, so a setting, a halt, a stall, a failed hold or a plan it cannot run raises its alarm once rather than once for each restart, and spends none of the day's restarts. Execution's units restart on any exit while a session is open, with no start limit, so a cancel and the kill switch are served again once the cause of an exit is fixed. While execution ends with 2 or 6 it serves neither, and its alarm says to check the account's orders and positions on the broker's own site. [#202](https://github.com/l3a0/ithildin-runtime/issues/202) writes the units.
+
+#### After a stop with no clean-shutdown record
+
+A run that ended without its stop, such as one the host's timer ended or a machine that was lost, holds every strategy at the next start. The supervisor writes a halt into each strategy's halts folder, journals one `pause` naming the run, and alarms with each open position, each working order with its broker id, each order in doubt with its client order id and today's cancel cutoff. Until [#149](https://github.com/l3a0/ithildin-runtime/issues/149) cancels a held strategy's working orders that add to a position, cancel any such order at the broker's own site before the cutoff. A held strategy sends no new order. Clearing the hold is `ithildin halt clear`, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds, and until then a shadow strategy stays held. A hold that stands past its own start alarms again at each later start, naming each strategy still held. A pause covers only what it names, so a machine lost later in the same run, or the run's own end after a pause written in its session, holds again. Until [#201](https://github.com/l3a0/ithildin-runtime/issues/201) builds the alert channel, every alarm is a line starting `ALARM` in the host's journal, and reaches no person.
 
 ### Set up the test environment
 

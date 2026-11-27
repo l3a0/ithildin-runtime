@@ -11,9 +11,10 @@ hand.
 
 The table's form lives in `runtime.loop` rather than elsewhere in `runtime`
 because the supervisor reads it, and the supervisor may import only `core`,
-`journal`, `adapters` and `runtime.loop`. Each worker's entry point adds its
-own stage's row, since each stage's inputs belong to its module's issue, and
-hands in the strategies it loaded beside the rows.
+`journal`, `adapters` and `runtime.loop`. Each worker's file declares its own
+stage's row, since each stage's inputs belong to its module's issue, and
+`runtime/deployment.py` puts every row into one table with the strategies a
+deployment names, so every worker and the routes read the same one.
 """
 
 from __future__ import annotations

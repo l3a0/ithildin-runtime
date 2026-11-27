@@ -50,6 +50,7 @@ from ithildinruntime.journal import (
     LostEntry,
     OpeningEntry,
     OutsideRecordEntry,
+    PauseEntry,
     ReadEntry,
     Record,
     RejectedEntry,
@@ -145,12 +146,14 @@ SAMPLES: tuple[Record, ...] = (
     ),
     StopStoredEntry(2, '"9b2cf535f27731c974343645a3985328"'),
     StopClearedEntry(2),
+    PauseEntry("paper", "2026-11-02", AT, (CHAN, OTHER), "the run's stop is missing", (), True),
+    PauseEntry("paper", "2026-11-02", None, (), "a machine was lost", ("b-1", "b-2"), False),
 )
 
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
-    assert len(KINDS) == 21
+    assert len(KINDS) == 22
 
 
 # Acceptance 1: each kind there and back.
@@ -201,6 +204,7 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
         StopStoredEntry(fired, "tag-1"),
         StopClearedEntry(fired),
     ]
+    given += [PauseEntry("paper", "2026-11-02", AT, (CHAN,), "no stop", (), True)]
     view = journal.view()
     kept = []
     for record in given:
@@ -524,6 +528,15 @@ BIG = b"x" * RAW_LIMIT
         (decision(ONE, planned(2, 0)), "is for zero shares"),
         (decision(planned(1, "-0.0")), "is for zero shares"),
         (dataclasses.replace(SAMPLES[4], order=planned(1, 0)), "is for zero shares"),
+        # A pause covers either the run's end or the boots of lost machines, each named once.
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", (), True), None),
+        (PauseEntry("p", "2026-11-02", None, (CHAN,), "r", ("b-1", "b-2"), False), None),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", ("b-2", "b-1"), False), "boots covered"),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", ("b-1", "b-1"), False), "boots covered"),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", ("b-1",), True), "either the run's end"),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN,), "r", (), False), "either the run's end"),
+        (PauseEntry("p", "2026-11-02", AT, (OTHER, CHAN), "r", (), True), "strategies held"),
+        (PauseEntry("p", "2026-11-02", AT, (CHAN, CHAN), "r", (), True), "strategies held"),
     ],
 )
 def test_1_each_bound_is_held_one_step_inside_and_outside(record: Record, past: str | None) -> None:
@@ -792,6 +805,16 @@ def _committed() -> list[tuple[Record, datetime]]:
         InDoubtEntry(late.client_order_id, sending_ended, None, False, t(61)),
         ReadEntry("execution/recover", day_after, blob("lookup-1"), day_after),
         LostEntry(late.client_order_id, 62, "the broker's whole order list omits it"),
+        # A pause comes last, so no entry before it is written again.
+        PauseEntry(
+            "fixture",
+            "2026-09-30",
+            datetime(2026, 9, 30, 19, 40, tzinfo=UTC),
+            (CHAN, OTHER),
+            "the run's stop is missing",
+            (),
+            True,
+        ),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]
 
@@ -838,11 +861,23 @@ def test_3_every_enumeration_an_entry_can_hold_is_frozen_above() -> None:
     assert found == set(FROZEN)
 
 
-def test_2_this_release_writes_the_committed_bytes_of_every_kind(tmp_path: Path) -> None:
-    journal = Journal(FolderStore(tmp_path), FIXED, "0123456789abcdef" * 2)
+def write_committed(into: Path) -> Journal:
+    """Record `_committed()` into an empty folder, under the writer the committed bytes hold.
+
+    The bytes test below and scripts/regenerate_journal_fixture.py both write through this
+    one function, so the script writes what the test checks.
+    """
+    journal = Journal(FolderStore(into), FIXED, "0123456789abcdef" * 2)
     view = journal.view()
     for record, at in _committed():
         _, view = journal.record(view, record, at)
+    return journal
+
+
+def test_2_this_release_writes_the_committed_bytes_of_every_kind(tmp_path: Path) -> None:
+    """After a merge appends an entry on both sides, scripts/regenerate_journal_fixture.py
+    writes the committed folder again and checks that no entry `main` holds moves."""
+    journal = write_committed(tmp_path)
     committed = sorted((ORDERS / "journal" / FIXED).iterdir())
     written = sorted((tmp_path / "journal" / FIXED).iterdir())
     assert [p.name for p in written] == [p.name for p in committed]
@@ -861,7 +896,8 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
     whole = journal.view()
     # After the dispute come a fee that moves the cash, three entries that move nothing, a stop's
     # firing stored and cleared, and a plan of the next day whose one closing-auction order a
-    # crash leaves sending and the recover after it gives up as lost.
+    # crash leaves sending and the recover after it gives up as lost. A pause comes last and
+    # moves nothing.
     late = afterwards["lost"]["order"]
     assert {
         "through": whole.through.seq,
