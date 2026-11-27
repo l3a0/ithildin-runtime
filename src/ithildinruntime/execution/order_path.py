@@ -1260,7 +1260,8 @@ class OrderPath:
                 # It paged, and a second page would name the same outage.
                 raise Outage(
                     f"the takeover of the account's lease failed: the takeover of the list at "
-                    f"{ref.key} was not journaled: {outage.reason}"
+                    f"{ref.key} was not journaled. No new order goes out until a takeover stores "
+                    f"the list and journals its entry. {outage.reason}"
                 ) from None
             except Halt as halt:
                 what = f"the journal refused the takeover of the list at {ref.key}"
@@ -1330,7 +1331,9 @@ class OrderPath:
                 try:
                     stands = tries(lambda k=key: shared.store.head(k)).ref.sha256
                 except StoreError as error:
-                    raise self._failed(f"{key} could not be read", code_of(error), True) from None
+                    raise self._failed(
+                        f"{key} could not be read", code_of(error), down=True
+                    ) from None
                 if stands == sha:
                     return BlobRef(key, sha)
                 continue
@@ -1344,8 +1347,8 @@ class OrderPath:
     def _failed(self, what: str, why: str, down: bool = False) -> Halt:
         """A takeover that failed: new orders halt, and the lease owes it or expires into one.
 
-        A store that did not answer is an `Outage`, which pages once with the
-        owner's step, and the send tries no other write of it.
+        A store that refused or did not answer is an `Outage`, which pages once
+        with the owner's step. The send then tries only the release of the lease.
         """
         reason = (
             f"the takeover of the account's lease failed: {what}{': ' if why else ''}{why}. No new "
@@ -1380,7 +1383,8 @@ class OrderPath:
         except KeyExists:
             pass
         except StoreError as error:
-            reason = f"{reason}. Its halt was not stored at {key}: {code_of(error)}"
+            # A store that did not take the halt is an outage, paged once with the owner's step.
+            return shared.outage(f"{reason}. Its halt was not stored at {key}: {code_of(error)}")
         return Halt(f"{reason}{shared.alarm(reason)}")
 
     def _renew(self, tries: Tries) -> None:
@@ -1419,7 +1423,12 @@ class OrderPath:
             # A write of this handler's own that landed unanswered moved the expiry further on.
             reason = f"{reason}. It expires no earlier than {ends.isoformat()}"
         if refused.unanswered and paged:
-            return f"{reason}. The next take after that takes it over and alarms"
+            # The release may have landed with its answer lost, so the halt does not promise an
+            # alarm that a free lease would never send.
+            return (
+                f"{reason[:1].upper()}{reason[1:]}. Whether it landed is unknown. If it did not, "
+                "the next take after that takes it over and alarms"
+            )
         if refused.unanswered:
             self._shared.outage(reason)
         else:

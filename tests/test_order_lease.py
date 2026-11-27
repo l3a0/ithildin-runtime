@@ -350,6 +350,26 @@ def test_a_release_another_handler_refused_pages_without_an_outage() -> None:
     assert "The owner's step" not in said
 
 
+def test_a_takeover_list_whose_key_stands_and_cannot_be_read_is_an_outage() -> None:
+    # A list already stands at the takeover's first key, so the create meets it and reads it to
+    # compare. A store that does not answer that read pages once, with the owner's step.
+    world = _two()
+    _sent_by_another(world)
+    _plant(world, _held())
+    world.store.put(takeover_key(DEPLOYMENT, RUN, NOW), b"{}")
+
+    def before(number: int, op: str, key: str) -> None:
+        if op == "head" and "/takeovers/" in key:
+            raise StoreUnavailable(key, "SlowDown: the store's own text")
+
+    world.store.before = before
+    with pytest.raises(Outage) as raised:
+        world.send(2)
+    assert "could not be read" in raised.value.reason
+    (page,) = [a for a in world.alarms.sent if "the takeover of the account's lease failed" in a]
+    assert "The owner's step" in page
+
+
 def test_a_takeover_whose_journal_write_is_an_outage_that_paged_pages_no_more() -> None:
     # The storage layer raises an `Outage` once a write passes its deadline, after its own page,
     # so the failed takeover halts on that outage and sends no page of its own.
@@ -365,6 +385,7 @@ def test_a_takeover_whose_journal_write_is_an_outage_that_paged_pages_no_more() 
     with pytest.raises(Outage) as raised:
         world.send(2)
     assert "the takeover of the account's lease failed" in raised.value.reason
+    assert "No new order goes out until a takeover stores the list" in raised.value.reason
     assert not any("the takeover of the account's lease failed" in a for a in world.alarms.sent)
 
 
@@ -387,9 +408,12 @@ def test_an_outage_at_the_renewal_pages_once_and_its_halt_names_the_lease_left_h
     (said,) = world.alarms.sent
     assert "The owner's step" in said and "release" not in said
     reason = raised.value.reason
-    assert "the account's lease's release was not stored" in reason
     assert f"It expires no earlier than {(NOW + PERIOD).isoformat()}" in reason
-    assert reason.endswith("The next take after that takes it over and alarms")
+    assert "The account's lease's release was not stored" in reason
+    assert reason.endswith(
+        "Whether it landed is unknown. If it did not, the next take after that takes it over and "
+        "alarms"
+    )
 
 
 def test_a_release_another_handler_refused_after_an_outage_still_pages() -> None:
@@ -565,12 +589,18 @@ def test_an_absent_lease_whose_halt_key_holds_other_bytes_leaves_them_alone() ->
     assert world.store.blobs[key] == b"another finder's halt"
 
 
-def test_an_absent_lease_whose_halt_the_store_refuses_says_so_and_pages() -> None:
+def test_an_absent_lease_whose_halt_the_store_refuses_pages_once_as_an_outage() -> None:
     world = _lost()
     world.store.refuse(("create", account_halts_prefix(ACCOUNT)))
-    reason = halted(world, "lease is absent")
+    with pytest.raises(Outage) as raised:
+        world.send()
+    assert world.submits == 0
+    reason = raised.value.reason
+    assert "lease is absent" in reason
     assert "Its halt was not stored at" in reason and "StoreUnavailable AccessDenied" in reason
-    assert any("Its halt was not stored" in said for said in world.alarms.sent)
+    # A store that did not take the halt is an outage, which pages once with the owner's step.
+    (said,) = [a for a in world.alarms.sent if "Its halt was not stored" in a]
+    assert "The owner's step" in said
     assert not _halts(world)
 
 
@@ -705,6 +735,7 @@ def test_a_failed_takeover_halts_new_orders_and_the_next_take_owes_it(fails: str
     # step, as every outage does.
     (page,) = [a for a in world.alarms.sent if "the takeover of the account's lease failed" in a]
     assert ("The owner's step" in page) == (fails in ("the store", "the journal"))
+    assert len(world.alarms.sent) == 1, world.alarms.sent
     assert world.every_kind() == before
     lease = _lease(world)
     assert lease.handler is None and lease.owed
