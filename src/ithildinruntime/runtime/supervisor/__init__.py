@@ -35,10 +35,12 @@ One start runs in this order.
    adds a third condition, that the run has read the day's fills. Outside a
    backtest it first reads the run's halt, and stores the stop only where the
    store answers that there is none. Where the run's halt could not be stored, a
-   halt of each strategy stands in for it. Outside a backtest a start first looks
-   for one naming its run, and stores the run's halt from it and ends with 3, and
-   halts the run where those halts cannot be read. The stop reads them again,
-   and stores no stop and ends with 1 where it cannot.
+   halt of each strategy stands in for it, and where none of those can be
+   stored either, the supervisor stays up and tries again on each tick. Outside
+   a backtest a start first looks for one naming its run, and stores the run's
+   halt from it and ends with 3, and halts the run where those halts cannot be
+   read. The stop reads them again, and stores no stop and ends with 1 where it
+   cannot.
 9. At `STALL_AFTER_CLOSE` past the close, a result still missing alarms and the
    start ends with no stop.
 
@@ -489,8 +491,9 @@ class Supervisor:
         # Alarmed first, so the orders are named even where the halt cannot be stored.
         self._alerts.alarm(
             f"{self._deployment}: the supervisor halts {plan.run}, and the run ends with no "
-            f"stop: {reason}. Settle each order named at the broker. The next session's start "
-            f"holds every strategy. {who(self._mode)}"
+            f"stop: {reason}. Settle at the broker each order this names, and confirm the "
+            "account's positions there. Once the halt is stored, the next session's start holds "
+            f"every strategy. {who(self._mode)}"
         )
         record = RunHalt(
             format=RUN_RECORD_FORMAT,
@@ -499,49 +502,14 @@ class Supervisor:
             reason=reason,
             halted_at=self._timer.now(),
         )
+        key = run_halt_key(self._deployment, plan.run)
         try:
-            self._storage.keep(run_halt_key(self._deployment, plan.run), encode(record))
+            self._storage.keep(key, encode(record))
         except Exception as error:
-            # Without the run's halt, a halt of each strategy, at keys of their own, still
-            # stops every new order, since execution's controls read those too. The
-            # supervisor then ends with the code the host restarts, and with no stop. A later
-            # start that finds one of them stores the run's halt from it, not a stop.
-            strategies = sorted(s.name for s in self._table.strategies)
-            held = write_halts(
-                self._storage,
-                self._account,
-                strategies,
-                plan.run,
-                f"{OWED}{reason}",
-                self._timer.now(),
-                self._timer.now(),
-                cause=RUN_HALT_CAUSE,
-                quiet=True,
-            )
-            unheld = [s for s in strategies if s not in held]
-            said = f"a halt holds {', '.join(held)}" if held else "no halt holds any strategy"
-            if unheld:
-                said += f", and no halt of {', '.join(unheld)} could be stored, so it is not held"
-            if held:
-                after = (
-                    "The host restarts the supervisor, which tries the halt again once the store "
-                    "answers. A restart that ends with 5 or 6 does not, so start the supervisor's "
-                    "unit by hand once the store answers"
-                )
-            else:
-                # Nothing records the halt, so a restart judges the run afresh.
-                after = (
-                    "Nothing records the halt, so the next session's start holds nothing for "
-                    "it. The host restarts the supervisor, which halts the run again only while "
-                    "an order is still late or the journal still cannot be read, and otherwise "
-                    "stores the run's stop"
-                )
-            self._alerts.alarm(
-                f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
-                f"{_said(error)}. In its place {said}. Pull the account's kill switch now. "
-                f"{after}"
-            )
-            return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
+            stored = self._halt_in_place(plan, key, record, error)
+            if stored is not None:
+                return stored
+        halt = Halt(f"the supervisor halted the run: {reason}")
         halt = Halt(f"the supervisor halted the run: {reason}")
         for at in decisions:
             for stage in stages:
@@ -550,6 +518,68 @@ class Supervisor:
                     continue
                 self._storage.put_result(key, self._halt_result(plan, stage, at, halt))
         return Outcome(EXIT_HALTED, f"halted {plan.run}: {reason}")
+
+    def _halt_in_place(
+        self, plan: Plan, key: str, record: RunHalt, error: Exception
+    ) -> Outcome | None:
+        """Hold the run where its halt cannot be stored, and `None` once the halt itself lands.
+
+        A halt of each strategy, at keys of its own, stops every new order, since
+        execution's controls read those too, and a later start stores the run's halt
+        from one of them. Where none can be stored either, the supervisor stays up and
+        tries again on each tick, because a restart would know nothing of the halt.
+        """
+        strategies = sorted(s.name for s in self._table.strategies)
+        alarmed = False
+        while True:
+            held = write_halts(
+                self._storage,
+                self._account,
+                strategies,
+                plan.run,
+                f"{OWED}{record.reason}",
+                self._timer.now(),
+                self._timer.now(),
+                cause=RUN_HALT_CAUSE,
+                quiet=True,
+            )
+            if held:
+                unheld = [s for s in strategies if s not in held]
+                said = f"a halt holds {', '.join(held)}"
+                if unheld:
+                    said += (
+                        f", and no halt of {', '.join(unheld)} could be stored, so it is not held"
+                    )
+                self._alerts.alarm(
+                    f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
+                    f"{_said(error)}. In its place {said}. Pull the account's kill switch now. "
+                    "The host restarts the supervisor, which tries the halt again once the store "
+                    "answers. A restart that ends with 5 or 6 does not, so start the supervisor's "
+                    "unit by hand once the store answers"
+                )
+                return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
+            if not alarmed:
+                self._alerts.alarm(
+                    f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
+                    f"{_said(error)}, and no halt holds any strategy in its place. Pull the "
+                    "account's kill switch now. The supervisor tries the halt again on each "
+                    "tick, and does not end until one lands"
+                )
+                alarmed = True
+            if self._wait(self._tick):
+                self._alerts.alarm(
+                    f"{self._deployment}: the supervisor was asked to stop before the run's halt "
+                    f"of {plan.run}, or any halt in its place, was stored, so nothing records "
+                    "the halt and a restart judges the run afresh. Keep the account's kill switch "
+                    "pulled until each position is confirmed at the broker"
+                )
+                return Outcome(EXIT_ASKED, f"asked to stop before {plan.run}'s halt was stored")
+            try:
+                self._storage.keep(key, encode(record))
+            except Exception as again:
+                error = again
+            else:
+                return None
 
     def _halt_result(self, plan: Plan, stage: str, at: datetime, halt: Halt) -> DecisionResult:
         row = self._table.stage(stage)

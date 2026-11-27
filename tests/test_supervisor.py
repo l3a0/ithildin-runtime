@@ -805,8 +805,8 @@ def test_a_halted_runs_alarm_says_what_to_do_and_who_clears_it(world: World) -> 
     world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
     world.supervisor().run(TODAY)
     (alarm,) = world.alarms()
-    assert "Settle each order named at the broker" in alarm
-    assert "The next session's start holds every strategy" in alarm
+    assert "Settle at the broker each order this names" in alarm
+    assert "Once the halt is stored, the next session's start holds every strategy" in alarm
     assert "The operator clears it" in alarm
 
 
@@ -1414,7 +1414,6 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     assert any(
         "which tries the halt again once the store answers" in a
         and "A restart that ends with 5 or 6 does not" in a
-        and "Nothing records the halt" not in a
         for a in world.alarms()
     )
     assert _stop_of(world) is None
@@ -1630,21 +1629,77 @@ def test_a_restart_after_the_runs_halt_could_not_be_stored_stores_the_halt_not_a
     assert not stored.reason.startswith("the run's halt could not be stored")
 
 
-def test_a_runs_halt_and_strategy_halts_that_cannot_be_stored_name_what_is_not_held(
-    world: World,
-) -> None:
+def test_a_run_with_no_halt_stored_at_all_stays_up_until_one_lands(world: World) -> None:
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    # The store refuses the run's halt and every strategy's until the third tick.
+    _refusing(
+        world,
+        lambda call, key: (
+            call == "create" and (key == halt or "/halts/" in key) and world.ticks < 3
+        ),
+    )
+    assert world.supervisor().run(TODAY).code == EXIT_HALTED
+    assert world.ticks == 3 and world.blob(halt) is not None
+    (alarm,) = [a for a in world.alarms() if "no halt holds any strategy in its place" in a]
+    assert "Pull the account's kill switch" in alarm and "does not end until one lands" in alarm
+    assert not any("asked to stop" in a for a in world.alarms())
+    first = next(a for a in world.alarms() if "the supervisor halts" in a)
+    assert "Once the halt is stored, the next session's start holds every strategy" in first
+
+
+def test_halts_in_place_that_land_on_a_later_tick_end_the_wait(world: World) -> None:
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    # The run's halt is never stored, and the strategies' halts only from the second tick.
+    _refusing(
+        world,
+        lambda call, key: (
+            call == "create" and (key == halt or ("/halts/" in key and world.ticks < 2))
+        ),
+    )
+    assert world.supervisor().run(TODAY).code == EXIT_FAILED
+    assert world.ticks == 2 and world.held() and world.blob(halt) is None
+
+
+def test_a_stop_asked_before_any_halt_lands_says_nothing_records_it(world: World) -> None:
     world.opened()
     world.ran()
     _doubtful(world, DECIDED[TODAY])
     world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
     halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
     _refusing(world, lambda call, key: call == "create" and (key == halt or "/halts/" in key))
-    assert world.supervisor().run(TODAY).code == EXIT_FAILED
+    world.most_ticks = 2
+    assert world.supervisor().run(TODAY).code == EXIT_ASKED
+    (alarm,) = [a for a in world.alarms() if "asked to stop before the run's halt" in a]
+    assert "nothing records the halt" in alarm and "kill switch" in alarm
+    assert not world.held() and world.blob(halt) is None
+
+
+def test_some_strategy_halts_stored_in_place_name_what_is_not_held(world: World) -> None:
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    both = {CHAN: (BeforeClose(20),), OTHER: (BeforeClose(20),)}
+    folder = world.root / "strategies"
+    folder.mkdir()
+    for strategy in (CHAN, OTHER):
+        shutil.copyfile(STRATEGIES / f"{CHAN}.toml", folder / f"{strategy}.toml")
+    table = deployment_table(Deployment(DEPLOYMENT, ACCOUNT, both), folder)
+    other = strategy_halts_prefix(ACCOUNT, OTHER)
+    _refusing(world, lambda call, key: call == "create" and (key == halt or key.startswith(other)))
+    assert world.supervisor(table=table, schedules=both).run(TODAY).code == EXIT_FAILED
     (alarm,) = [a for a in world.alarms() if "could not be stored" in a and "In its place" in a]
-    assert "no halt holds any strategy" in alarm and "Pull the account's kill switch" in alarm
-    assert f"no halt of {CHAN}" in alarm and "so it is not held" in alarm
-    assert "Nothing records the halt" in alarm and "tries the halt again" not in alarm
-    assert not world.held()
+    assert f"a halt holds {CHAN}" in alarm and f"no halt of {OTHER} could be stored" in alarm
+    assert "so it is not held" in alarm and "Pull the account's kill switch" in alarm
 
 
 def _stand_in_owed(world: World) -> str:

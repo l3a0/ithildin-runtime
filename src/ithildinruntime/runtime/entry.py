@@ -35,7 +35,8 @@ Each command ends with one of these codes, which #202's units read.
   A restart that finds a halt of a strategy standing in for the run's own
   stores the run's halt from it rather than a stop. Where the halt cannot be
   stored, each strategy is halted in its place and the alarm says to pull the
-  kill switch.
+  kill switch. Where none of those can be stored either, the supervisor does not
+  end, and tries the halt again on each tick until one lands.
 - 2: a setting is missing or malformed, the credential file it names cannot be
   read, or the release pin file is missing or empty, named in one line on
   standard error and in an alarm line.
