@@ -1181,7 +1181,10 @@ class OrderPath:
         """Store the broker's order list and journal the takeover, before this handler acts.
 
         Any step that fails halts new orders, and the lease keeps the takeover
-        owed, so the next take journals it.
+        owed, so the next take journals it. The one exception is the rewrite that
+        clears `owed` finding the lease gone: the entry stands journaled, and the
+        next take halts on the lease as absent where the journal holds a
+        `sending`, and otherwise starts it anew.
         """
         shared, took = self._shared, taken.took
         assert took is not None and taken.tag is not None
@@ -1254,8 +1257,10 @@ class OrderPath:
             if lost.unanswered:
                 raise self._outage(lost.reason) from None
             if lost.gone:
-                # The entry stands journaled, so the takeover is owed no more, and the halt is the
-                # lease's absence, which the next take meets.
+                # The entry stands journaled, so the takeover is owed no more. The next take halts
+                # on the lease as absent where the journal holds a sending, and otherwise starts it
+                # anew. Nothing is left to release, so this is the one page.
+                self._lease = None
                 raise Halt(f"{lost.reason}{shared.alarm(lost.reason)}") from None
             raise self._failed("the rewrite after its entry was refused", lost.reason) from None
 

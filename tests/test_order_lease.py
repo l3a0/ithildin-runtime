@@ -701,12 +701,14 @@ def test_a_take_whose_create_lands_after_its_tries_leaves_the_lease_to_expire() 
     assert entry.late == ()
 
 
+@pytest.mark.parametrize("sent", [False, True], ids=["no sending", "a sending"])
 @pytest.mark.parametrize("answered", [False, True], ids=["unanswered", "answered"])
 def test_a_takeover_whose_closing_rewrite_finds_the_lease_gone_names_the_absence(
-    answered: bool,
+    answered: bool, sent: bool
 ) -> None:
     world = _two()
-    _sent_by_another(world)
+    if sent:
+        _sent_by_another(world)
     _plant(world, _held())
     replaces: list[int] = []
 
@@ -724,8 +726,15 @@ def test_a_takeover_whose_closing_rewrite_finds_the_lease_gone_names_the_absence
     assert "until a takeover stores the list" not in reason
     assert "The owner's step" not in reason
     assert "takeover" in world.every_kind()
+    # One page names the gone lease, and no release follows it.
+    gone = [a for a in world.alarms.sent if "is gone from" in a]
+    assert len(gone) == 1 and "rewrite after its takeover was refused" in gone[0]
     world.store.before = lambda *_: None
-    halted(world, "lease is absent", lambda: world.send(2))
+    if sent:
+        halted(world, "lease is absent", lambda: world.send(2))
+    else:
+        # With no `sending`, the next take starts the lease anew.
+        assert world.send(2) is OrderState.ACKNOWLEDGED
 
 
 @pytest.mark.parametrize("answered", [False, True], ids=["unanswered", "refused"])

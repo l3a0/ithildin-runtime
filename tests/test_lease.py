@@ -335,7 +335,10 @@ def test_a_write_whose_read_back_cannot_be_made_is_tried_again_and_then_lost(
     held = lease.take(A, _tries(clock), False, _absent).held
     real_head = store.head  # type: ignore[attr-defined]
 
+    sent: list[object] = []
+
     def lost(*args: object) -> str:
+        sent.append(args)
         raise StoreUnavailable(KEY, "no answer")
 
     def blind(key: str) -> object:
@@ -345,7 +348,7 @@ def test_a_write_whose_read_back_cannot_be_made_is_tried_again_and_then_lost(
     store.head = blind  # type: ignore[attr-defined]
     with pytest.raises(LeaseLost, match="renewal was not stored") as raised:
         lease.renew(held, _tries(clock))
-    assert raised.value.unanswered
+    assert raised.value.unanswered and len(sent) > 1
     store.head = real_head  # type: ignore[attr-defined]
 
 
