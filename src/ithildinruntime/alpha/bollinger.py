@@ -79,7 +79,7 @@ checks it against the record of splits, `data/splits.csv`, which halts a
 decision on a split it holds and on one it does not, inside the window, across
 that one change or between its newest bar and the quote. docs/design.md's rule
 that a split reads as neither a gain nor a loss says what each halt costs, and
-which splits still read as a move: one that moves the price by 5 percent or
+which splits still read as a move: one that moves the price by 1 percent or
 less, one under three for two that Schwab does not restate, and one inside a
 covered span both vendor lists missed.
 

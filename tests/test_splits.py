@@ -313,18 +313,19 @@ def test_3_a_window_of_adjusted_bars_alone_checks_no_pair() -> None:
     assert pairs({USO: {"1d": held}}, [USO], DAY, TABLE) == []
 
 
-# 7. The bounds, one cent from each edge
+# 7. The bounds, one cent from each edge, and SPY's largest dividend from 2006 on, 0.806 percent
 
 
 @pytest.mark.parametrize(
-    ("stated", "halts"), [("94.99", True), ("95.0", False), ("105.0", False), ("105.01", True)]
+    ("stated", "halts"),
+    [("98.99", True), ("99.0", False), ("99.194", False), ("101.0", False), ("101.01", True)],
 )
 def test_7_the_residual_halts_outside_its_bounds(stated: str, halts: bool) -> None:
     found = check_splits(snap(flat(), quoted=stated), TABLE)
     assert bool(found) is halts
     if halts:
         (reason,) = found
-        assert "outside 0.95 to 1.05" in reason and stated not in reason and "100" not in reason
+        assert "outside 0.99 to 1.01" in reason and stated not in reason and "100" not in reason
 
 
 @pytest.mark.parametrize(
@@ -386,7 +387,7 @@ def test_6_a_split_with_no_row_halts_on_the_residual_where_the_quote_restates_it
         cover(USO, days[-2], days[-1], str(after)),
     )
     found = check_splits(snap(closes, covers=covers), TABLE)
-    (reason,) = [r for r in found if "outside 0.95 to 1.05" in r]
+    (reason,) = [r for r in found if "outside 0.99 to 1.01" in r]
     assert f"{days[-1]} states a close of {days[-2]} at" in reason
     assert "A split row" in reason
 

@@ -29,7 +29,7 @@ and on to the quote's where the decision read one.
    another give one reason, apart from the pair to the decision's own quote,
    which gives its own.
 2. **The residual.** Each `close_price` a quote states, over the stored close
-   of the earlier session, passes from 0.95 to 1.05, both ends allowed. The
+   of the earlier session, passes from 0.99 to 1.01, both ends allowed. The
    decision's own quote is checked under a covered row too.
 3. **The step.** On a pair of two stored bars that a quote alone covers, a
    close-to-close fall of 30 percent or more, or a rise of 42.9 percent or
@@ -114,7 +114,7 @@ _KINDS = (SPLIT, COVERED, WITHDRAWN)
 # Where a pair's quote came from.
 QUOTE, SEALED = "quote", "sealed"
 # The residual's bounds, both allowed, and the step's, both halting.
-LOW, HIGH = Decimal("0.95"), Decimal("1.05")
+LOW, HIGH = Decimal("0.99"), Decimal("1.01")
 FALL, RISE = Decimal("0.70"), Decimal("1.429")
 _CONTEXT = Context(prec=28)
 _RAW = "raw"

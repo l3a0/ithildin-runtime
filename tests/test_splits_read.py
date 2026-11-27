@@ -331,7 +331,7 @@ def test_6_a_split_with_no_row_halts_through_the_read(
         root, tmp_path, DAY, splits=SHORT, mids={"USO": walk[DAY]}, walks={**WALKS, "USO": walk}
     )
     reason = found.data.halt.reason
-    said = "outside 0.95 to 1.05" if restated else "only a quote covers"
+    said = "outside 0.99 to 1.01" if restated else "only a quote covers"
     assert said in reason and f"{effective}" in reason
     assert found.alpha.outputs == ()
     # Once its row is known, the decision halts on the row instead.
