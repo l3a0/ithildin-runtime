@@ -458,10 +458,10 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 
 These answers are recorded data, and an issuer's filing can be fetched again while a vendor's answer of that day cannot. So two things must hold for every saved answer, and [#250](https://github.com/l3a0/ithildin-runtime/issues/250) builds how.
 
-1. A saved answer is never replaced or deleted.
-2. A copy off the machine, checked against each answer's SHA-256, exists before anything relies on the answer. Until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) gives saved published texts a prefix the [replication rule](design.md#rule-1-the-replica-before-live) copies, the owner makes that copy by hand.
+1. A saved answer, and the listing of its address and fetch time, is never replaced or deleted.
+2. A copy off the machine of each answer and its listing, checked against each answer's SHA-256, exists before anything relies on the answer. Until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) gives saved published texts a prefix the [replication rule](design.md#rule-1-the-replica-before-live) copies, the owner makes that copy by hand.
 
-Today the folder is the only copy, nothing locks its files, and nothing reads them back. Nothing deploys yet, so the first reads that rely on a row are a stress run or a backtest run by hand, and then the shadow run of [#16](https://github.com/l3a0/ithildin-runtime/issues/16). The price is that losing or changing a file leaves rows citing answers nobody holds, and no vendor gives those answers again. A connector's rendering of a vendor's answer is what is kept, so a connector that drops a row or a page also goes unseen in the saved file.
+Today the folder is the only copy, nothing locks its files, nothing reads them back, and an answer no row cites has its SHA-256 written nowhere. Nothing deploys yet, so the first reads that rely on a row are a stress run or a backtest run by hand, and then the first shadow decision, once [#202](https://github.com/l3a0/ithildin-runtime/issues/202) deploys on merge. The price is that losing or changing a file leaves rows citing answers nobody holds, and no vendor gives those answers again. A connector's rendering of a vendor's answer is what is kept, so a connector that drops a row or a page also goes unseen in the saved file.
 
 #### Write a split row
 
