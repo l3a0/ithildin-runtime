@@ -6,7 +6,7 @@ is written entry by entry through `Journal.record`, so the fold checked every
 entry. Each verdict carries a worst loss worked out by hand in the gate's own
 way: for each leg, the share count furthest from zero that the leg could reach
 with the order and every working order counted, times its mark, times the stress
-move of 0.2. Two tests say where they choose a figure the gate would not give,
+move of 0.2. Three tests say where they choose a figure the gate would not give,
 to tell one order from another. No figure is pinned from output.
 """
 
@@ -19,7 +19,16 @@ from decimal import Decimal
 
 import pytest
 
-from ithildinruntime.core import Halt, InstrumentId, OrderIntent, OrderState, encode, sha256_of
+from ithildinruntime.core import (
+    Halt,
+    InstrumentId,
+    OrderIntent,
+    OrderState,
+    OrderType,
+    TimeInForce,
+    encode,
+    sha256_of,
+)
 from ithildinruntime.journal import (
     IntentEntry,
     Journal,
@@ -47,6 +56,7 @@ from tests.support.journals import (
     fill,
     filled,
     in_doubt,
+    lost,
     opening,
     planned,
     read,
@@ -68,6 +78,7 @@ class Leg:
     worst_loss: str
     adding: bool = True
     approved: bool = True
+    closing: bool = False
 
 
 class Written:
@@ -91,7 +102,7 @@ class Written:
         at = AT + self.decisions * HOUR
         reading = self.put(read(at))
         orders = [
-            planned(place, leg.qty, leg.instrument, strategy, at)
+            closing(planned(place, leg.qty, leg.instrument, strategy, at), leg.closing)
             for place, leg in enumerate(legs, start=1)
         ]
         decided = self.put(decision(*orders, at=at, read=reading))
@@ -112,6 +123,13 @@ class Written:
     def fill(self, order: OrderIntent, qty: int, price: str) -> int:
         made = fill(f"{broker(order)}-{qty}", broker(order), qty, price, order.instrument)
         return self.put(filled(made, self.reading))
+
+
+def closing(order: OrderIntent, auction: bool) -> OrderIntent:
+    """The order as a closing-auction order where `auction`, the one kind a list can give up."""
+    if not auction:
+        return order
+    return replace(order, type=OrderType.MARKET_ON_CLOSE, time_in_force=TimeInForce.CLS)
 
 
 def broker(order: OrderIntent) -> str:
@@ -236,21 +254,21 @@ def test_each_order_with_a_sending_counts_and_none_without() -> None:
     written.send(gld)
     written.fill(gld, 10, "200")
     # 15*200*0.2, 20*200*0.2 and 25*200*0.2, each counting the adds planned before it.
-    (early, late, lost) = written.decide(
+    (early, late, dropped) = written.decide(
         Leg(GLD, 5, "600"), Leg(GLD, 5, "800"), Leg(GLD, 5, "1000")
     )
     written.put(SendingEntry(early.client_order_id))
     written.put(rejected(early.client_order_id))
     written.send(late)
     written.put(rejected(late.client_order_id))
-    written.put(SendingEntry(lost.client_order_id))
-    written.put(abandoned(lost.client_order_id))
+    written.put(SendingEntry(dropped.client_order_id))
+    written.put(abandoned(dropped.client_order_id))
     # Figures chosen above every other, so either one counted would show.
     (refused, held) = written.decide(Leg(GLD, 5, "5000", approved=False), Leg(GLD, 5, "6000"))
     written.put(abandoned(held.client_order_id))
     (position,) = positions(written.journal)
     names = [one.client_order_id for one in position.counted]
-    assert names == [o.client_order_id for o in (gld, early, late, lost)]
+    assert names == [o.client_order_id for o in (gld, early, late, dropped)]
     assert refused.client_order_id not in names
     assert position.initial_risk == D("1000")
 
@@ -415,7 +433,7 @@ def test_every_state_is_read_on_purpose() -> None:
     s = OrderState
     assert NOT_SENT == {s.INTENDED, s.APPROVED}
     assert WORKING == {s.SENDING, s.IN_DOUBT, s.ACKNOWLEDGED, s.PARTLY_FILLED}
-    assert ENDED == {s.REFUSED, s.ABANDONED, s.FILLED, s.REJECTED, s.EXPIRED}
+    assert ENDED == {s.REFUSED, s.ABANDONED, s.FILLED, s.REJECTED, s.EXPIRED, s.LOST}
     assert NOT_SENT | WORKING | ENDED == set(OrderState)
 
 
@@ -449,3 +467,25 @@ def test_a_journal_held_after_every_position_closed_halts_the_read(kind: str) ->
     said = "is in dispute" if kind == "dispute" else "keeps an unmatched fill"
     with pytest.raises(Halt, match=said):
         positions(written.journal)
+
+
+def test_an_order_given_up_as_lost_counts_and_then_keeps_no_position_open() -> None:
+    """It was held in doubt from its sending, so it counts, and once it ends the strategy can be
+    flat again."""
+    written = Written()
+    (gld,) = written.decide(Leg(GLD, 10, "400"))
+    written.send(gld)
+    written.fill(gld, 10, "200")
+    (more,) = written.decide(Leg(GLD, 5, "600", closing=True))  # 15*200*0.2
+    written.put(SendingEntry(more.client_order_id))
+    written.put(in_doubt(more.client_order_id))
+    # Chosen below the gate's 15*200*0.2, so only the Lost add gives the largest figure.
+    (sell,) = written.decide(Leg(GLD, -10, "400", False))
+    written.send(sell)
+    written.fill(sell, -10, "200")
+    asked = written.put(read(AT + timedelta(days=1)))
+    given_up = written.put(lost(more.client_order_id, asked))
+    (position,) = positions(written.journal)
+    assert position.closed == given_up
+    assert more.client_order_id in [one.client_order_id for one in position.counted]
+    assert position.initial_risk == D("600")
