@@ -321,13 +321,24 @@ class Unstored:
             f"the next send{kept.added}"
         )
 
-    def hold(self, name: str, record: Record, at: datetime, sent: str) -> None:
-        """Keep an entry and try it nowhere, for a store that has just failed and paged.
+    def hold(
+        self, name: str, record: Record, at: datetime, sent: str, report: Callable[[], None]
+    ) -> OrderState | None:
+        """Keep an entry and try it once, for a store that has just failed and paged.
 
-        Each `settle` tries it, as it tries every kept entry.
+        The one try sends no alarm about the journal, since the outage paged
+        already, and returns the state the order is in where it lands. Where it
+        does not, the entry stays, and each `settle` tries it, as it tries every
+        kept entry. An outage of another blob, such as the hard caps, leaves the
+        journal answering, so the entry lands at once.
         """
+        kept = _Kept(name, record, at, sent)
         with self._lock:
-            self._kept.append(_Kept(name, record, at, sent))
+            self._kept.append(kept)
+        try:
+            return self._store(kept, report, once=True)
+        except Exception:
+            return None
 
     def settle(self, report: Callable[[], None]) -> None:
         """Try each unsent alarm and each kept entry again, and halt naming each entry left."""
@@ -738,7 +749,8 @@ class OrderPath:
         Each order approved is counted open in the book the next is asked on, as
         a journal holding its `verdict` would count it. It stops at the first
         order the gate refuses or that raises `Halt`, and returns the answer of
-        each it reached. An order the journal already holds an entry of halts,
+        each it reached. An `Outage` is raised as it is, since it paged and is no
+        refusal. An order the journal already holds an entry of halts,
         because a plan is asked about before any of it is journaled. It reads
         no control but the loss stop, which the gate is handed, and `send`
         reads every one again. It journals no order. It settles the account
@@ -1275,10 +1287,10 @@ class OrderPath:
         except Halt as halt:
             raise self._ended(name, halt.reason) from None
         except StoreError as error:
-            # It may be stored, and only this call knows that nothing followed it.
-            reason = f"the sending of {name} was not stored: {code_of(error)}"
-            self._not_sent(name, reason, went)
-            raise Halt(reason) from None
+            # It may be stored, and only this call knows that nothing followed it. The journal
+            # has stopped answering, so it pages once here and the `abandoned` is kept.
+            outage = self._outage(f"the sending of {name} was not stored: {code_of(error)}")
+            raise self._held_unsent(name, outage, went) from None
         with self._shared.lock:
             self._shared.cleared[ack.seq] = _Cleared(ack, name, approved.last, approved.caps)
         return ack
@@ -1384,8 +1396,11 @@ class OrderPath:
         key = journal_entry_key(self._shared.account, ack.seq)
         try:
             stored = tries(lambda: self._shared.store.get(key))
-        except StoreError as error:
+        except BlobMissing as error:
+            # The store answered, so this is no outage.
             raise Halt(f"entry {ack.seq} could not be read: {code_of(error)}") from None
+        except StoreError as error:
+            raise self._outage(f"entry {ack.seq} could not be read: {code_of(error)}") from None
         if sha256_of(stored) != ack.entry_hash:
             raise Halt(f"entry {ack.seq} is not stored as it was acknowledged")
         return order
@@ -1451,18 +1466,22 @@ class OrderPath:
         return InDoubtEntry(answer.order.client_order_id, reason, kept, cut, at or answer.at)
 
     def _held_unsent(self, name: str, outage: Outage, at: datetime) -> Outage:
-        """Keep the `abandoned` of an order with a `sending` that never left, untried.
+        """Keep the `abandoned` of an order with a `sending` that never left, and try it once.
 
-        The store has just failed and paged, so the entry waits for the next
-        settle, and the outage that is raised says so. A process that dies first
-        leaves the `sending` with no answer, which the next recover looks up.
+        The store has just failed and paged, so the one try pages nothing more.
+        Where it does not land, the entry waits for the next settle, and the
+        outage that is raised says so. A process that dies first leaves the
+        `sending` with no answer, which the next recover looks up.
         """
         try:
             at = self._shared.clock.now()
         except Exception:
             pass
         reason = outage.reason
-        self._shared.unstored.hold(name, AbandonedEntry(name, _text(reason)), at, "not sent")
+        record = AbandonedEntry(name, _text(reason))
+        state = self._shared.unstored.hold(name, record, at, "not sent", self._report)
+        if state is not None:
+            return Outage(f"{reason}. The journal shows {name} {state}")
         return Outage(
             f"{reason}. The abandoned of {name} is kept and tried again before the next send"
         )

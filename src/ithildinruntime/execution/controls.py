@@ -127,7 +127,7 @@ class Controls:
             # A folder that lists answers with an empty list, never with a missing blob.
             return _Read(None, code_of(missing) if folder else None)
         except StoreError as error:
-            # Tried until the deadline, so the store did not answer.
+            # Refused or unanswered until the deadline, which the order path pages as an outage.
             return _Read(None, code_of(error), True)
         except Exception as error:
             return _Read(None, code_of(error))

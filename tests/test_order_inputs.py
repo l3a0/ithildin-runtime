@@ -575,14 +575,12 @@ def test_5_a_control_that_cannot_be_read_halts(name: str, read: int, error: str)
     assert ("sending" in world.kinds()) == late
     refused = name == "loss stop" and not late
     if error == "StoreUnavailable" and not refused:
-        # The store did not answer, so the outage pages once and nothing more is written (#211).
-        # The `intent` stands for the next recover, and an `abandoned` after the `sending` is
-        # kept for the next settle, which stores it once the store answers.
+        # The store did not answer, so the outage pages once (#211). Before the `sending` the
+        # `intent` stands for the next recover. After it, the journal, which answers, takes the
+        # `abandoned` at its one try.
         assert len(world.alarms.sent) == 1, world.alarms.sent
-        assert world.state() is (OrderState.SENDING if late else OrderState.INTENDED)
-        world.store.before = lambda n, o, k: None
-        account.settle(lambda: None)
         assert world.state() is (OrderState.ABANDONED if late else OrderState.INTENDED)
+        assert account.unstored() == ()
         return
     assert world.state() is (OrderState.REFUSED if refused else OrderState.ABANDONED)
 

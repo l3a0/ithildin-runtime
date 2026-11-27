@@ -1834,8 +1834,9 @@ def test_8_an_order_for_the_day_is_not_tried_past_its_sessions_close() -> None:
     world.clock.at, world.clock.moves = gates.CLOSE - timedelta(seconds=30), True
     world.store.refuse(("create", journal_entry_key(ACCOUNT, 6)))
     halted(world, "the sending of")
-    # The `sending` for the 30 seconds left, and its `abandoned` for the deadline.
-    assert sum(world.clock.waits) == 630.0
+    # The `sending` for the 30 seconds left. Its outage paged, so its `abandoned` is tried once
+    # and kept for the next settle, and nothing waits for it (#211).
+    assert sum(world.clock.waits) == 30.0
 
 
 @pytest.mark.parametrize(
@@ -2111,12 +2112,11 @@ def test_7_caps_that_cannot_be_read_again_stop_the_order(fault: str) -> None:
     if fault != "unreadable":
         assert world.state() is OrderState.ABANDONED
         return
-    # The store did not answer, so the outage pages once and the `abandoned` waits (#211).
+    # The store did not answer the caps, so the outage pages once, and the journal, which
+    # answers, takes the `abandoned` at its one try (#211).
     assert len(world.alarms.sent) == 1, world.alarms.sent
-    assert world.state() is OrderState.SENDING
-    world.store.before = lambda n, o, k: None
-    account.settle(lambda: None)
     assert world.state() is OrderState.ABANDONED
+    assert account.unstored() == ()
 
 
 @pytest.mark.parametrize("at", range(CREATES[2] + 1, BEFORE_SUBMIT + 1))
@@ -2324,7 +2324,28 @@ def test_7_a_sending_whose_answer_was_lost_is_never_left_sending(then: str) -> N
     assert account.unstored() == () and world.submits == 0
     assert [e.built_at for e in world.reader().read()][-1] == NOW
     if then in ("store", "channel"):
-        assert any("which was not sent" in alarm for alarm in world.alarms.sent)
+        # The outage pages once, naming the `sending`, and nothing pages the kept `abandoned`.
+        (page,) = world.alarms.sent
+        assert "the sending of" in page and "was not stored" in page
+
+
+def test_7_an_outage_after_the_brokers_call_leaves_the_order_in_doubt(monkeypatch) -> None:
+    """Only an outage before the call means nothing left, so one after it is never called unsent."""
+    from ithildinruntime.execution.order_path import OrderPath
+
+    world = World()
+    real = OrderPath._submit
+
+    def submit(self, ack):
+        real(self, ack)
+        raise self._outage("a store stopped answering after the call")
+
+    monkeypatch.setattr(OrderPath, "_submit", submit)
+    # It is returned in doubt, for the send stage to end its plan on.
+    assert world.send() is OrderState.IN_DOUBT
+    assert world.submits == 1
+    assert world.state() is OrderState.IN_DOUBT
+    assert "abandoned" not in world.kinds()
 
 
 @pytest.mark.parametrize("heals", [False, True])

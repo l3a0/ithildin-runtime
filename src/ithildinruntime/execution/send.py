@@ -525,6 +525,8 @@ class SendStage:
         # was not sent where it is one.
         down = isinstance(halt, Outage)
         view = None if down else self._read(said, report)
+        # Where it was the path's outage, the store that failed may be another than the journal.
+        why = "a store stopped answering" if down else "the journal could not be read"
         # A journal that cannot be read takes no abandon either, and each would say why again.
         down = down or view is None
         left: list[str] = []
@@ -550,8 +552,8 @@ class SendStage:
         view = None if down else self._read(said, report)
         if left:
             said.append(
-                f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned, "
-                "since the journal could not be read, and none of them was sent"
+                f"{', '.join(left)} {'was' if len(left) == 1 else 'were'} not journaled abandoned "
+                f"by this stage, since {why}, and none of them was sent"
             )
         if view is None:
 
@@ -561,7 +563,7 @@ class SendStage:
                 return f"{name} not sent" if name in left else f"{name} not known"
 
             named = ", ".join(stands(order.client_order_id) for order in orders)
-            legs = f"{named}, since the journal could not be read"
+            legs = f"{named}, since {why}"
         else:
             legs = "; ".join(
                 _leg(order.client_order_id, view.orders.get(order.client_order_id))

@@ -697,9 +697,13 @@ def test_a_strategy_switch_that_cannot_be_read_halts() -> None:
     made = world()
     made.ready(close_of(FULL), PAIR)
     made.store.refuse(("get", off_switch_key("sim-1", CHAN)))
+    alarms = len(made.alarms.sent)
     result = made.send_attempt()
     assert result.halt is not None and "off switch unreadable" in result.halt.reason
     assert "decision" not in made.kinds(made.before)
+    # The store did not answer, so it pages once with the owner's step (#211).
+    (page,) = made.alarms.sent[alarms:]
+    assert "strategy off switch unreadable" in page and "The owner's step" in page
 
 
 def test_a_switch_cleared_between_the_legs_never_sends_the_second_alone() -> None:
@@ -959,8 +963,9 @@ def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
     result = made.send_attempt()
     reason = result.halt.reason
     assert tried == [] and made.submits() == [first]
-    assert f"{second} was not journaled abandoned, since the journal could not be read" in reason
-    assert f"stand so: {first} acknowledged, {second} not sent, since the journal" in reason
+    down = "since a store stopped answering"
+    assert f"{second} was not journaled abandoned by this stage, {down}" in reason
+    assert f"stand so: {first} acknowledged, {second} not sent, {down}" in reason
     # The outage's own page and the one naming every leg.
     sent = made.alarms.sent[alarms:]
     assert len(sent) == 2 and "The plan's orders stand so" in sent[1]
@@ -987,7 +992,8 @@ def test_an_outage_at_a_legs_last_checks_pages_once_and_keeps_its_abandoned(monk
     reason = result.halt.reason
     assert made.submits() == [first]
     assert f"The abandoned of {second} is kept and tried again before the next send" in reason
-    assert f"stand so: {first} acknowledged, {second} not sent, since the journal" in reason
+    down = "since a store stopped answering"
+    assert f"stand so: {first} acknowledged, {second} not sent, {down}" in reason
     # The outage's own page and the one naming every leg.
     sent = made.alarms.sent[alarms:]
     assert len(sent) == 2, sent
@@ -1080,7 +1086,8 @@ def test_a_first_leg_whose_call_failed_with_the_journal_gone_leaves_the_second_u
     result = made.send_attempt()
     reason = result.halt.reason
     assert made.submits() == []
-    assert f"{second} was not journaled abandoned, since the journal could not be read" in reason
+    unread = "since the journal could not be read"
+    assert f"{second} was not journaled abandoned by this stage, {unread}" in reason
     assert f"stand so: {first} not known, {second} not sent, since the journal" in reason
 
 
@@ -1122,8 +1129,9 @@ def test_a_refused_plan_stops_its_writes_at_the_first_outage(monkeypatch, at: st
     assert sum("could not be read" in a for a in sent) == 2
 
 
+@pytest.mark.parametrize("whole", [False, True], ids=["its inputs", "the whole store"])
 def test_an_outage_reading_a_plans_inputs_at_the_ask_pages_once_and_asks_nothing_more(
-    monkeypatch,
+    monkeypatch, whole: bool
 ) -> None:
     """The ask meets the outage, which is no refusal, so the hold never reads the inputs again."""
     made = world()
@@ -1132,7 +1140,8 @@ def test_an_outage_reading_a_plans_inputs_at_the_ask_pages_once_and_asks_nothing
 
     def down(number: int, op: str, key: str) -> None:
         # Each input of the decision, and not the stage's own files, so its halt is stored.
-        if op == "get" and key.startswith("runs/") and "/execution/" not in key:
+        inputs = op == "get" and key.startswith("runs/") and "/execution/" not in key
+        if inputs or (whole and key.startswith("journal/")):
             raise StoreUnavailable(key, "AccessDenied: the store's own text")
 
     def inputs(self, planned):
@@ -1150,6 +1159,9 @@ def test_an_outage_reading_a_plans_inputs_at_the_ask_pages_once_and_asks_nothing
     assert len(sent) == 2, sent
     assert "did not answer a read" in sent[0]
     assert sent[1].startswith("account sim-1: nothing is sent")
+    # Nothing is journaled after the plan, for the next recover to settle.
+    made.store.before = lambda n, o, k: None
+    assert made.view().orders == {}
 
 
 def test_a_refused_plan_whose_journal_cannot_be_read_still_pages_that_nothing_is_sent(
