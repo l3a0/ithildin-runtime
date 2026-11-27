@@ -268,22 +268,32 @@ def test_a_figure_at_zero_leaves_the_initial_risk_missing() -> None:
     assert position.initial_risk is None
 
 
-def test_an_adding_approval_with_no_positive_figure_halts_the_read() -> None:
-    """A hand-written entry of a kind no writer can build halts, and never reads as smaller."""
+@pytest.mark.parametrize(
+    ("figure", "adding"),
+    [("0", True), (None, True), ("NaN", True), ("Infinity", True), (None, False), ("NaN", False)],
+)
+def test_an_approval_with_a_figure_core_refuses_halts_the_read(
+    figure: str | None, adding: bool
+) -> None:
+    """A hand-written entry of a kind no writer can build halts, and never reads as smaller.
+
+    `core.Verdict` refuses an approval with no finite worst loss, and an adding one at or
+    below zero.
+    """
     written = Written()
     (gld,) = written.decide(Leg(GLD, 10, "400"))
     written.send(gld)
     written.fill(gld, 10, "200")
-    (more,) = written.decide(Leg(GLD, 5, "600"))
+    (more,) = written.decide(Leg(GLD, 5 if adding else -5, "600", adding))
     journal = written.journal
     # The add's verdict is the newest entry. A second journal holds the same entries, with that
-    # verdict's worst loss written by hand as zero, which `core.Verdict` refuses to build.
+    # verdict's worst loss written by hand as `figure`, which `core.Verdict` refuses to build.
     store = Memory()
     copy = Journal(store, ACCOUNT, WRITER)
     for entry in journal.read():
         body = json.loads(encode(entry))["body"]
         if body["kind"] == "verdict" and body["client_order_id"] == more.client_order_id:
-            body["verdict"]["worst_loss"] = "0"
+            body["verdict"]["worst_loss"] = figure
         copy._append(copy._build(body, entry.built_at))
     with pytest.raises(Halt, match=r"journal paper-1: entry \d+ is not of its kind verdict"):
         positions(copy)
@@ -425,5 +435,6 @@ def test_a_journal_held_after_every_position_closed_halts_the_read(kind: str) ->
         written.put(disputed(replace(made, qty=D(4)), written.reading))
     else:
         written.put(unmatched_fill(fill("x-1", "x-1", -10, "200"), written.reading))
-    with pytest.raises(Halt, match="is in dispute|keeps an unmatched fill"):
+    said = "is in dispute" if kind == "dispute" else "keeps an unmatched fill"
+    with pytest.raises(Halt, match=said):
         positions(written.journal)
