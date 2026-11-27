@@ -2147,7 +2147,7 @@ def test_7_a_refused_abandoned_after_an_outage_is_named_in_the_halt(monkeypatch)
     assert len(account.unstored()) == 1 and len(world.alarms.sent) == 1
 
 
-def test_7_a_kept_abandoned_the_journal_turns_in_doubt_is_a_plain_halt() -> None:
+def test_7_an_abandoned_the_journal_turns_in_doubt_is_a_plain_halt() -> None:
     """Another writer's `in_doubt` stands, so the fold refuses the `abandoned` and keeps nothing."""
     from ithildinruntime.journal import Journal
 
