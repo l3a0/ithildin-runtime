@@ -140,10 +140,11 @@ def test_1_the_1987_floors_are_the_index_falls_rounded_up(name: str) -> None:
 
 
 def _floor(closes: Sequence[str], multiple: int) -> str:
-    """The fall of a fund holding `multiple` times the index's daily return, rounded up at eight."""
+    """The size of the move of a fund holding `multiple` times the index's daily return, negative
+    for one that moves against it, over the closes' two sessions, rounded up at eight places."""
     first, second, third = (Fraction(c) for c in closes)
     held = (1 + multiple * (second / first - 1)) * (1 + multiple * (third / second - 1))
-    return f"{math.ceil((1 - held) * 10**8) / Fraction(10**8):.8f}"
+    return f"{math.ceil(abs(1 - held) * 10**8) / Fraction(10**8):.8f}"
 
 
 DOCS = Path(__file__).parents[1] / "docs"
@@ -172,30 +173,41 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     floors = {
         (INDEX[name], multiple): _floor(closes, multiple)
         for name, (closes, _, _) in FLOORS.items()
-        for multiple in (1, 2, 3)
+        for multiple in (1, 2, 3, -1, -2, -3)
     }
     spy, qqq = floors["S&P 500", 1], floors["Nasdaq-100", 1]
     assert (spy, qqq) == (FLOORS["the-s-and-p-500"][2], FLOORS["the-nasdaq-100"][2])
     rows = re.findall(
-        r"^\| (S&P 500|Nasdaq-100) \| (\d) \| ([^|]+) \| ([\d.]+) \|$", table, re.MULTILINE
+        r"^\| (S&P 500|Nasdaq-100) \| (−?\d) \| ([^|]+) \| ([\d.]+) \|$", table, re.MULTILINE
     )
-    assert {(index, int(multiple)): floor for index, multiple, _, floor in rows} == floors
+    rows = [(index, int(multiple.replace("−", "-")), *rest) for index, multiple, *rest in rows]
+    assert {(index, multiple): floor for index, multiple, _, floor in rows} == floors
     assert len(rows) == len(floors)
     # The owner finds a leg's row by its ticker, so each row names the funds the ruling named.
-    assert {(index, int(multiple)): funds.strip() for index, multiple, funds, _ in rows} == {
+    assert {(index, multiple): funds.strip() for index, multiple, funds, _ in rows} == {
         ("S&P 500", 1): "SPY, IVV, VOO",
         ("S&P 500", 2): "SSO",
         ("S&P 500", 3): "UPRO, SPXL",
         ("Nasdaq-100", 1): "QQQ, QQQM",
         ("Nasdaq-100", 2): "QLD",
         ("Nasdaq-100", 3): "TQQQ",
+        ("S&P 500", -1): "SH",
+        ("S&P 500", -2): "SDS",
+        ("S&P 500", -3): "SPXU, SPXS",
+        ("Nasdaq-100", -1): "PSQ",
+        ("Nasdaq-100", -2): "QID",
+        ("Nasdaq-100", -3): "SQQQ",
     }
     assert f"So a strategy with SPY and QQQ legs takes SPY's, {spy}." in steps
     # No code knows a leg's index or multiple, so the steps' stop is the only guard for a leg the
-    # floors do not cover, and design.md's proposal behind it is held with it.
-    stop = "Stop where a leg moves against its index, or holds less than one or more than three"
-    assert stop in steps
-    assert "moves against its index, or holds less than one or more than three times it" in why
+    # floors do not cover, and design.md's rule behind it is held with it.
+    beyond = "holds less than one or more than three times its index in either direction"
+    assert (
+        f"Stop where a leg {beyond}, or where two legs hold one index at different multiples"
+        in steps
+    )
+    assert f"where a leg {beyond}" in why
+    assert "where two legs hold one index at different multiples" in why
     assert "such as IVV or VOO for the S&P 500 and QQQM for the Nasdaq-100" in why
     assert "takes the move L gives over the same two sessions, 1 − (1 + L × r₁)(1 + L × r₂)" in why
     # Every figure with a decimal point the paragraph holds, and how many times, so a typo in one
@@ -206,6 +218,7 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
         {**dict.fromkeys((*spx[0], *ndx[0]), 1), "224.84": 2, spy: 2, qqq: 2}
         | {"20.47": 1, "24.57": 1, "15.08": 1, "21.46": 1, "14.52": 1, "17.09": 2}
         | {floors["S&P 500", 2]: 1, floors["Nasdaq-100", 3]: 1, "3.37": 1, "3.50": 1}
+        | {floors["S&P 500", -1]: 1, "22.5": 1}
     )
     for fund, floor in (("SPY", spy), ("QQQ", qqq)):
         leg = f"{fund} leg write a `stress_move` of at least {floor} and a `stress_low` of {floor}"
@@ -213,6 +226,7 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     assert "and a strategy with both legs writes the larger, SPY's" in why
     assert f"SSO, twice the S&P 500, takes {floors['S&P 500', 2]}" in why
     assert f"TQQQ, three times the Nasdaq-100, takes {floors['Nasdaq-100', 3]}" in why
+    assert f"SH, against the S&P 500 at one times, takes {floors['S&P 500', -1]}" in why
     # A number on any page that starts as a floor does to its sixth place is that floor whole, so
     # a floor mistyped past that place, or cut short, fails. A number of eight places or more from
     # 0.2 to 0.3 is a floor, so one mistyped in an early place fails too.
