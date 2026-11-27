@@ -42,6 +42,7 @@ from ithildinruntime.runtime.data_worker import DATA_ROW
 from ithildinruntime.runtime.loop import ReceiveLoop, Table
 from tests.support import lake as lakes
 from tests.support import made_lake as made
+from tests.support import splits as recorded
 from tests.support.queues import Folder, SystemTimer, running
 from tests.support.queues import storage as folder_storage
 from tests.support.spreads import strategy
@@ -52,6 +53,8 @@ DAYS = made.days(date(2012, 1, 3), date(2012, 5, 31))
 SEAM = date(2012, 4, 10)
 AT = DAYS.index(SEAM)
 LOOKBACK = 10
+# A record whose covered rows hold every session of both legs, so no sealed day is read.
+COVERED = recorded.all_covered(["GLD", "USO"])
 OLD, NEW = date(2012, 4, 10), date(2026, 11, 22)
 # A day after the made-up price-kind rows were added.
 LATER = date(2026, 11, 26)
@@ -97,6 +100,7 @@ def source(
         timer=Timer(),
         kinds=kinds,
         measured=False,
+        splits=COVERED,
     )
 
 
@@ -378,6 +382,7 @@ def test_3_the_tracked_strategy_halts_at_close_20_from_2026_09_08_to_2027_01_28(
         timer=Timer(),
         kinds=made.KINDS,
         measured=False,
+        splits=COVERED,
     )
     early = timedelta(minutes=20)
     crossed = {

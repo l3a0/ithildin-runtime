@@ -913,7 +913,7 @@ def test_6_a_partition_restated_and_the_bytes_of_a_backtest(day: Path, tmp_path:
         if n == 1:
             first = path.read_bytes()
         assert path.read_bytes() == first
-    assert decode_output(first, Snapshot).header.format == 4
+    assert decode_output(first, Snapshot).header.format == 5
     made, alarms = stage(day, tmp_path / "r")
     made(Item(AT, "data"), Reports())
     for t in BOTH:

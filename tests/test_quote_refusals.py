@@ -260,7 +260,9 @@ def test_what_it_prints(lake: Path, tmp_path: Path) -> None:
 
 
 def test_a_tracked_row_takes_the_place_of_the_stand_in(lake: Path, tmp_path: Path) -> None:
-    kind = QuoteKind("consolidated quote", "consolidated sale", "consolidated", "shares", "Halted")
+    kind = QuoteKind(
+        "consolidated quote", "consolidated sale", "consolidated", "shares", "Halted", "a close"
+    )
     kinds = QuoteKinds((QuoteKindRow(PLAIN, QUOTE_SOURCE, FLAGS, FLAGS, kind, "a test"),))
     m = qr.measure(
         FolderBucket(lake),
@@ -299,7 +301,9 @@ def test_a_damaged_partition_stops_the_run(lake: Path, tmp_path: Path, ticker: s
 
 
 def test_the_tracked_row_on_every_session_says_so(lake: Path, tmp_path: Path) -> None:
-    kind = QuoteKind("consolidated quote", "consolidated sale", "consolidated", "shares", "Normal")
+    kind = QuoteKind(
+        "consolidated quote", "consolidated sale", "consolidated", "shares", "Normal", "a close"
+    )
     kinds = QuoteKinds((QuoteKindRow(PLAIN, QUOTE_SOURCE, PLAIN, LAST, kind, "a test"),))
     code, out, err = run(lake, tmp_path, kinds=kinds)
     assert (code, err) == (0, "")

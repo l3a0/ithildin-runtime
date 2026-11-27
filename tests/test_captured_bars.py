@@ -45,10 +45,12 @@ from ithildinruntime.data.reference import (
     load_price_kinds,
 )
 from ithildinruntime.data.spikes import MOVE
+from ithildinruntime.data.splits import SplitRecord
 from ithildinruntime.runtime.loop import Item
 from tests.support import lake as lakes
 from tests.support import made_lake as made
 from tests.support import segments
+from tests.support import splits as recorded
 from tests.support.spreads import GLD, USO, bar, synthetic
 from tests.test_alpha import DEPLOYMENT, RELEASE, RUN, handler, run, store, table_of
 from tests.test_data_source import Clock, Timer
@@ -58,6 +60,7 @@ from tests.test_data_stage import Reports
 SETTINGS = replace(data_settings([TRACKED]), quotes=segments.LIMITS)
 KINDS = load_price_kinds()
 IMPORTED = made.ONE
+DAYS = made.DAYS
 BEFORE_CAPTURE = made.days(date(2026, 10, 26), date(2026, 10, 30))
 CAPTURED = made.days(date(2026, 11, 2), date(2027, 4, 1))
 # The first session whose decision at close−20 reads captured bars alone.
@@ -66,6 +69,8 @@ WINDOW = made.days(date(2026, 11, 2), date(2027, 1, 28))
 LAST_STATED = date(2027, 3, 31)
 AFTER_LAST = [date(2027, 4, 1), date(2027, 4, 2)]
 EARLY, MINUTE = timedelta(minutes=20), timedelta(minutes=1)
+# A record whose covered rows hold every session of both legs, so no sealed day is read.
+COVERED = recorded.all_covered(["GLD", "USO"])
 
 
 def _walks() -> dict[str, dict[date, Decimal]]:
@@ -111,12 +116,16 @@ def decide(
     mids: Mapping[str, Decimal] | None = None,
     walks: Mapping[str, Mapping[date, Decimal]] = WALKS,
     redeliver: bool = False,
+    splits: SplitRecord = COVERED,
+    stated: Mapping[str, Decimal | None] | None = None,
 ) -> Decided:
     """Run data's stage and then alpha's for the decision at close−20 of `day`.
 
     Each quote's midpoint is the leg's close in `walks` on `day`, unless `mids`
-    names another. With `redeliver`, data's stage is then handed the decision
-    again, which judges the stored snapshot.
+    names another. Each quote states the close of the session before as `walks`
+    holds it, unless `stated` names another or `None` for none. With `redeliver`,
+    data's stage is then handed the decision again, which judges the stored
+    snapshot. `splits` is the record of splits the read is handed.
     """
     session = made.TABLE.session(day)
     at = session.close - EARLY
@@ -124,7 +133,16 @@ def decide(
     for ticker, walk in walks.items():
         mid = (mids or {}).get(ticker, walk[day])
         bid, ask = float(mid - Decimal("0.01")), float(mid + Decimal("0.01"))
-        row = lakes.quote_row(ticker, at - MINUTE, bid=bid, ask=ask, last=bid)
+        before = made.TABLE.before(day).day
+        said = (stated or {}).get(ticker, walk.get(before))
+        row = lakes.quote_row(
+            ticker,
+            at - MINUTE,
+            bid=bid,
+            ask=ask,
+            last=bid,
+            close_price=None if said is None else float(said),
+        )
         lakes.quotes_segment(live, ticker, at - MINUTE, row)
     table, storage = table_of(TRACKED), store(tmp_path / "store")
     stage = DataStage(
@@ -137,8 +155,9 @@ def decide(
             measured=False,
             kinds=kinds,
             quote_kinds=QuoteKinds(
-                (QuoteKindRow(day, QUOTE_SOURCE, day, day, segments.KIND, "a test"),)
+                (QuoteKindRow(DAYS[0], QUOTE_SOURCE, DAYS[0], DAYS[-1], segments.KIND, "a test"),)
             ),
+            splits=splits,
         ),
         storage,
         Clock(),
@@ -228,7 +247,12 @@ def test_2_a_row_that_ends_a_session_early_halts_on_the_newest_bar_alone(
     assert [str(d) in reason for d in WINDOW] == [False] * 59 + [True]
 
 
-# 3. A split, under hard limit 3's second written exception
+# 3. A split inside a covered row's span, which the two vendor lists say holds none
+#
+# Inside a covered row the record checks only the decision's own quote, so a split both
+# lists missed there reads as a move, as docs/design.md's rule on splits says. Each quote
+# here states the stored close of the session before, as one that does not restate would.
+# tests/test_splits_read.py plants the same splits past a covered row, where they halt.
 
 # How many sessions before the decision's the split takes effect, and 0 is between the
 # newest bar and the quote.
@@ -256,7 +280,7 @@ def read_as_a_move(
 @pytest.mark.parametrize("ratio", RATIOS.values(), ids=RATIOS)
 @pytest.mark.parametrize("back", EFFECTIVE.values(), ids=EFFECTIVE)
 @pytest.mark.parametrize("ticker", ["GLD", "USO"])
-def test_3_a_split_in_the_window_is_flagged_and_the_decision_forecasts(
+def test_3_a_split_in_a_covered_span_is_flagged_and_the_decision_forecasts(
     lake: Path, tmp_path: Path, ticker: str, back: int, ratio: Decimal, unsplit: Forecast
 ) -> None:
     mine = lakes.copy_lake(lake, tmp_path / "split", ((WINDOW[0], WINDOW[-1]),))
@@ -266,7 +290,9 @@ def test_3_a_split_in_the_window_is_flagged_and_the_decision_forecasts(
     split = {d: (c / ratio).quantize(Decimal("0.01")) for d, c in WALKS[ticker].items()}
     for day in days[-1 - back : -1]:
         made._capture(mine, ticker, day, split[day], template)
-    found = decide(mine, tmp_path, DAY, mids={ticker: split[DAY]})
+    before = WINDOW[-1]
+    prior = split[before] if back else WALKS[ticker][before]
+    found = decide(mine, tmp_path, DAY, mids={ticker: split[DAY]}, stated={ticker: prior})
     assert found.data.halt is None and found.alpha.halt is None
     leg = InstrumentId(ticker)
     (flag,) = found.snapshot.flags[leg]
@@ -291,7 +317,8 @@ def test_3_a_split_too_small_to_flag_is_read_with_no_flag(
         price = (WALKS["USO"][day] / Decimal("1.1")).quantize(Decimal("0.01"))
         made._capture(mine, "USO", day, price, template)
     mids = {"USO": (WALKS["USO"][DAY] / Decimal("1.1")).quantize(Decimal("0.01"))}
-    found = decide(mine, tmp_path, DAY, mids=mids)
+    prior = (WALKS["USO"][WINDOW[-1]] / Decimal("1.1")).quantize(Decimal("0.01"))
+    found = decide(mine, tmp_path, DAY, mids=mids, stated={"USO": prior})
     assert found.data.halt is None and found.alpha.halt is None
     assert found.snapshot.flags == {}
     small = {d: (c / Decimal("1.1")).quantize(Decimal("0.01")) for d, c in WALKS["USO"].items()}

@@ -804,7 +804,7 @@ FROZEN = {
     FillBasis: "signal_close official_close quote",
     Limit: (
         "max_order_qty max_position max_gross max_open_orders max_net loss_stop moc_cutoff stop "
-        "close_entry in_doubt position"
+        "close_entry in_doubt position split"
     ),
     OrderType: "market market_on_close",
     RecordKind: "fee interest dividend deposit withdrawal other",

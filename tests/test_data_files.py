@@ -1,7 +1,8 @@
-"""The data module's three files that only grow, pinned row by row.
+"""The data module's four files that only grow, pinned row by row.
 
-Acceptance test 20 on #5. CI's checkout holds no history to compare with, so
-each row the security master and the two kind contracts held when it was
+Acceptance test 20 on #5, and acceptance 1 of #189 for the record of splits.
+CI's checkout holds no history to compare with, so each row the security
+master, the two kind contracts and the record of splits held when it was
 added is written here by hand. Editing or removing a row fails the test, and
 adding one means adding it here too.
 """
@@ -33,6 +34,7 @@ from ithildinruntime.data.reference import (
     load_price_kinds,
     load_quote_kinds,
 )
+from ithildinruntime.data.splits import SPLITS, load_splits
 
 MASTER_ROWS = [
     "2026-11-22,GLD,GLD,2004-11-18,",
@@ -157,10 +159,115 @@ _QUOTE_READ_FROM = (
     "gives each side a MIC code of its venue and each answer a quoteType of NBBO or NFL. "
     "marketlake's published quote columns carry neither so the venues are unstated"
 )
+# The row of 2026-11-26 gained the close_kind column, unstated, when #189 added it.
 QUOTE_ROWS = [
     "2026-11-26,marketlake:quotes,2026-09-15,2027-02-25,current best bid and ask,unstated,unstated,"
-    "shares traded through the day including pre-market and post-market hours,Normal,"
-    f"{_QUOTE_READ_FROM}"
+    "shares traded through the day including pre-market and post-market hours,Normal,unstated,"
+    f"{_QUOTE_READ_FROM}",
+    (
+        "2026-11-27,marketlake:quotes,2026-09-15,2027-02-25,current best bid and "
+        "ask,unstated,unstated,shares traded through the day including pre-market and post-market"
+        " hours,Normal,the previous session's close as Schwab states it on the day of the "
+        "quote,every field but close_kind as the row of 2026-11-26 states it and from what it was"
+        " read from. close_kind is from Schwab's Trader API Market Data Production specification "
+        "at https://developer.schwab.com/products/trader-api--individual/details/specifications/M"
+        "arket%20Data%20Production read on 2026-11-26 behind the owner's developer sign-in. Its "
+        "QuoteEquity schema calls closePrice the previous day's closing price as PR 219's notes "
+        "at https://github.com/l3a0/ithildin-runtime/pull/219 record. marketlake's journal maps "
+        "closePrice to close_price. In an exploratory count from the laptop's copy of the lake it"
+        " equalled the stored close of the session before on 42 of 44 ticker-days of SPY and QQQ "
+        "from 2026-09-14 to 2026-10-13 and was lower by the dividend on the other 2. That is the "
+        "figure exchanges publish so a day's net change reads correctly so on an ex-date it is "
+        "the close less the dividend. Whether Schwab restates it on a split's own session is "
+        "unmeasured"
+    ),
+]
+
+SPLIT_ROWS = [
+    (
+        "2026-11-27,split,USO,2020-04-29,,1,8,2020-04-22T13:30:00Z,USO's 8-K accession "
+        "0001171200-20-000271 accepted by EDGAR at 2020-04-22 07:00:37 New York time: its exhibit"
+        " 99.1 at "
+        "https://www.sec.gov/Archives/edgar/data/1327068/000117120020000271/i20263_ex99-1.htm "
+        "fetched 2026-11-27T04:25:21Z at sha256 "
+        "f120a201940f53769492893c6ab8baab35d99c99c7cd11065b9201c33167c5e2 says a one-for-eight "
+        "reverse split takes effect after the close of 2020-04-28 and shares trade at post-split "
+        "prices on 2020-04-29. Its index page fetched 2026-11-27T04:25:30Z is at sha256 "
+        "80f0dacfcfb3aaf08496ed717ea3a4e0898ee6aacf7b898ce16840cef32e2a5b. The 8-K accession "
+        "0001171200-20-000310 at "
+        "https://www.sec.gov/Archives/edgar/data/1327068/000117120020000310/i20281_uso-8k.htm "
+        "fetched 2026-11-27T04:25:30Z at sha256 "
+        "ed92f5717309dc282cb4759375063c5b46e193bbf48221bacd18d15a722a858a reports the split done."
+        " known_at is the open of 2020-04-22 since the filing was accepted before it. Both vendor"
+        " lists agree: Alpha Vantage's SPLITS function read through its connector at about "
+        "2026-11-27T04:27Z: GLD at sha256 "
+        "e2385bb7b104c384ed8f892724ba70e3297d3b8a3c2f1e4b5571de73e0a7c6e3 and SPY at sha256 "
+        "e1779bbaf798a1718970fbe3a88b5da27d10b2548bddf00ce089f13121c4afe1 list no split. USO at "
+        "sha256 fb893bfd2323a979f2f54e9452e2331f96247c8311d9055cdd409b3adecd5b15 lists 2020-04-29"
+        " at a factor of 0.1250 alone and QQQ at sha256 "
+        "c64147e09228910757fb33cd3a495a079e5b8954d9f76e25272a684ccc3e642f lists 2000-03-20 at "
+        "2.0000 alone. Massive's GET /stocks/v1/splits for GLD USO SPY and QQQ read through its "
+        "connector at 2026-11-27T04:26Z at sha256 "
+        "aea349d40de211b9fe5f18c09b6227df8639692fe839924f25d246cc99ab33cc lists USO's reverse "
+        "split of 2020-04-29 from 8 to 1 alone. Each answer is saved as the connector returned it"
+        " under ~/.config/ithildin-runtime/splits/2026-11-27/"
+    ),
+    (
+        "2026-11-27,covered,SPY,2026-09-08,2026-11-19,,,,Alpha Vantage's SPLITS function read "
+        "through its connector at about 2026-11-27T04:27Z: GLD at sha256 "
+        "e2385bb7b104c384ed8f892724ba70e3297d3b8a3c2f1e4b5571de73e0a7c6e3 and SPY at sha256 "
+        "e1779bbaf798a1718970fbe3a88b5da27d10b2548bddf00ce089f13121c4afe1 list no split. USO at "
+        "sha256 fb893bfd2323a979f2f54e9452e2331f96247c8311d9055cdd409b3adecd5b15 lists 2020-04-29"
+        " at a factor of 0.1250 alone and QQQ at sha256 "
+        "c64147e09228910757fb33cd3a495a079e5b8954d9f76e25272a684ccc3e642f lists 2000-03-20 at "
+        "2.0000 alone. Massive's GET /stocks/v1/splits for GLD USO SPY and QQQ read through its "
+        "connector at 2026-11-27T04:26Z at sha256 "
+        "aea349d40de211b9fe5f18c09b6227df8639692fe839924f25d246cc99ab33cc lists USO's reverse "
+        "split of 2020-04-29 from 8 to 1 alone. Each answer is saved as the connector returned it"
+        " under ~/.config/ithildin-runtime/splits/2026-11-27/"
+    ),
+    (
+        "2026-11-27,covered,QQQ,2026-09-08,2026-11-19,,,,Alpha Vantage's SPLITS function read "
+        "through its connector at about 2026-11-27T04:27Z: GLD at sha256 "
+        "e2385bb7b104c384ed8f892724ba70e3297d3b8a3c2f1e4b5571de73e0a7c6e3 and SPY at sha256 "
+        "e1779bbaf798a1718970fbe3a88b5da27d10b2548bddf00ce089f13121c4afe1 list no split. USO at "
+        "sha256 fb893bfd2323a979f2f54e9452e2331f96247c8311d9055cdd409b3adecd5b15 lists 2020-04-29"
+        " at a factor of 0.1250 alone and QQQ at sha256 "
+        "c64147e09228910757fb33cd3a495a079e5b8954d9f76e25272a684ccc3e642f lists 2000-03-20 at "
+        "2.0000 alone. Massive's GET /stocks/v1/splits for GLD USO SPY and QQQ read through its "
+        "connector at 2026-11-27T04:26Z at sha256 "
+        "aea349d40de211b9fe5f18c09b6227df8639692fe839924f25d246cc99ab33cc lists USO's reverse "
+        "split of 2020-04-29 from 8 to 1 alone. Each answer is saved as the connector returned it"
+        " under ~/.config/ithildin-runtime/splits/2026-11-27/"
+    ),
+    (
+        "2026-11-27,covered,GLD,2026-10-30,2026-11-19,,,,Alpha Vantage's SPLITS function read "
+        "through its connector at about 2026-11-27T04:27Z: GLD at sha256 "
+        "e2385bb7b104c384ed8f892724ba70e3297d3b8a3c2f1e4b5571de73e0a7c6e3 and SPY at sha256 "
+        "e1779bbaf798a1718970fbe3a88b5da27d10b2548bddf00ce089f13121c4afe1 list no split. USO at "
+        "sha256 fb893bfd2323a979f2f54e9452e2331f96247c8311d9055cdd409b3adecd5b15 lists 2020-04-29"
+        " at a factor of 0.1250 alone and QQQ at sha256 "
+        "c64147e09228910757fb33cd3a495a079e5b8954d9f76e25272a684ccc3e642f lists 2000-03-20 at "
+        "2.0000 alone. Massive's GET /stocks/v1/splits for GLD USO SPY and QQQ read through its "
+        "connector at 2026-11-27T04:26Z at sha256 "
+        "aea349d40de211b9fe5f18c09b6227df8639692fe839924f25d246cc99ab33cc lists USO's reverse "
+        "split of 2020-04-29 from 8 to 1 alone. Each answer is saved as the connector returned it"
+        " under ~/.config/ithildin-runtime/splits/2026-11-27/"
+    ),
+    (
+        "2026-11-27,covered,USO,2026-10-30,2026-11-19,,,,Alpha Vantage's SPLITS function read "
+        "through its connector at about 2026-11-27T04:27Z: GLD at sha256 "
+        "e2385bb7b104c384ed8f892724ba70e3297d3b8a3c2f1e4b5571de73e0a7c6e3 and SPY at sha256 "
+        "e1779bbaf798a1718970fbe3a88b5da27d10b2548bddf00ce089f13121c4afe1 list no split. USO at "
+        "sha256 fb893bfd2323a979f2f54e9452e2331f96247c8311d9055cdd409b3adecd5b15 lists 2020-04-29"
+        " at a factor of 0.1250 alone and QQQ at sha256 "
+        "c64147e09228910757fb33cd3a495a079e5b8954d9f76e25272a684ccc3e642f lists 2000-03-20 at "
+        "2.0000 alone. Massive's GET /stocks/v1/splits for GLD USO SPY and QQQ read through its "
+        "connector at 2026-11-27T04:26Z at sha256 "
+        "aea349d40de211b9fe5f18c09b6227df8639692fe839924f25d246cc99ab33cc lists USO's reverse "
+        "split of 2020-04-29 from 8 to 1 alone. Each answer is saved as the connector returned it"
+        " under ~/.config/ithildin-runtime/splits/2026-11-27/"
+    ),
 ]
 
 
@@ -173,7 +280,13 @@ def _data_rows(path: Path) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("path", "pinned"), [(MASTER, MASTER_ROWS), (PRICE_KINDS, KIND_ROWS), (QUOTE_KINDS, QUOTE_ROWS)]
+    ("path", "pinned"),
+    [
+        (MASTER, MASTER_ROWS),
+        (PRICE_KINDS, KIND_ROWS),
+        (QUOTE_KINDS, QUOTE_ROWS),
+        (SPLITS, SPLIT_ROWS),
+    ],
 )
 def test_every_row_held_when_it_was_added_is_still_there_unchanged(
     path: Path, pinned: list[str]
@@ -187,6 +300,7 @@ def test_every_file_loads() -> None:
     assert len(load_master().rows) == len(MASTER_ROWS)
     assert len(load_price_kinds().rows) == len(KIND_ROWS)
     assert len(load_quote_kinds().rows) == len(QUOTE_ROWS)
+    assert len(load_splits(master=load_master(), sessions=load_sessions()).rows) == len(SPLIT_ROWS)
 
 
 CHAN = "quantitative-trading:data/inputdata_etf/{}.csv"
@@ -261,7 +375,11 @@ def test_the_schwab_import_row_reads_the_kind_it_should_on_each_side_of_its_edge
 
 
 def test_the_quote_row_reads_the_kind_it_should_on_each_side_of_its_edges() -> None:
-    """The row the owner's ruling of 2026-11-26 on #133 states, until #220 renews it."""
+    """The rows the owner's ruling of 2026-11-26 on #133 and #189 state, until #220 renews them.
+
+    The row of 2026-11-27 states what the row of 2026-11-26 does and the close's
+    kind too, over the same sessions, so it supersedes it on all of them.
+    """
     kinds = load_quote_kinds()
     # Typed again, so a typo shared by the row and its pin is still caught.
     stated = QuoteKind(
@@ -270,8 +388,9 @@ def test_the_quote_row_reads_the_kind_it_should_on_each_side_of_its_edges() -> N
         "unstated",
         "shares traded through the day including pre-market and post-market hours",
         "Normal",
+        "the previous session's close as Schwab states it on the day of the quote",
     )
-    silent = QuoteKind(*["unstated"] * 5)
+    silent = QuoteKind(*["unstated"] * 6)
     assert [
         kinds.kind(day)
         for day in (date(2026, 9, 14), date(2026, 9, 15), date(2027, 2, 25), date(2027, 2, 26))
@@ -411,11 +530,11 @@ def test_an_empty_kind_field_is_refused_where_unstated_says_the_source_is_silent
 
 QUOTE_HEAD = (
     "added,source,first_session,last_session,price_kind,last_kind,venues,volume_counted,"
-    "normal_status,read_from"
+    "normal_status,close_kind,read_from"
 )
-STATED = "two sides,a sale,all,shares,Normal,x"
-SILENT = QuoteKind(*["unstated"] * 5)
-SAID = QuoteKind("two sides", "a sale", "all", "shares", "Normal")
+STATED = "two sides,a sale,all,shares,Normal,a close,x"
+SILENT = QuoteKind(*["unstated"] * 6)
+SAID = QuoteKind("two sides", "a sale", "all", "shares", "Normal", "a close")
 
 
 def quote_kinds(tmp_path: Path, *rows: str, head: str = QUOTE_HEAD):
@@ -467,10 +586,14 @@ def test_a_later_quote_row_supersedes_an_earlier_one_where_both_cover(tmp_path: 
     made = quote_kinds(
         tmp_path,
         quote_row(),
-        quote_row(added="2026-11-26", first="2026-06-01", stated="other,a sale,all,shares,OK,x"),
+        quote_row(
+            added="2026-11-26", first="2026-06-01", stated="other,a sale,all,shares,OK,a close,x"
+        ),
     )
     assert made.kind(date(2026, 5, 31)) == SAID
-    assert made.kind(date(2026, 6, 1)) == QuoteKind("other", "a sale", "all", "shares", "OK")
+    assert made.kind(date(2026, 6, 1)) == QuoteKind(
+        "other", "a sale", "all", "shares", "OK", "a close"
+    )
 
 
 @pytest.mark.parametrize(
@@ -484,7 +607,7 @@ def test_a_later_quote_row_supersedes_an_earlier_one_where_both_cover(tmp_path: 
             (quote_row(stated=",".join(cut)), "row 1 leaves a field empty")
             for cut in (
                 ["" if n == gone else f for n, f in enumerate(STATED.split(","))]
-                for gone in range(5)
+                for gone in range(6)
             )
         ),
     ],
@@ -495,10 +618,10 @@ def test_a_quote_row_that_is_not_whole_is_refused(tmp_path: Path, row: str, said
 
 
 def test_an_unstated_field_of_each_kind_reads_as_itself(tmp_path: Path) -> None:
-    for n in range(5):
+    for n in range(6):
         stated = ["unstated" if n == m else f for m, f in enumerate(STATED.split(","))]
         made = quote_kinds(tmp_path, quote_row(stated=",".join(stated))).kind(date(2026, 6, 1))
-        assert made == QuoteKind(*stated[:5])
+        assert made == QuoteKind(*stated[:6])
 
 
 @pytest.mark.parametrize("head", [HEAD, QUOTE_HEAD.replace("last_kind,", ""), QUOTE_HEAD + ",y"])

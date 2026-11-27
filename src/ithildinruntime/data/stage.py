@@ -22,7 +22,8 @@ things, in order.
    its read time, is stored under its own attempt number, which alarms. The
    alarm's reason names what differs: the header's format, release or
    strategies' configuration hashes, and any bar, status, flag, ledger,
-   quote, segment, partition, row, fault or provisional mark, and whether the
+   quote, segment, partition, row, fault, provisional mark or read of the
+   record of splits, and whether the
    clock was past a bound, or says that a capture holds other than one
    snapshot, that the first capture is no snapshot the codec reads, or that only
    the read time or the clock's reading differs, as on a redelivery after a crash.
@@ -84,13 +85,28 @@ from ithildinruntime.core import (
 
 from .source import LakeSource, judge
 
-__all__ = ["SNAPSHOT", "STAGE", "DataStage", "differences"]
+__all__ = ["COMPARED", "SNAPSHOT", "STAGE", "DataStage", "differences"]
 
 STAGE = DATA_STAGE
 SNAPSHOT = SNAPSHOT_OUTPUT
 # The format of data's snapshot file and result header.
-_FORMAT = 4
+_FORMAT = 5
 _READ_TIME = datetime(2000, 1, 1, tzinfo=UTC)
+# The fields of a snapshot `differences` compares by value, besides its bars, which it
+# compares without their read time. The rest are the decision time, which a key names, the
+# quotes' read time and the clock, which `differences` reads as a redelivery's.
+COMPARED = (
+    "status",
+    "flags",
+    "ledgers",
+    "quotes",
+    "segments",
+    "partitions",
+    "rows",
+    "faults",
+    "provisional",
+    "splits",
+)
 
 
 class _Item(Protocol):
@@ -251,17 +267,7 @@ def differences(first: bytes, later: bytes, *, measured: bool) -> str:
     snapshot = []
     if _without_read_time(a.bars) != _without_read_time(b.bars):
         snapshot.append("bars")
-    for name in (
-        "status",
-        "flags",
-        "ledgers",
-        "quotes",
-        "segments",
-        "partitions",
-        "rows",
-        "faults",
-        "provisional",
-    ):
+    for name in COMPARED:
         if getattr(a, name) != getattr(b, name):
             snapshot.append(name)
     past = [bool(clock_faults(s.clock, measured=measured)) for s in (a, b)]

@@ -17,10 +17,11 @@ compare with.
    says. A source with no row, or a session outside its row's span, reads
    `unstated` throughout.
 3. **The quote-kind contract** states, for `QUOTE_SOURCE`, the kind of the bid
-   and the ask, the kind of the last sale, the venues, how volume is counted
-   and the security status the vendor writes for an instrument that trades
-   normally. Its rows follow the price-kind contract's rules, and its fields are
-   copied into each quote.
+   and the ask, the kind of the last sale, the venues, how volume is counted,
+   the security status the vendor writes for an instrument that trades
+   normally, and what the quote's `close_price` is. Its rows follow the
+   price-kind contract's rules. Each field but the last is copied into each
+   quote, and the last into what covers each pair the record of splits checks.
 
 In each file each row carries the date it was `added`. A row that corrects
 an earlier one is a new row with a later `added` date over the sessions it
@@ -151,9 +152,12 @@ class QuoteKind:
     venues: str
     volume_counted: str
     normal_status: str
+    # What the quote's `close_price` is, which data/splits.py compares with a stored
+    # close and never prices anything with.
+    close_kind: str
 
 
-QUOTE_NOT_STATED = QuoteKind(UNSTATED, UNSTATED, UNSTATED, UNSTATED, UNSTATED)
+QUOTE_NOT_STATED = QuoteKind(UNSTATED, UNSTATED, UNSTATED, UNSTATED, UNSTATED, UNSTATED)
 
 
 @dataclass(frozen=True)

@@ -712,3 +712,53 @@ def test_sealed_captured_by_on_its_answer_is_the_doors_cut(
     sealed = captured_by(load_quotes("GLD", SESSION_DAY, "15:39", lake_root=lake), cut)
     assert sealed.column("bid").to_pylist() == door.column("bid").to_pylist()
     assert door.num_rows == (step >= 0)
+
+
+# The quote's `close_price`, which #189's record of splits compares with a stored close.
+# marketlake's journal maps Schwab's `closePrice` to it, and its README's table of published
+# columns does not list it, so these pin what the pinned commit returns.
+
+
+def test_sealed_load_quotes_answers_close_price_at_the_equity_close(lake: Path) -> None:
+    from lake.loader import load_quotes
+
+    from tests.support.sealed import close_row
+    from tests.support.segments import AT, MINUTE, SESSION
+    from tests.support.segments import DAY as SESSION_DAY
+
+    _sealed(
+        lake,
+        lakes.quote_row("GLD", AT - MINUTE, close_price=99.5),
+        {**close_row("GLD", SESSION.close), "close_price": 99.5},
+    )
+    close = load_quotes("GLD", SESSION_DAY, lake_root=lake)
+    assert close.schema.field("close_price").type == pa.float64()
+    assert close.column("close_price").to_pylist() == [99.5]
+
+
+def test_unsealed_the_door_returns_close_price_as_a_double(tmp_path: Path) -> None:
+    row = lakes.quote_row("GLD", MINUTES[0], close_price=99.5)
+    routed, digest = lakes.quotes_segment(tmp_path, "GLD", MINUTES[0], row)
+    table = _read(tmp_path, {routed: digest})
+    assert table.schema.field("close_price").type == pa.float64()
+    assert table.column("close_price").to_pylist() == [99.5]
+
+
+def test_every_read_of_bars_passes_adjust_none(
+    built_lake: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """The adjusted views refuse an imported row and rest on marketlake's ledger of actions."""
+    from ithildinruntime.data import source
+
+    seen: list[object] = []
+    real = source.load_bars
+
+    def spy(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        seen.append(kwargs.get("adjust"))
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(source, "load_bars", spy)
+    from tests.test_data_source import LAST, close, make
+
+    make(built_lake, tmp_path).read(close(LAST))
+    assert seen and set(seen) == {"none"}

@@ -15,7 +15,16 @@ and each `--seam` a session a new series starts on. How it reads, in order.
    holds two series. Data halts on a seam nobody named, and this refuses the
    one change data passes, from Schwab's import to captured bars, until it is
    named too.
-3. **The moves**, over the spans joined, so a seam one leg does not change at
+3. **The record of splits.** Every pair of consecutive sessions of a `raw`
+   series, and the pair across the change from Schwab's import to it, must sit
+   inside a covered row of data/splits.csv. A quote that states the close of
+   the session before covers a decision's pair, and never a stress record's,
+   because the record is what says no split fell there. A split row from a
+   session the read reaches, on bars not already adjusted for it, halts the
+   read as it halts a decision, until #190 builds the read that applies one.
+   The record names the file's SHA-256 and every split row its instruments
+   hold.
+4. **The moves**, over the spans joined, so a seam one leg does not change at
    leaves nothing out on it.
 
 On any refusal it writes one line to stderr, nothing to stdout, and exits
@@ -52,6 +61,7 @@ from ithildinruntime.core import (
     FlaggedBar,
     Halt,
     InstrumentId,
+    KnownSplit,
     LargestMove,
     LeftOut,
     LegSeries,
@@ -76,7 +86,8 @@ from ithildinruntime.data import (
     load_price_kinds,
 )
 from ithildinruntime.data.mirror import MANIFEST
-from ithildinruntime.data.reference import PriceKinds
+from ithildinruntime.data.reference import PriceKinds, load_master
+from ithildinruntime.data.splits import SplitRecord, load_splits, pairs
 
 __all__ = ["main", "measure"]
 
@@ -105,9 +116,14 @@ def measure(
     *,
     clock: Clock,
     timer: Timer,
+    splits: SplitRecord | None = None,
 ) -> str:
-    """The record of `strategy`'s stress move through `through`, as TOML, or a `Halt`."""
+    """The record of `strategy`'s stress move through `through`, as TOML, or a `Halt`.
+
+    `splits` is the record of splits it reads, the tracked file's where none is given.
+    """
     settings = data_settings([strategy])
+    record_of_splits = splits or load_splits(master=load_master(), sessions=load_sessions())
     starts = {leg: settings.first_sessions[leg] for leg in sorted(strategy.instruments)}
     spans = _spans(starts, through, seams)
     held = Mirror(bucket, mirror)
@@ -128,6 +144,7 @@ def measure(
             kinds,
             clock,
             timer,
+            record_of_splits,
         )
         manifests.add(reading.snapshot.ledgers[MANIFEST])
         if len(manifests) > 1:
@@ -151,6 +168,7 @@ def measure(
     for seam in seams:
         if not any(_changes(own, seam) for own in bars.values()):
             raise Halt(f"no leg changes series at the seam {seam.isoformat()}")
+    known = _splits_held(bars, record_of_splits, clock.now())
     two, one = largest_move(bars, 2), largest_move(bars, 1)
     (manifest,) = manifests
     record = StressRecord(
@@ -170,9 +188,37 @@ def measure(
         flagged=tuple(sorted(flagged, key=lambda f: (f.session, f.instrument, f.rule, f.field))),
         manifest=manifest,
         measured_on=clock.now().date(),
+        splits=record_of_splits.sha256,
+        split_rows=known,
     )
     counted = {m[1:] for own in bars.values() for m in moves(own, 2).kept}
     return _beside(record, records, counted) + _toml(record)
+
+
+def _splits_held(
+    bars: Mapping[InstrumentId, Sequence[Bar]], record: SplitRecord, now: datetime
+) -> tuple[KnownSplit, ...]:
+    """Every split row the legs hold, once no pair of raw bars refuses the read.
+
+    A split row on bars not already adjusted for it halts the read itself, as
+    it halts a decision, so the command refuses it before it gets here.
+    """
+    table = load_sessions()
+    for leg, held in bars.items():
+        for pair in pairs({leg: {DAILY: tuple(held)}}, (), None, table):
+            if record.covering(leg, pair.earlier, pair.later) is None:
+                raise Halt(
+                    f"{leg}'s sessions {pair.earlier.isoformat()} and {pair.later.isoformat()} "
+                    "read a raw series that no covered row of data/splits.csv holds, and a "
+                    "stress record over captured bars rests on the record alone. A covered row "
+                    f"reaching {pair.later.isoformat()} releases it"
+                )
+    known = []
+    for leg in bars:
+        for row in record.known(leg, now):
+            assert row.new_shares is not None and row.old_shares is not None
+            known.append(KnownSplit(leg, row.first_session, row.new_shares, row.old_shares))
+    return tuple(known)
 
 
 def _spans(
@@ -219,6 +265,7 @@ def _read(
     kinds: PriceKinds,
     clock: Clock,
     timer: Timer,
+    splits: SplitRecord,
 ) -> Reading:
     """One read just before the session after `last` opens, or a halt on any reason it holds.
 
@@ -231,7 +278,14 @@ def _read(
     # It reads no quote, so the bucket of segments is never asked for one.
     # It trades nothing, so its clock is read for the time alone and measured by nothing.
     source = LakeSource(
-        mirror, settings, live=bucket, clock=clock, timer=timer, measured=False, kinds=kinds
+        mirror,
+        settings,
+        live=bucket,
+        clock=clock,
+        timer=timer,
+        measured=False,
+        kinds=kinds,
+        splits=splits,
     )
     reading = source.read(table.session(min(after)).open - timedelta(microseconds=1))
     if reading.halts:
@@ -323,6 +377,9 @@ def _toml(record: StressRecord) -> str:
     ):
         lines += _rows(name, rows)
     lines += [f"{name} = {_value(getattr(record, name))}" for name in ("manifest", "measured_on")]
+    if record.splits is not None:
+        lines.append(f"splits = {_value(record.splits)}")
+        lines += _rows("split_rows", [vars(row) for row in record.split_rows])
     return "\n".join(lines) + "\n"
 
 
@@ -382,6 +439,7 @@ def main(
     clock: Clock | None = None,
     out: TextIO | None = None,
     err: TextIO | None = None,
+    splits: SplitRecord | None = None,
 ) -> int:
     timer = _SystemTimer()
     hidden = {_CHECKOUT: "<checkout>"}
@@ -403,6 +461,7 @@ def main(
                 load_records(records),
                 clock=clock or WallClock(timer, servers=None),
                 timer=timer,
+                splits=splits,
             )
         print(text, end="", file=out or sys.stdout)
     except Exception as error:

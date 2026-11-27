@@ -56,6 +56,7 @@ from ithildinruntime.data.reference import (
     load_master,
 )
 from tests.support import lake as lakes
+from tests.support.splits import NO_SPLITS
 
 GLD, USO = InstrumentId("GLD"), InstrumentId("USO")
 TABLE = load_sessions()
@@ -352,6 +353,7 @@ def _stored(bars, flags=None, status=None):  # type: ignore[no-untyped-def]
         (),
         None,
         core.ClockReading(READ_AT, None),
+        NO_SPLITS,
     )
 
 

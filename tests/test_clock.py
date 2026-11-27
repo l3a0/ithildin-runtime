@@ -42,6 +42,7 @@ from tests.support import lake as lakes
 from tests.support.clocks import START, answer, good, slow
 from tests.support.queues import Alarms, Folder, SystemTimer, running
 from tests.support.queues import storage as loop_storage
+from tests.support.splits import NO_SPLITS
 from tests.test_data_settings import chan
 from tests.test_data_source import LAST, Clock, before, close, make
 from tests.test_data_stage import DEPLOYMENT, RUN, Reports, key, stage
@@ -294,7 +295,7 @@ def test_8_a_fault_halts_the_decision_with_its_snapshot_stored(
     result = made(Item(close(LAST), "data"), Reports())
     (ref,) = result.outputs
     stored = decode_output((tmp_path / "store" / ref.key).read_bytes(), Snapshot)
-    assert stored.header.format == 4
+    assert stored.header.format == 5
     assert stored.entries[0].clock == reading
     assert result.halt is not None and result.halt.cause == ref
     # The clock's fault comes first.
@@ -426,7 +427,9 @@ def _capture(clock: ClockReading, status=()) -> bytes:
     header = BlobHeader(
         4, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", {"chan": "c" * 64}
     )
-    snap = Snapshot(close(LAST), {}, {}, dict(status), False, {}, (), (), {}, {}, (), None, clock)
+    snap = Snapshot(
+        close(LAST), {}, {}, dict(status), False, {}, (), (), {}, {}, (), None, clock, NO_SPLITS
+    )
     return encode_output(Snapshot, OutputFile(header, (snap,), False))
 
 

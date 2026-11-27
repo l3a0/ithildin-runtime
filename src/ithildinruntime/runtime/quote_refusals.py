@@ -231,7 +231,7 @@ def measure(
     tracked = load_quote_kinds() if kinds is None else kinds
     stand_in = None
     if normal_status is not None:
-        kind = QuoteKind(_STAND_IN, _STAND_IN, _STAND_IN, _STAND_IN, normal_status)
+        kind = QuoteKind(_STAND_IN, _STAND_IN, _STAND_IN, _STAND_IN, normal_status, _STAND_IN)
         stand_in = QuoteKinds(
             (QuoteKindRow(days[0], QUOTE_SOURCE, days[0], days[-1], kind, _STAND_IN),)
         )

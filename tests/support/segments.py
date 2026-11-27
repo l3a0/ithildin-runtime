@@ -32,7 +32,14 @@ SESSION = TABLE.session(DAY)
 AT = SESSION.close - timedelta(minutes=20)
 SECOND = timedelta(seconds=1)
 MINUTE = timedelta(minutes=1)
-KIND = QuoteKind("consolidated quote", "consolidated sale", "consolidated", "shares", "Normal")
+KIND = QuoteKind(
+    "consolidated quote",
+    "consolidated sale",
+    "consolidated",
+    "shares",
+    "Normal",
+    "the close of the session before",
+)
 KINDS = QuoteKinds((QuoteKindRow(DAY, QUOTE_SOURCE, DAY, DAY, KIND, "a test"),))
 LIMITS = {i: QuoteLimits(90, Decimal("0.02")) for i in (GLD, USO)}
 # Each ticker's own bid, so a quote read of the other's row answers otherwise.

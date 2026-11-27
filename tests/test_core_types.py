@@ -22,6 +22,7 @@ from ithildinruntime import core
 from ithildinruntime.core import Bar, BarStatus, Halt, InstrumentId, Snapshot
 from tests.core_samples import DATA_TYPES, PROTOCOLS, RECORDS, sample
 from tests.support.quotes import NONE_READ
+from tests.support.splits import NO_SPLITS
 
 AT = datetime(2026, 11, 2, 20, 40, tzinfo=UTC)
 USO = InstrumentId("USO")
@@ -161,6 +162,7 @@ def _snapshot(bars: dict, status: dict) -> Snapshot:
         ledgers={},
         **NONE_READ,
         clock=core.ClockReading(AT, None),
+        splits=NO_SPLITS,
     )
 
 
@@ -262,6 +264,7 @@ def test_a_quote_filed_under_another_instrument_is_refused() -> None:
             ledgers={},
             **NONE_READ,
             clock=core.ClockReading(AT, None),
+            splits=NO_SPLITS,
         )
 
 

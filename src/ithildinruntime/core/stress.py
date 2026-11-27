@@ -38,6 +38,7 @@ from .valuing import Series, series_of
 __all__ = [
     "STRESS_MOVES",
     "FlaggedBar",
+    "KnownSplit",
     "LargestMove",
     "LeftOut",
     "LegSeries",
@@ -107,6 +108,16 @@ class LegSeries:
 
 
 @dataclass(frozen=True)
+class KnownSplit:
+    """A split row of data/splits.csv known when a record was measured, by its key and ratio."""
+
+    instrument: InstrumentId
+    first_session: date
+    new_shares: int
+    old_shares: int
+
+
+@dataclass(frozen=True)
 class FlaggedBar:
     """A flag a read raised, and what the person who committed the record found it was."""
 
@@ -138,6 +149,10 @@ class StressRecord:
     manifest: str
     measured_on: date
     withdrawn: str | None = None
+    # The SHA-256 of data/splits.csv as the measure read it, and every split row of its
+    # instruments that file held. A record measured before the file existed holds neither.
+    splits: str | None = None
+    split_rows: tuple[KnownSplit, ...] = ()
 
     def counts_for(self, strategy: str, legs: Collection[InstrumentId]) -> bool:
         """Whether the record is of this strategy, is not withdrawn, and one of these legs set it.
@@ -322,7 +337,7 @@ def read_records(path: Path) -> StressRecords:
 
 
 def _record(where: str, value: object) -> StressRecord:
-    table = _Table(where, value, _RECORD, {"withdrawn"})
+    table = _Table(where, value, _RECORD, {"withdrawn", "splits", "split_rows"})
     fields = {name: table.read(name, form) for name, form in _PLAIN.items()}
     if fields["leg"] not in fields["instruments"]:
         # The hold counts a record by its leg, so a mistyped one would drop its move.
@@ -363,12 +378,30 @@ def _record(where: str, value: object) -> StressRecord:
         )
         for t in table.tables("flagged", {"instrument", "session", "field", "rule", "what"})
     )
+    split_rows = tuple(
+        KnownSplit(
+            t.read("instrument", _leg),
+            t.read("first_session", _day),
+            t.read("new_shares", _shares),
+            t.read("old_shares", _shares),
+        )
+        for t in (
+            table.tables("split_rows", {"instrument", "first_session", "new_shares", "old_shares"})
+            if "split_rows" in value
+            else []
+        )
+    )
+    splits = table.read("splits", _sha)
+    if split_rows and splits is None:
+        raise Halt(f"{where} names split rows and not the SHA-256 of the file it read them from")
     return StressRecord(
         **fields,
         series=series,
         left_out=left_out,
         flagged=flagged,
         withdrawn=table.read("withdrawn", _text),
+        splits=splits,
+        split_rows=split_rows,
     )
 
 
@@ -438,6 +471,10 @@ def _statistic(value: object) -> Decimal | None:
     return read if read > 0 else None
 
 
+def _shares(value: object) -> int | None:
+    return value if type(value) is int and value > 0 else None
+
+
 def _instruments(value: object) -> tuple[InstrumentId, ...] | None:
     if not isinstance(value, list) or not value or any(_leg(v) is None for v in value):
         return None
@@ -451,6 +488,7 @@ _FORMS = {
     _sha: "a SHA-256",
     _day: "a date",
     _sessions: "1 or 2",
+    _shares: "a whole number above zero",
     _statistic: f"a decimal above zero, written as a string at {_PLACES} places",
     _instruments: "a list of instruments in order of name",
 }

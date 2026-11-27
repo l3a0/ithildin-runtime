@@ -30,6 +30,7 @@ from ithildinruntime.core import (
     classify,
     exposure,
 )
+from tests.support import splits
 from tests.support.gate_oracle import Answer, answer
 from tests.support.gates import (
     CENT,
@@ -40,6 +41,8 @@ from tests.support.gates import (
     LOOSE,
     OTHER,
     SPY,
+    TABLE,
+    TODAY,
     USO,
     World,
     book,
@@ -53,6 +56,8 @@ from tests.support.gates import (
     valuation,
 )
 from tests.support.quotes import quote, read_at
+
+DAYS = sorted(TABLE.sessions)
 
 NAMES = (GLD, USO, SPY)
 SEEDS = 4_000
@@ -207,7 +212,31 @@ def _world(seed: int) -> World:
     # the net cap is half of it.
     worth = made.losing(draw.randint(-30, 30)).inputs.valuation.value
     made = made.given(valuation=_valued(draw, max(worth, Decimal(1)), instruments))
-    return made.at(records=_records(seed, made))
+    return _split(seed, made.at(records=_records(seed, made)))
+
+
+def _split(seed: int, made: World) -> World:
+    """A split row on the order's instrument in some worlds, before or after the session.
+
+    Drawn apart from the rest, so the other worlds are the ones the earlier seeds made.
+    """
+    draw = random.Random(f"splits of {seed}")
+    if draw.random() >= 0.6:
+        return made
+    i = made.intent.instrument
+    first = DAYS[DAYS.index(TODAY) + draw.choice((-1, 0, 1, 1, 3, 3))]
+    row = splits.split(str(i), first, draw.choice((2, 1)), draw.choice((1, 8)) or 1)
+    if row.new_shares == row.old_shares:
+        row = replace(row, new_shares=3)
+    snap = made.snapshot
+    if draw.random() < 0.2:
+        # A series its source adjusted after the split, which trades through it.
+        adjusted = {
+            k: {"1d": tuple(replace(b, source_as_of=first) for b in by["1d"])}
+            for k, by in snap.bars.items()
+        }
+        snap = replace(snap, bars=adjusted)
+    return made.at(snapshot=replace(snap, splits=replace(snap.splits, rows={i: (row,)})))
 
 
 def _records(seed: int, made: World) -> tuple[StressRecord, ...]:

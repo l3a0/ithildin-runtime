@@ -35,12 +35,23 @@ answer` lists every fault, and what ends the halt it causes.
 
 A reason names a minute by its UTC instant. Only the call to `load_quotes`
 takes New York's `HH:MM`.
+
+`stated_close` reads one more thing from a sealed day, for the record of
+splits rather than for a quote: every `close_price` its rows at the equity
+close state, which is the previous session's close as Schwab states it.
+`data.splits` compares it with a stored close, and nothing prices anything
+with it. It links the partition and maps every error the same way, but stores
+the fault in its answer, so the decision's snapshot holds it and a redelivery
+halts on it too. A day with no data row at the equity close, including one
+whose close capture failed and holds a gap row tagged `spot_close` there,
+states no close, and the pair it would have covered is not covered.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -55,7 +66,7 @@ from .cycles import CAPTURE_LAG, Fault, Leg, QuoteLimits, QuoteRead, Walk, Words
 from .mirror import LakeRoot, Mirror, vintage_id
 from .reference import QuoteKinds, SecurityMaster
 
-__all__ = ["is_listed", "partition_key", "read_sealed"]
+__all__ = ["StatedClose", "is_listed", "partition_key", "read_sealed", "stated_close"]
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +131,64 @@ def read_sealed(
         calls=reader.calls,
         cycle_age=None if cycle is None else at - cycle,
     )
+
+
+@dataclass(frozen=True)
+class StatedClose:
+    """What one sealed day states of the session before's close.
+
+    `values` holds each distinct `close_price` of its data rows at the equity
+    close, as received and sorted, and is empty where it holds no such row.
+    `fault` is why the day could not be read, and then `values` is empty.
+    """
+
+    key: str
+    sha256: str | None
+    values: tuple[str, ...]
+    fault: str | None
+
+
+def stated_close(mirror: Mirror, root: LakeRoot, ticker: str, day: date) -> StatedClose | None:
+    """Every `close_price` the sealed day of `ticker` on `day` states at its equity close.
+
+    `None` is a day whose partition the manifest does not list. The caller
+    resolves the ticker through the security master.
+    """
+    key = partition_key(ticker, day)
+    if key not in root.entries:
+        return None
+    where = f"{key}, which the record of splits reads for the close of the session before,"
+    try:
+        mirror.partitions(root, [key])
+    except Halt as halt:
+        return StatedClose(key, None, (), f"{where} could not be linked: {halt.reason}")
+    except MemoryError:
+        raise
+    except Exception as error:
+        log.error("data's link of %s failed", key, exc_info=error)
+        return StatedClose(key, None, (), f"{where} could not be linked: {type(error).__name__}")
+    sha = root.files[key].sha256
+    try:
+        table = load_quotes(ticker, day, None, lake_root=root.path)
+        held = table.column("close_price").to_pylist()
+    except SnapAbsent as error:
+        if error.unreadable:
+            return StatedClose(
+                key, sha, (), f"{where} has {len(error.unreadable)} snap_ts values it cannot read"
+            )
+        return StatedClose(key, sha, (), None)
+    except NoSpotClose:
+        # No data row at the equity close, which a failed capture's gap row records too.
+        return StatedClose(key, sha, (), None)
+    except PartitionQuarantined:
+        return StatedClose(key, sha, (), f"{where} is quarantined in marketlake")
+    except MemoryError:
+        raise
+    except Exception as error:
+        log.error("data's read of %s at the equity close failed", key, exc_info=error)
+        return StatedClose(key, sha, (), f"{where} could not be read: {type(error).__name__}")
+    values = sorted({repr(v) if isinstance(v, float) else str(v) for v in held if v is not None})
+    return StatedClose(key, sha, tuple(values), None)
 
 
 def minutes(session: Session, cut: datetime) -> tuple[str, ...]:

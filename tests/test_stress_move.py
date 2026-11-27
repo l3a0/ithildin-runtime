@@ -32,14 +32,18 @@ from ithildinruntime.data import DataSettings, LakeSource, Mirror, spike_flags
 from ithildinruntime.data.mirror import MANIFEST
 from ithildinruntime.data.reference import SCHWAB_IMPORT, PriceKinds
 from ithildinruntime.data.spikes import MOVE
+from ithildinruntime.data.splits import SplitRecord
 from ithildinruntime.runtime import stress_move
 from tests.support import lake as lakes
 from tests.support import made_lake as made
+from tests.support import splits as recorded
 from tests.test_data_source import GLD, USO, Clock, Counting, Timer, close
 
 FIRST, SEAM, THROUGH = date(2012, 2, 1), date(2012, 4, 10), date(2012, 5, 15)
 DAYS = made.days(FIRST, THROUGH)
 OLD, NEW = date(2012, 4, 10), date(2026, 11, 22)
+# A record of splits whose covered rows hold every session of both legs.
+COVERED = recorded.all_covered(["GLD", "USO"])
 PLANTED = date(2012, 3, 14)
 
 
@@ -107,6 +111,7 @@ class Ran:
         records: str = "",
         kinds: PriceKinds = made.KINDS,
         strategy: str = "chan",
+        splits: SplitRecord = COVERED,
     ) -> None:
         self.folder = tmp_path / "the-strategies"
         self.folder.mkdir(exist_ok=True)
@@ -122,6 +127,7 @@ class Ran:
             clock=Clock(),
             out=out,
             err=err,
+            splits=splits,
         )
         self.out, self.err = out.getvalue(), err.getvalue()
 
@@ -198,6 +204,8 @@ left_out = [
 flagged = []
 manifest = "{manifest}"
 measured_on = 2026-11-22
+splits = "{recorded.SHA}"
+split_rows = []
 """
     )
 
@@ -487,6 +495,7 @@ def measured(bucket: Bucket, tmp_path: Path) -> str:
         (),
         clock=Clock(),
         timer=Timer(),
+        splits=COVERED,
     )
 
 
@@ -767,6 +776,98 @@ def test_3_a_split_in_captured_bars_is_listed_and_a_read_across_the_seam_is_blin
         timer=Timer(),
         measured=False,
         kinds=made.KINDS,
+        splits=COVERED,
     ).read(close(days[-1]))
     flagged = spike_flags(whole.snapshot.bars[USO]["1d"], Decimal(10))
     assert split not in [f.session for f in flagged] and seam in [f.session for f in flagged]
+
+
+# 13 of #189. The record of splits a stress record over captured bars rests on.
+
+
+def _captured_lake(tmp_path: Path) -> tuple[Path, list[date], date]:
+    """Schwab's import to 2026-10-30, then captured bars of GLD and USO to 2026-11-30."""
+    seam = date(2026, 11, 2)
+    days = made.days(date(2026, 9, 4), date(2026, 11, 30))
+    walks = {"GLD": made.walk(days, 1, 300.0), "USO": made.walk(days, 2, 70.0)}
+    series = [
+        made.Made(t, SCHWAB_IMPORT, seam, {d: c for d, c in w.items() if d < seam})
+        for t, w in walks.items()
+    ]
+    captured = {t: {d: c for d, c in w.items() if d >= seam} for t, w in walks.items()}
+    return made.build(tmp_path / "the-lake", series, captured), days, seam
+
+
+def test_13_a_pair_of_captured_bars_past_the_last_covered_row_is_refused(tmp_path: Path) -> None:
+    """Even where a sealed day's quote covers it, as it would for a decision."""
+    from tests.support.sealed import close_row, partition
+
+    root, days, seam = _captured_lake(tmp_path)
+    table = made.TABLE
+    for ticker in ("GLD", "USO"):
+        stored = {
+            d: float(made.pq.read_table(root / lakes.partition_key(ticker, d))["close"][0].as_py())
+            for d in days
+            if d >= seam
+        }
+        for day in [d for d in days if d > date(2026, 11, 19)]:
+            prior = stored[table.before(day).day]
+            row = {**close_row(ticker, table.session(day).close), "close_price": prior}
+            partition(root, ticker, row, day=day)
+
+    short = recorded.record(
+        recorded.covered("GLD", days[0], date(2026, 11, 19), line=1),
+        recorded.covered("USO", days[0], date(2026, 11, 19), line=2),
+    )
+    ran = Ran(
+        tmp_path,
+        root,
+        "--through",
+        str(days[-1]),
+        "--seam",
+        str(seam),
+        first=days[0],
+        kinds=made.kinds(SCHWAB_IMPORT),
+        splits=short,
+    )
+    refused(ran, "2026-11-19 and 2026-11-20", tmp_path)
+    assert "no covered row" in ran.err
+
+
+def test_13_a_split_row_inside_the_span_on_raw_bars_is_refused(tmp_path: Path) -> None:
+    root, days, seam = _captured_lake(tmp_path)
+    inside = recorded.record(*COVERED.rows, recorded.split("USO", date(2026, 11, 16), 2, 1, line=9))
+    ran = Ran(
+        tmp_path,
+        root,
+        "--through",
+        str(days[-1]),
+        "--seam",
+        str(seam),
+        first=days[0],
+        kinds=made.kinds(SCHWAB_IMPORT),
+        splits=inside,
+    )
+    said = "USO has a recorded split of 2 new shares for 1 old from 2026-11-16, at data/splits.csv"
+    refused(ran, f"{said} line 9", tmp_path)
+
+
+def test_13_a_record_names_the_files_sha256_and_each_split_row_its_legs_hold(
+    lake: Path, tmp_path: Path
+) -> None:
+    """A split row before the span, which the adjusted series already hold, refuses nothing."""
+    held = recorded.record(*COVERED.rows, recorded.split("USO", date(2011, 5, 2), 1, 8, line=3))
+    ran = Ran(tmp_path, lake, *ARGS, splits=held)
+    assert ran.err == ""
+    made_record = record(ran.out, tmp_path)
+    assert made_record.splits == recorded.SHA
+    assert [
+        (r.instrument, r.first_session, r.new_shares, r.old_shares) for r in made_record.split_rows
+    ] == [(USO, date(2011, 5, 2), 1, 8)]
+
+
+def test_13_chan_bollingers_record_measured_before_the_file_existed_still_reads() -> None:
+    from ithildinruntime.core import STRESS_MOVES
+
+    (tracked,) = load_records(STRESS_MOVES)
+    assert (tracked.splits, tracked.split_rows) == (None, ())
