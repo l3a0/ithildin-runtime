@@ -63,7 +63,10 @@ class Difference:
       and `None` where that side holds none.
     - `fields` names each field of an order both sides hold that differs, and
       is `("listed twice",)` for one the broker lists more than once, or for two
-      records handed in that hold one broker's id.
+      records handed in that hold one broker's id. It is `("late",)` for an order
+      the broker alone lists under the client order id of a late order, one a
+      takeover of the account's lease found sent with no answer and absent from
+      the broker's list it stored.
     """
 
     of: Compared
@@ -85,6 +88,12 @@ class Difference:
             return f"two records of the book's open orders hold the broker's id {name}"
         if self.fields == (_TWICE,):
             return f"the broker lists its order {broker_id_shown(self.name)} more than once"
+        if self.fields == (_LATE,) and theirs is not None:
+            return (
+                f"the broker's order {broker_id_shown(self.name)} is open at the broker alone "
+                f"under {_client(theirs.client_order_id)}, a late order under an older lease: a "
+                "takeover found it sent with no answer, and the broker's list it stored omits it"
+            )
         if ours is not None and theirs is not None:
             parts = [f"{f} {_field(f, ours, theirs)}" for f in self.fields]
             return f"the order {_order(self.name, ours)} differs in {', '.join(parts)}"
@@ -100,14 +109,19 @@ class Difference:
 
 
 def reconcile(
-    book: Book, orders: Iterable[OrderRecord], account: AccountRead
+    book: Book,
+    orders: Iterable[OrderRecord],
+    account: AccountRead,
+    late: Iterable[str] = (),
 ) -> tuple[Difference, ...]:
     """Every difference between a book, with the journal's records of its open orders, and a read.
 
     They come sorted: positions by instrument, open orders by name, then cash.
-    The caller has checked that every part of the read is whole.
+    The caller has checked that every part of the read is whole. `late` names
+    each late order the journal's takeovers found, which only names a difference.
     """
-    return (*_positions(book, account), *_open_orders(book, orders, account), *_cash(book, account))
+    opens = _open_orders(book, orders, account, frozenset(late))
+    return (*_positions(book, account), *opens, *_cash(book, account))
 
 
 def _positions(book: Book, account: AccountRead) -> list[Difference]:
@@ -122,7 +136,7 @@ def _positions(book: Book, account: AccountRead) -> list[Difference]:
 
 
 def _open_orders(
-    book: Book, orders: Iterable[OrderRecord], account: AccountRead
+    book: Book, orders: Iterable[OrderRecord], account: AccountRead, late: frozenset[str]
 ) -> list[Difference]:
     opens = {o.client_order_id for held in book.open_orders_by_strategy.values() for o in held}
     records = {o.intent.client_order_id: o for o in orders if o.intent.client_order_id in opens}
@@ -156,6 +170,8 @@ def _open_orders(
             fields = _differing(order, first)
             if not fields:
                 continue
+        elif first is not None and first.client_order_id in late:
+            fields = (_LATE,)
         found.append(Difference(Compared.OPEN_ORDER, name, order, first, fields))
     return sorted(found, key=lambda d: d.name)
 
@@ -166,6 +182,7 @@ def _cash(book: Book, account: AccountRead) -> list[Difference]:
 
 
 _TWICE = "listed twice"
+_LATE = "late"
 
 
 def _differing(order: OrderRecord, copy: BrokerOrder) -> tuple[str, ...]:

@@ -65,6 +65,7 @@ from .entries import (
     StopClearedEntry,
     StopFiredEntry,
     StopStoredEntry,
+    TakeoverEntry,
     UnmatchedFillEntry,
     UnmatchedOrderEntry,
     UnmatchedRecordEntry,
@@ -79,6 +80,8 @@ from .stop import Latched, is_latch_entry, latched, refusal
 __all__ = ["Dispute", "Repeat", "Unmatched", "View", "after", "empty"]
 
 _ZERO = Decimal(0)
+# The states a takeover finds an order late in: a `sending` with no answer.
+_LATE = frozenset({OrderState.SENDING, OrderState.IN_DOUBT})
 # What a fill read twice must repeat. Every other field is one a second
 # endpoint may leave out or write another way.
 _CONTENT = ("fill_id", "broker_order_id", "instrument", "qty", "price", "at")
@@ -196,6 +199,8 @@ class _Shared:
         self.brokers: _Kept[str, str] = _Kept()
         # Each entry the loss stop's state is worked out from, by its number.
         self.stops: _Kept[int, Record] = _Kept()
+        # Each order a takeover found late, by its client order id, with the takeover's number.
+        self.late: _Kept[str, int] = _Kept()
 
 
 @dataclass(frozen=True, eq=False)
@@ -213,6 +218,8 @@ class View:
       to no book, which holds the account.
     - `opened_at` is the `opening` entry's `built_at`, and `sent_at` the newest
       `sending` entry's, or `None` where there is none.
+    - `late` holds each order a `takeover` entry named as late that has not
+      ended or been answered, by its client order id, with that entry's number.
     """
 
     account: str
@@ -253,6 +260,18 @@ class View:
     @property
     def records(self) -> Mapping[str, BrokerRecord]:
         return _Upto(self._shared.records, self.through.seq)
+
+    @property
+    def late(self) -> Mapping[str, int]:
+        """Each late order under an older lease that is still sending or in doubt."""
+        kept = _Upto(self._shared.late, self.through.seq)
+        return MappingProxyType(
+            {
+                name: seq
+                for name, seq in kept.items()
+                if (order := self.live.get(name)) is not None and order.state in _LATE
+            }
+        )
 
     @cached_property
     def stop(self) -> Latched:
@@ -493,6 +512,8 @@ def _worked_out(view: View, entry: JournalEntry) -> Step:
             step.change(sent_at=step.at if view.sent_at is None else max(view.sent_at, step.at))
         case AckEntry():
             _ack(step, record)
+        case TakeoverEntry():
+            _takeover(step, record)
         case RejectedEntry():
             step.order(kind, *_next(step, record.client_order_id, Move.REJECTED))
         case InDoubtEntry():
@@ -585,7 +606,26 @@ def _intent(step: Step, record: IntentEntry) -> None:
     step.order("intent", OrderRecord(order, record.decision, state, None, _ZERO, (), None), state)
 
 
+def _takeover(step: Step, record: TakeoverEntry) -> None:
+    """A take of the account's lease, naming the orders an older holder may still send."""
+    view = step.view
+    late = view.late
+    for name in record.late:
+        order = view.live.get(name)
+        if order is None or order.state not in _LATE:
+            shows = "no order that has not ended" if order is None else f"{order.state}"
+            raise Halt(f"entry {step.seq} names {name} as late, and it is {shows}")
+        if name not in late:
+            step.add(view._shared.late, name, step.seq)
+
+
 def _ack(step: Step, record: AckEntry) -> None:
+    if (took := step.view.late.get(record.client_order_id)) is not None:
+        raise Halt(
+            f"entry {step.seq} acknowledges {record.client_order_id}, a late order under an older "
+            f"lease: the takeover at entry {took} found it sent with no answer, and the broker's "
+            "order list it stored omits it"
+        )
     order, state = _next(step, record.client_order_id, Move.ACK)
     broker = record.broker_order_id
     if kept := [

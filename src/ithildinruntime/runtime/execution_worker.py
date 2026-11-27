@@ -79,7 +79,7 @@ SEND_ROW = Stage(
 )
 
 # The parts of #10 that shadow waits for, and the one paper waits for beside them.
-_SHADOW = "#148, #149, #150, #151 and #155"
+_SHADOW = "#149, #150, #151 and #155"
 _PAPER = "#153"
 
 
@@ -121,6 +121,8 @@ class ExecutionWorker:
             alerts=alerts,
             retry=retry,
             pause=pause,
+            release=release,
+            run=run,
         )
         made = (store, storage, account, clock, deployment, run, faults or Faults())
         self._brokers = _brokers(mode, *made)

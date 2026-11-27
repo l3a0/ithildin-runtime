@@ -57,6 +57,7 @@ from ithildinruntime.journal import (
     StopClearedEntry,
     StopFiredEntry,
     StopStoredEntry,
+    TakeoverEntry,
     UnmatchedFillEntry,
     UnmatchedOrderEntry,
     UnmatchedRecordEntry,
@@ -145,12 +146,22 @@ SAMPLES: tuple[Record, ...] = (
     ),
     StopStoredEntry(2, '"9b2cf535f27731c974343645a3985328"'),
     StopClearedEntry(2),
+    TakeoverEntry(
+        '"9b2cf535f27731c974343645a3985328"',
+        3,
+        "c" * 32 + "-0123456789abcdef",
+        AT,
+        AT - timedelta(seconds=60),
+        BlobRef("runs/d-1/r-1/execution/takeovers/20261001T194000.000000Z.json", "a" * 64),
+        (NAME,),
+    ),
+    TakeoverEntry('"e1"', 9, None, None, AT, BlobRef("t.json", "b" * 64), ()),
 )
 
 
 def test_every_kind_has_a_sample() -> None:
     assert {kind_of(record) for record in SAMPLES} == set(KINDS)
-    assert len(KINDS) == 21
+    assert len(KINDS) == 22
 
 
 # Acceptance 1: each kind there and back.
@@ -200,6 +211,7 @@ def test_1_each_kind_goes_in_through_record_and_comes_back() -> None:
         StopFiredEntry("c" * 32, "d-1", "r-1", AT, PAST, "the day's loss read past its stop"),
         StopStoredEntry(fired, "tag-1"),
         StopClearedEntry(fired),
+        TakeoverEntry('"tag-2"', 2, None, None, AT, BlobRef("t.json", "c" * 64), ()),
     ]
     view = journal.view()
     kept = []
@@ -792,6 +804,20 @@ def _committed() -> list[tuple[Record, datetime]]:
         InDoubtEntry(late.client_order_id, sending_ended, None, False, t(61)),
         ReadEntry("execution/recover", day_after, blob("lookup-1"), day_after),
         LostEntry(late.client_order_id, 62, "the broker's whole order list omits it"),
+        # A take of the lease the crash left held, once it expired. The lost order has ended,
+        # so no order is late.
+        TakeoverEntry(
+            '"7d793037a0760186574b0282f2f435e7"',
+            4,
+            "1" * 32 + "-0a1b2c3d4e5f6a7b",
+            next_day + timedelta(seconds=90),
+            day_after - timedelta(seconds=60),
+            BlobRef(
+                "runs/fixture/2026-10-01/execution/takeovers/20261003T194000.000000Z.json",
+                sha256_of(b"takeover"),
+            ),
+            (),
+        ),
     ]
     return [(record, t(n)) for n, record in enumerate(records, start=1)]
 
@@ -861,7 +887,8 @@ def test_2_the_committed_journal_replays_to_what_was_written_out_by_hand(tmp_pat
     whole = journal.view()
     # After the dispute come a fee that moves the cash, three entries that move nothing, a stop's
     # firing stored and cleared, and a plan of the next day whose one closing-auction order a
-    # crash leaves sending and the recover after it gives up as lost.
+    # crash leaves sending and the recover after it gives up as lost, then a take of the lease
+    # that crash left held, which finds no order late.
     late = afterwards["lost"]["order"]
     assert {
         "through": whole.through.seq,

@@ -151,6 +151,17 @@ class Wired(Memory):
 
         return self._hooked("head", key, read)
 
+    def replace_if_match(self, key: str, data: bytes, sha256: str, etag: str) -> str:
+        def rewrote() -> str:
+            if key not in self.blobs:
+                raise BlobMissing(key, "NoSuchKey: the store's own text")
+            if self.tags.get(key) != etag:
+                raise StaleTag(key, "PreconditionFailed: the store's own text")
+            self.blobs[key] = data
+            return self._tagged(key)
+
+        return self._hooked("replace", key, rewrote)
+
     def put(self, key: str, data: bytes) -> None:
         """Write a blob by hand, around every rule the store keeps and every hook."""
         if key in self.blobs:

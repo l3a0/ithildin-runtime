@@ -97,7 +97,7 @@
   "newest_sent_at": "2026-10-01T19:40:42+00:00",
   "stop_alone": [45],
   "afterwards": {
-    "through": 63,
+    "through": 64,
     "stop": {"standing": null, "alone": [], "covered": ["\"5d41402abc4b2a76b9719d911017c592\""]},
     "cash": "97440.859552",
     "records": ["20261001::f1e2"],

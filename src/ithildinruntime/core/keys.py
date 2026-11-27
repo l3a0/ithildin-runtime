@@ -268,8 +268,10 @@ def attempt_key(
     return f"{_stage_prefix(deployment, run, decision_at, stage)}/{stem}.attempt-{n}.json"
 
 
-def takeover_key(deployment: str, run: str, at: datetime) -> str:
-    return f"{_run_prefix(deployment, run)}/execution/takeovers/{utc_time_part(at)}.json"
+def takeover_key(deployment: str, run: str, at: datetime, attempt: int = 1) -> str:
+    """A takeover's broker order list, and a later one at the same time where that is taken."""
+    later = "" if attempt == 1 else f".attempt-{_count(attempt, 'attempt', 2)}"
+    return f"{_run_prefix(deployment, run)}/execution/takeovers/{utc_time_part(at)}{later}.json"
 
 
 def claim_key(deployment: str, run: str, decision_at: datetime) -> str:

@@ -54,6 +54,10 @@ ROWS = [
         "runs/paper/2026-11-02/execution/takeovers/20261102T204001.123456Z.json",
     ),
     (
+        core.takeover_key("paper", RUN, HELD, 2),
+        "runs/paper/2026-11-02/execution/takeovers/20261102T204001.123456Z.attempt-2.json",
+    ),
+    (
         core.claim_key("paper", RUN, AT),
         "runs/paper/2026-11-02/20261102T204000Z/execution/send/claim.json",
     ),
