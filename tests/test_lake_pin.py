@@ -179,26 +179,39 @@ def _whole(marketlake: Marketlake, commit: str, said: list[str]) -> list[str]:
 @pytest.mark.parametrize(
     ("files", "said"),
     [
-        ({JOURNAL: _versioned(3)}, [VERSION_SAID, f"- {script.RAISE_NOW}"]),
-        ({JOIN: PINNED[JOIN] + "\n"}, [JOIN_SAID, f"- {script.WAIT}"]),
-        ({"uv.lock": _locked("26.0.1")}, [PYARROW_SAID, f"- {script.WAIT}"]),
+        ({JOURNAL: _versioned(3)}, [VERSION_SAID, f"- {script.RAISE_NOW}", f"- {script.REREAD}"]),
+        ({JOIN: PINNED[JOIN] + "\n"}, [JOIN_SAID, f"- {script.WAIT}", f"- {script.REREAD}"]),
+        ({"uv.lock": _locked("26.0.1")}, [PYARROW_SAID, f"- {script.WAIT}", f"- {script.REREAD}"]),
         (
             {JOIN: PINNED[JOIN] + "\n", "uv.lock": _locked("26.0.1")},
-            [JOIN_SAID, PYARROW_SAID, f"- {script.WAIT}"],
+            [JOIN_SAID, PYARROW_SAID, f"- {script.WAIT}", f"- {script.REREAD}"],
         ),
         (
             {JOURNAL: _versioned(3), JOIN: PINNED[JOIN] + "\n"},
-            [VERSION_SAID, f"- {script.RAISE_NOW}", JOIN_SAID, f"- {script.RAISE_TOGETHER}"],
+            [
+                VERSION_SAID,
+                f"- {script.RAISE_NOW}",
+                JOIN_SAID,
+                f"- {script.RAISE_TOGETHER}",
+                f"- {script.REREAD}",
+            ],
         ),
         (
             {JOURNAL: _versioned(3), "uv.lock": _locked("26.0.1")},
-            [VERSION_SAID, f"- {script.RAISE_NOW}", PYARROW_SAID, f"- {script.RAISE_TOGETHER}"],
+            [
+                VERSION_SAID,
+                f"- {script.RAISE_NOW}",
+                PYARROW_SAID,
+                f"- {script.RAISE_TOGETHER}",
+                f"- {script.REREAD}",
+            ],
         ),
         (
             {JOIN: None},
             [
                 "- src/lake/segment_join.py is not on marketlake's main, and the pin holds it.",
                 f"- {script.WAIT}",
+                f"- {script.REREAD}",
             ],
         ),
         (
@@ -212,6 +225,7 @@ def _whole(marketlake: Marketlake, commit: str, said: list[str]) -> list[str]:
                 f"- {script.NO_RAISE}",
                 "- src/lake/segment_join.py is not on marketlake's main, and the pin holds it.",
                 f"- {script.WAIT}",
+                f"- {script.REREAD}",
             ],
         ),
     ],
@@ -248,6 +262,13 @@ def test_each_rule_says_what_to_do() -> None:
     assert "raise nothing" in script.NO_RAISE
     assert "set pyarrow here to the version at the commit this repository pins" in script.MATCH_PIN
     assert "raised one where a rule says to raise now" in script.MATCH_PIN
+    # The step a raise owes until marketlake publishes when it writes a tagged gap row.
+    assert "re-reads, at the new commit" in script.REREAD
+    assert "gap row tagged `spot_close`" in script.REREAD
+    assert "before the equity close" in script.REREAD
+    assert "names the commit it read" in script.REREAD
+    assert "l3a0/marketlake#1050" in script.REREAD
+    assert set(script.RAISES) == {script.RAISE_NOW, script.RAISE_TOGETHER, script.WAIT}
 
 
 def _mispinned(here: str, pinned: str) -> list[str]:
@@ -283,6 +304,7 @@ def test_pyarrow_moved_to_mains_without_the_commit_is_no_pass(
     code, out = _run(marketlake.lock(tmp_path / "uv.lock", pyarrow="26.0.1"), capsys)
     assert code == 1
     said = [PYARROW_SAID, f"- {script.WAIT}", *_mispinned("26.0.1", "25.0.1")]
+    said.append(f"- {script.REREAD}")
     assert out.splitlines() == _whole(marketlake, commit, said)
 
 
@@ -293,7 +315,7 @@ def test_a_higher_version_beside_a_mispinned_pyarrow_names_both(
     code, out = _run(marketlake.lock(tmp_path / "uv.lock", pyarrow="26.0.1"), capsys)
     assert code == 1
     said = [VERSION_SAID, f"- {script.RAISE_NOW}", PYARROW_SAID, f"- {script.RAISE_TOGETHER}"]
-    said += _mispinned("26.0.1", "25.0.1")
+    said += [*_mispinned("26.0.1", "25.0.1"), f"- {script.REREAD}"]
     assert out.splitlines() == _whole(marketlake, commit, said)
 
 

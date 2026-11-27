@@ -613,8 +613,10 @@ The run does not watch how marketlake writes a gap row tagged `spot_close`,
 which the sealed read's close check relies on, as
 [Which decisions read the sealed day](03-context-and-scope.md#which-decisions-read-the-sealed-day)
 says. marketlake's README does not state that rule, so a check in the run would
-test marketlake's internals, which no check here does. The runtime relies on the
-rule all the same, a price the owner's ruling accepted, as
+test marketlake's internals, which no check here does. The run prints the step
+below wherever it says to raise the pin or to wait for a deploy before raising
+it, and checks none of it. The runtime relies on the rule all the same, a price
+the owner's ruling accepted, as
 [`### 2026-11-26` in design.md's decisions](../design.md#2026-11-26) records,
 until [l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050)
 puts it in marketlake's contract. At marketlake `8565362`, its
@@ -624,11 +626,10 @@ after the equity close.
 1. The capture cycle of the equity close's own minute.
 2. The close+5 guard, which runs five minutes after the option close.
 
-This doc proposes that, until
-[l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050) publishes
-the rule, the pull request that raises the pin re-reads it at the new commit and
-names that commit.
-This has two prices.
+Until [l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050)
+publishes the rule, the pull request that raises the pin re-reads, at the new
+commit, which writers write such a row and when, checks that none writes it
+before the equity close, and names the commit it read. This has two prices.
 
 1. The re-read is a step a person can skip, and no check catches a skipped one.
 2. A change to those writers that marketlake deploys before any raise goes
