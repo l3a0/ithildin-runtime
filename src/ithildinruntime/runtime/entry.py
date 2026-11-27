@@ -112,6 +112,7 @@ from ithildinruntime.core import (
     run_stop_key,
 )
 from ithildinruntime.data.reference import QuoteKinds
+from ithildinruntime.data.splits import SplitRecord
 
 from .alpha_worker import alpha_handlers
 from .cost_worker import cost_handlers
@@ -307,6 +308,7 @@ def run_data(
     mirror: Path,
     servers: TimeServers | None,
     quote_kinds: QuoteKinds | None = None,
+    splits: SplitRecord | None = None,
 ) -> int:
     """Data's worker. `servers` is started before the loop and stopped after it."""
 
@@ -325,6 +327,7 @@ def run_data(
                 release=plan.release,
                 table=worker.table,
                 quote_kinds=quote_kinds,
+                splits=splits,
             )
         }
 

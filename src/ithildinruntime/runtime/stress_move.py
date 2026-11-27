@@ -44,7 +44,7 @@ import sys
 import tempfile
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import NoReturn, TextIO
