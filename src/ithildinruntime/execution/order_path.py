@@ -331,9 +331,9 @@ class Unstored:
         store does not answer it, the entry stays, and each `settle` tries it, as
         it tries every kept entry. An outage of another blob, such as the hard
         caps, leaves the journal answering, so the entry lands at once. A journal
-        that refuses the entry raises its halt with the entry kept, and the
-        caller's halt names it. One whose fold takes the `in_doubt` that stands
-        in for the entry pages that, as `put` does.
+        whose fold refuses the entry and takes the `in_doubt` that stands in for
+        it pages that, as `put` does, and keeps nothing. One that refuses both
+        raises its halt with the entry kept, and the caller's halt names it.
         """
         kept = _Kept(name, record, at, sent)
         with self._lock:
@@ -1473,9 +1473,10 @@ class OrderPath:
 
         The store has just failed and paged, so the one try sends no page about it.
         Where it lands, or the store does not answer it, this gives an `Outage`, and
-        a kept entry waits for the next settle. Wherever the journal answered with
-        a refusal, this gives a plain `Halt`, so the send stage reads the journal,
-        where another writer may have sent the order. A process that dies first
+        a kept entry waits for the next settle. Where the journal's fold refuses
+        it, and takes its `in_doubt` or refuses that too, this gives a plain
+        `Halt`, so the send stage reads the journal, where another writer may have
+        sent the order. A process that dies first
         leaves the `sending` with no answer, which the next recover looks up.
         """
         try:

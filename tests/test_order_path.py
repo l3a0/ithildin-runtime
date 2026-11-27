@@ -2123,7 +2123,7 @@ def test_7_caps_that_cannot_be_read_again_stop_the_order(fault: str) -> None:
 
 
 def test_7_a_refused_abandoned_after_an_outage_is_named_in_the_halt(monkeypatch) -> None:
-    """The one try's halt, such as a fold that refuses the entry, is said, and the entry kept."""
+    """The one try's halt, as where the journal refuses the entry and its `in_doubt`, is said."""
     from ithildinruntime.execution.order_path import Unstored
 
     world = World()
@@ -2147,30 +2147,33 @@ def test_7_a_refused_abandoned_after_an_outage_is_named_in_the_halt(monkeypatch)
     assert len(account.unstored()) == 1 and len(world.alarms.sent) == 1
 
 
-def test_7_a_kept_abandoned_the_journal_turns_in_doubt_is_a_plain_halt(monkeypatch) -> None:
-    """The fold refuses the entry and takes its `in_doubt`, so the send stage reads the journal."""
+def test_7_a_kept_abandoned_the_journal_turns_in_doubt_is_a_plain_halt() -> None:
+    """Another writer's `in_doubt` stands, so the fold refuses the `abandoned` and keeps nothing."""
     from ithildinruntime.journal import Journal
 
     world = World()
     account = world.account()
-    real = Journal.record
+    done: list[int] = []
 
     def before(number: int, op: str, k: str) -> None:
         if number >= CAPS_READS[1] and k == caps_key(ACCOUNT):
+            if not done:
+                done.append(number)
+                world.store.before = lambda *a: None
+                other = Journal(world.store, ACCOUNT, "b" * 32)
+                lost = InDoubtEntry(ID, "another writer lost the broker's answer", None, False, NOW)
+                other.record(other.view(), lost, NOW)
+                world.store.before = before
             down(number, op, k)
 
-    def record(self, view, record, at):
-        if isinstance(record, AbandonedEntry):
-            raise Halt("the fold refuses it")
-        return real(self, view, record, at)
-
     world.store.before = before
-    monkeypatch.setattr(Journal, "record", record)
     with pytest.raises(Halt) as raised:
         world.send(account=account)
     assert not isinstance(raised.value, Outage) and world.submits == 0
     assert f"The journal refused the abandoned of {ID} and shows it InDoubt" in raised.value.reason
     assert world.state() is OrderState.IN_DOUBT
+    # Nothing waits for the next settle: the order stands in doubt for recover to look up.
+    assert account.unstored() == ()
     # The outage's page, and the one `Unstored` sends for the order left in doubt.
     assert len(world.alarms.sent) == 2 and "in doubt" in world.alarms.sent[1]
 
