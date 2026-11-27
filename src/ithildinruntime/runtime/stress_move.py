@@ -156,16 +156,18 @@ def measure(
             raise Halt(f"no leg changes series at the seam {seam.isoformat()}")
     known = _splits_held(bars, record_of_splits, clock.now())
     two, one = largest_move(bars, 2), largest_move(bars, 1)
+    # m is the larger of the two, and a tie names the two-session move.
+    larger = one.move if one.move.size > two.move.size else two.move
     (manifest,) = manifests
     record = StressRecord(
         strategy=strategy.name,
         instruments=tuple(bars),
         vintage=stress_vintage(bars),
         through=through,
-        stress_move=two.move.size,
-        leg=two.move.leg,
-        moved_from=two.move.moved_from,
-        moved_to=two.move.moved_to,
+        stress_move=larger.size,
+        leg=larger.leg,
+        moved_from=larger.moved_from,
+        moved_to=larger.moved_to,
         one_session=one.move.size,
         one_session_leg=one.move.leg,
         one_session_on=one.move.moved_to,
@@ -177,7 +179,7 @@ def measure(
         splits=record_of_splits.sha256,
         split_rows=known,
     )
-    counted = {m[1:] for own in bars.values() for m in moves(own, 2).kept}
+    counted = {m[1:] for own in bars.values() for n in (1, 2) for m in moves(own, n).kept}
     return _beside(record, records, counted) + _toml(record)
 
 

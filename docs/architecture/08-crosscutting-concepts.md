@@ -232,7 +232,7 @@ A repair can overwrite a partition, whose old copy marketlake's bucket versionin
 
 marketlake's lake is private and backed up off the machine, which is what the premise asks of captured bars, and it keeps them out of this public repository. The checksums this repository commits are the partition checksums a snapshot records, for any run a test or a report pins.
 
-Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import. Yahoo's two files of GLD and USO are in no repository. marketlake's import accepts each of them only at the SHA-256 that [l3a0/marketlake#1025](https://github.com/l3a0/marketlake/issues/1025) pins, and the files, kept off the lake, stay the record.
+Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import. Yahoo's two files of GLD and USO are in no repository. marketlake's import accepts each of them only at the SHA-256 that [l3a0/marketlake#1025](https://github.com/l3a0/marketlake/issues/1025) pins, and the files, kept off the lake, stay the record. Yahoo's two files of SPY and QQQ are held the same way, each at the SHA-256 that [l3a0/marketlake#1043](https://github.com/l3a0/marketlake/issues/1043) pins.
 
 #### Run records
 
@@ -519,7 +519,7 @@ A rule written in UTC would move by an hour against the close each time the cloc
 Five rules hold the table.
 
 1. A session missing from the table halts.
-2. The table runs from the first session any committed backtest reads through the end of the next calendar year.
+2. The table runs from before the oldest session any committed backtest or stress move reads through the end of the next calendar year.
 3. The table names the range it covers, and a date outside it halts, since a missing input stops trading (hard limit 3).
 4. The plan builder reports how many sessions the table has left, so an alarm can fire before a run meets its end. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets that bound and builds the alarm.
 5. A closure announced after the table was cut reads as a session with no data, which halts, since a missing input stops trading (hard limit 3).
@@ -564,8 +564,8 @@ Each account's hard caps are one blob at `accounts/<account>/caps.json`, which a
 | `max_open_orders` | A JSON integer | Orders |
 | `moc_cutoff` | A JSON integer | Minutes before the close |
 | `share` | A decimal string | The share of V one stranded leg may lose, strictly between 0 and 1 |
-| `stress_move` | A decimal string | The stress move, as a fraction, at or above the one its record holds |
-| `stress_low`, `stress_high` | Decimal strings | The sane range of the stress move, both ends allowed |
+| `stress_move` | A decimal string | The stress move, as a fraction, at or above the one its record holds, and for a strategy with a leg that tracks the S&P 500 or the Nasdaq-100 at or above the floor that [Write the caps of a strategy that holds a fund on the S&P 500 or the Nasdaq-100](../what-a-person-runs.md#write-the-caps-of-a-strategy-that-holds-a-fund-on-the-sp-500-or-the-nasdaq-100) gives |
+| `stress_low`, `stress_high` | Decimal strings | The sane range of the stress move, both ends allowed. For a strategy with such a leg `stress_low` is that floor, so a later `stress_move` below the floor halts, as [Write the caps of a strategy that holds a fund on the S&P 500 or the Nasdaq-100](../what-a-person-runs.md#write-the-caps-of-a-strategy-that-holds-a-fund-on-the-sp-500-or-the-nasdaq-100) says |
 | `stress_vintage` | 64 lower case hex digits | The SHA-256 of the vintage the stress move was measured over, which names [its record](#the-stress-moves-record) |
 | `stress_through` | `YYYY-MM-DD` | That vintage's last session, as the record holds it |
 | `stress_max_age_days` | A JSON integer from 1 to 365 | How many days past that session a decision may still use it |
@@ -590,12 +590,12 @@ A record is named by its strategy and its vintage, which is the SHA-256 of the b
 | `through` | The last session, a date | The hold |
 | `stress_move` | m, a decimal string of eight places | The hold and the command |
 | `leg`, `moved_from`, `moved_to` | The move that set m | The hold reads `leg`, and the command all three |
-| `one_session`, `one_session_leg`, `one_session_on` | The largest one-session move | A person |
+| `one_session`, `one_session_leg`, `one_session_on` | The largest one-session move | A person, and the reader `one_session` |
 | `series` | A table for each series of each leg: `instrument`, `first`, `last`, `basis`, and `source` and `source_as_of` where the bars have them | A person, and the reader its `instrument` and `last` |
 | `left_out` | A table for each move left out: `instrument`, `sessions` (1 or 2), `moved_from`, `moved_to` | A person |
 | `flagged` | A table for each flag the read raised: `instrument`, `session`, `field`, `rule`, and `what`, which the person who commits the record fills in | A person |
 | `manifest`, `measured_on` | The SHA-256 of the manifest the run read, and the run's date | A person |
-| `withdrawn` | The reason, on a record found wrong, and absent on any other | The hold |
+| `withdrawn` | The reason, on a record found wrong, and absent on any other | The hold, and the reader |
 | `splits` | The SHA-256 of `data/splits.csv` as the measure read it, absent on a record measured before that file existed | A person |
 | `split_rows` | A table for each split row of the record's instruments that file held: `instrument`, `first_session`, `new_shares`, `old_shares`, present only beside `splits` | A person |
 
@@ -605,8 +605,9 @@ The reader refuses each of these as a halt naming the file, and the record and t
 2. A key it does not know, or one left out. `withdrawn`, `splits` and `split_rows` may be left out, and `split_rows` with no `splits` is refused.
 3. A value of another form, such as an m at or below zero or a flag with an empty `what`.
 4. A `leg` that is none of the record's instruments, because the hold counts a record by its leg.
-5. A `through` that is not the last session of each leg's `series`, because the stress move's age counts from it.
-6. Two records of one strategy and vintage.
+5. A `one_session` above `stress_move` on a record that is not withdrawn, because m is the larger of the largest one-session move and the largest two-session move. A record withdrawn for that reason still reads, so the file can say it was found wrong.
+6. A `through` that is not the last session of each leg's `series`, because the stress move's age counts from it.
+7. Two records of one strategy and vintage.
 
 The risk and portfolio workers' entry points take the file's path and hand on the records or the halt. The price is that a partition marketlake rewrote with the same close makes a new vintage, whose record has to be measured again.
 

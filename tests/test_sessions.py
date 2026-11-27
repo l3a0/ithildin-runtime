@@ -62,19 +62,19 @@ def test_minutes_that_reach_back_past_any_date_halt() -> None:
             to_utc(date(2026, 11, 25), BeforeClose(minutes))
 
 
-@pytest.mark.parametrize("day", [date(2005, 12, 30), date(2028, 1, 3)])
+@pytest.mark.parametrize("day", [date(1992, 12, 31), date(2028, 1, 3)])
 def test_a_date_outside_the_tables_range_halts(day: date) -> None:
     with pytest.raises(Halt) as raised:
         to_utc(day, CLOSE_20)
-    assert "outside the session table's range, 2006-01-01 to 2027-12-31" in raised.value.reason
+    assert "outside the session table's range, 1993-01-01 to 2027-12-31" in raised.value.reason
 
 
 def test_the_committed_table_matches_its_sha256() -> None:
     data = core.sessions.TABLE.read_bytes()
     assert hashlib.sha256(data).hexdigest() == core.sessions.TABLE_SHA256
     table = core.load_sessions()
-    assert (table.first, table.last) == (date(2006, 1, 1), date(2027, 12, 31))
-    assert min(table.sessions) == date(2006, 1, 3)
+    assert (table.first, table.last) == (date(1993, 1, 1), date(2027, 12, 31))
+    assert min(table.sessions) == date(1993, 1, 4)
 
 
 def test_a_table_whose_bytes_changed_halts() -> None:

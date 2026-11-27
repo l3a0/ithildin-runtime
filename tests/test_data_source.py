@@ -677,18 +677,22 @@ def test_a_first_session_too_early_reads_missing(lake: Path, tmp_path: Path) -> 
 def test_a_partition_before_the_calendars_first_session_is_an_earlier_one(
     lake: Path, tmp_path: Path
 ) -> None:
-    """GLD traded from 2004-11-18, and the session table starts in 2006."""
-    earlier = date(2005, 12, 30)
+    """The session table starts in 1993, so GLD here trades from a made-up 1992 start."""
+    earlier = date(1992, 12, 31)
     assert earlier < TABLE.first
+    rows = tuple(r for r in load_master().rows if r.id != GLD)
+    master = SecurityMaster(
+        (*rows, MasterRow(date(2026, 11, 22), GLD, "GLD", date(1992, 1, 2), None))
+    )
     # Listed after a later day, as a backfill is, and named as the earliest.
-    list_partition(lake, lakes.partition_key("GLD", date(2006, 1, 3)))
+    list_partition(lake, lakes.partition_key("GLD", date(1993, 1, 4)))
     list_partition(lake, lakes.partition_key("GLD", earlier))
     assert f"the lake lists {lakes.partition_key('GLD', earlier)} before it" in late(
-        make(lake, tmp_path), EARLY
+        make(lake, tmp_path, master=master), EARLY
     )
     # The master names no USO ticker that day, so this partition is none of USO's.
     list_partition(lake, lakes.partition_key("USO", earlier))
-    uso = make(lake, tmp_path, instruments=(USO,), first_sessions={USO: FIRST})
+    uso = make(lake, tmp_path, master=master, instruments=(USO,), first_sessions={USO: FIRST})
     assert uso.read(close(EARLY)).halts == ()
 
 

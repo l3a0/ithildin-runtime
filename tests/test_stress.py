@@ -9,13 +9,16 @@ from __future__ import annotations
 import csv
 import dataclasses
 import hashlib
+import math
 import re
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -115,6 +118,126 @@ def test_1_the_largest_two_session_move_rounds_up(name: str) -> None:
     gld, uso, expected, size = MOVES[name]
     assert found(legs(gld, uso)) == (d(size), expected, DAYS[T0], DAYS[T0 + 2])
     assert f"{largest_move(legs(gld, uso), 2).move.size:f}" == size
+
+
+# The floors that the caps of a strategy with a fund on the S&P 500 or the Nasdaq-100 hold, from
+# the index closes of October 1987 that design.md's paragraph on why those caps reach back to 1987
+# quotes, by the rounding every measured move takes. The session table starts in 1993, so the
+# closes stand on three of its sessions, and only their order matters.
+FLOORS = {
+    "the-s-and-p-500": (("298.08", "282.70", "224.84"), "0.20466927", "0.24570586"),
+    "the-nasdaq-100": (("183.285", "155.65", "143.96"), "0.15077612", "0.21455657"),
+}
+INDEX = {"the-s-and-p-500": "S&P 500", "the-nasdaq-100": "Nasdaq-100"}
+
+
+@pytest.mark.parametrize("name", FLOORS)
+def test_1_the_1987_floors_are_the_index_falls_rounded_up(name: str) -> None:
+    closes, one, two = FLOORS[name]
+    bars = {GLD: leg(GLD, *closes)}
+    assert f"{largest_move(bars, 1).move.size:f}" == one
+    assert f"{largest_move(bars, 2).move.size:f}" == two
+
+
+def _floor(closes: Sequence[str], multiple: int) -> str:
+    """The size of the move of a fund holding `multiple` times the index's daily return, negative
+    for one that moves against it, over the closes' two sessions, rounded up at eight places."""
+    first, second, third = (Fraction(c) for c in closes)
+    held = (1 + multiple * (second / first - 1)) * (1 + multiple * (third / second - 1))
+    return f"{math.ceil(abs(1 - held) * 10**8) / Fraction(10**8):.8f}"
+
+
+DOCS = Path(__file__).parents[1] / "docs"
+
+
+def _section(text: str, opening: str) -> str:
+    """The text from the line that opens with `opening` up to the next heading or blank line."""
+    found = re.search(rf"^[ \t]*{re.escape(opening)}", text, re.MULTILINE)
+    assert found, opening
+    start = found.start()
+    ends = [i for i in (text.find("\n#", start), text.find("\n\n", start)) if i != -1]
+    return text[start : min(ends, default=len(text))]
+
+
+def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
+    # The owner types each floor into the hard caps by hand from what-a-person-runs.md's table of
+    # floors, so that table is held row by row to the floors worked out here from the closes, and
+    # to the funds each row names.
+    design = (DOCS / "design.md").read_text(encoding="utf-8")
+    why = _section(
+        design, "**Why the caps of funds on the S&P 500 and the Nasdaq-100 reach back to 1987.**"
+    )
+    runs = (DOCS / "what-a-person-runs.md").read_text(encoding="utf-8")
+    table = _section(runs, "| Index | Multiple | Funds such as | Floor |")
+    steps = _section(runs, "1. Find each leg's floor in the table.")
+    floors = {
+        (INDEX[name], multiple): _floor(closes, multiple)
+        for name, (closes, _, _) in FLOORS.items()
+        for multiple in (1, 2, 3, -1, -2, -3)
+    }
+    spy, qqq = floors["S&P 500", 1], floors["Nasdaq-100", 1]
+    assert (spy, qqq) == (FLOORS["the-s-and-p-500"][2], FLOORS["the-nasdaq-100"][2])
+    rows = re.findall(
+        r"^\| (S&P 500|Nasdaq-100) \| (−?\d) \| ([^|]+) \| ([\d.]+) \|$", table, re.MULTILINE
+    )
+    rows = [(index, int(multiple.replace("−", "-")), *rest) for index, multiple, *rest in rows]
+    assert {(index, multiple): floor for index, multiple, _, floor in rows} == floors
+    assert len(rows) == len(floors)
+    # The owner finds a leg's row by its ticker, so each row names the funds the ruling named.
+    assert {(index, multiple): funds.strip() for index, multiple, funds, _ in rows} == {
+        ("S&P 500", 1): "SPY, IVV, VOO",
+        ("S&P 500", 2): "SSO",
+        ("S&P 500", 3): "UPRO, SPXL",
+        ("Nasdaq-100", 1): "QQQ, QQQM",
+        ("Nasdaq-100", 2): "QLD",
+        ("Nasdaq-100", 3): "TQQQ",
+        ("S&P 500", -1): "SH",
+        ("S&P 500", -2): "SDS",
+        ("S&P 500", -3): "SPXU, SPXS",
+        ("Nasdaq-100", -1): "PSQ",
+        ("Nasdaq-100", -2): "QID",
+        ("Nasdaq-100", -3): "SQQQ",
+    }
+    assert f"So a strategy with SPY and QQQ legs takes SPY's, {spy}." in steps
+    # No code knows a leg's index or multiple, so the steps' stop is the only guard for a leg the
+    # floors do not cover, and design.md's rule behind it is held with it.
+    beyond = "holds less than one or more than three times its index in either direction"
+    assert (
+        f"Stop where a leg {beyond}, or where two legs hold one index at different multiples"
+        in steps
+    )
+    assert f"where a leg {beyond}" in why
+    assert "where two legs hold one index at different multiples" in why
+    # The stop ends only on the owner's ruling, never on a strategy's own proposal.
+    assert "until the owner rules on a strategy that proposes such a pair" in why
+    assert "such caps are not written until the owner rules on that strategy" in steps
+    assert "such as IVV or VOO for the S&P 500 and QQQM for the Nasdaq-100" in why
+    assert "takes the move L gives over the same two sessions, 1 − (1 + L × r₁)(1 + L × r₂)" in why
+    # Every figure with a decimal point the paragraph holds, and how many times, so a typo in one
+    # of two copies fails. The percentages are the falls and the records' moves it compares them
+    # with. Its dates and whole percentages are not held here.
+    spx, ndx = FLOORS["the-s-and-p-500"], FLOORS["the-nasdaq-100"]
+    assert Counter(re.findall(r"\d+\.\d+", why)) == Counter(
+        {**dict.fromkeys((*spx[0], *ndx[0]), 1), "224.84": 2, spy: 2, qqq: 2}
+        | {"20.47": 1, "24.57": 1, "15.08": 1, "21.46": 1, "14.52": 1, "17.09": 2}
+        | {floors["S&P 500", 2]: 1, floors["Nasdaq-100", 3]: 1, "3.37": 1, "3.50": 1}
+        | {floors["S&P 500", -1]: 1, "22.5": 1}
+    )
+    for fund, floor in (("SPY", spy), ("QQQ", qqq)):
+        leg = f"{fund} leg write a `stress_move` of at least {floor} and a `stress_low` of {floor}"
+        assert leg in why, fund
+    assert "and a strategy with both legs writes the larger, SPY's" in why
+    assert f"SSO, twice the S&P 500, takes {floors['S&P 500', 2]}" in why
+    assert f"TQQQ, three times the Nasdaq-100, takes {floors['Nasdaq-100', 3]}" in why
+    assert f"SH, against the S&P 500 at one times, takes {floors['S&P 500', -1]}" in why
+    # A number on any page that starts as a floor does to its sixth place is that floor whole, so
+    # a floor mistyped past that place, or cut short, fails. A number of eight places or more from
+    # 0.2 to 0.3 is a floor, so one mistyped in an early place fails too.
+    starts = "|".join(re.escape(f[:8]) for f in floors.values())
+    for page in sorted(DOCS.rglob("*.md")):
+        text = page.read_text(encoding="utf-8")
+        for named in re.findall(rf"\b0\.2\d{{7,}}\b|\b(?:{starts})\d*", text):
+            assert named in floors.values(), f"{page.name} names {named}"
 
 
 def test_1_a_tie_goes_to_the_earliest_date_then_to_the_first_leg_by_name() -> None:
@@ -416,6 +539,20 @@ def test_4_a_record_reads_field_by_field(tmp_path: Path) -> None:
     assert gone == replace(made, withdrawn="mistyped")
 
 
+def test_4_a_one_session_move_equal_to_m_reads(tmp_path: Path) -> None:
+    """m is the larger of the two lengths, so a one-session move may equal it and not pass it."""
+    (made,) = read(tmp_path, put('"0.11290000"', '"0.17980000"'))
+    assert made.one_session == made.stress_move == d("0.1798")
+
+
+def test_4_a_withdrawn_record_whose_one_session_move_is_above_m_reads(tmp_path: Path) -> None:
+    """A record found wrong for that reason gains `withdrawn`, and the file must still read."""
+    wrong = put('"0.11290000"', '"0.17980001"') + 'withdrawn = "m read two sessions alone"\n'
+    (made,) = read(tmp_path, wrong)
+    assert made.one_session > made.stress_move and made.withdrawn == "m read two sessions alone"
+    assert not made.counts_for("chan", (GLD, USO))
+
+
 KEYS = [line.split(" = ")[0] for line in SAMPLE.splitlines() if " = " in line and line[0] != " "]
 
 
@@ -477,6 +614,10 @@ BAD = {
     "a-negative-m": (put('"0.17980000"', '"-0.17980000"'), "1's stress_move is"),
     "an-infinite-m": (put('"0.17980000"', '"Infinity"'), "1's stress_move is"),
     "a-one-session-of-no-form": (put('"0.11290000"', '"x"'), "1's one_session is"),
+    "a-one-session-above-m": (
+        put('"0.11290000"', '"0.17980001"'),
+        "1's one_session is 0.17980001, above its stress_move of 0.17980000",
+    ),
     "a-leg-of-no-text": (put('leg = "USO"\nmoved', "leg = 1\nmoved"), "1's leg is 1"),
     "a-flag-of-no-what": (put("a real move", ""), "1's flagged 1's what is ''"),
     "a-flag-of-a-blank-what": (put("a real move", "  "), "1's flagged 1's what is"),

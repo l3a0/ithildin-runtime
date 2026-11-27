@@ -684,6 +684,72 @@ def printed(lake: Path, tmp_path: Path) -> str:
     return Ran(tmp_path, lake, *ARGS).out.replace('what = ""', 'what = "made up"')
 
 
+TIED = DAYS[DAYS.index(PLANTED) + 10]
+
+
+def _spike(*, tie: bool = False, after: int = 41) -> dict[date, Decimal]:
+    """A quiet walk near 40 with one session's rise to 52 that the sessions around it offset.
+
+    Over one session it rises 30%, from 40 to 52. No two sessions move as far, because
+    the session before it rose from 46 and the one after falls to `after`. With `tie`, it
+    later rises 30% over two sessions too, from 40 through 46 to 52 at `TIED`.
+    """
+    closes = {day: min(max(c, Decimal(39)), Decimal(41)) for day, c in USO_WALK.items()}
+    at = DAYS.index(PLANTED)
+    for n, price in ((-2, 46), (-1, 40), (0, 52), (1, after), (2, after)):
+        closes[DAYS[at + n]] = Decimal(price)
+    if tie:
+        at = DAYS.index(TIED)
+        for n, price in ((-3, 40), (-2, 40), (-1, 46), (0, 52), (1, 52), (2, 52), (3, 52)):
+            closes[DAYS[at + n]] = Decimal(price)
+    return closes
+
+
+def test_3_a_one_session_move_larger_than_every_two_session_one_sets_m(tmp_path: Path) -> None:
+    """m is the larger of the two lengths, and the record names the session that set it."""
+    walks = (("GLD", GLD_WALK), ("USO", _spike()))
+    series = [made.Made(t, made.ONE.format(t), OLD, w) for t, w in walks]
+    root = made.build(tmp_path / "the-lake", series)
+    ran = Ran(tmp_path, root, "--through", THROUGH.isoformat())
+    assert (ran.code, ran.err) == (0, "")
+    made_record = record(ran.out, tmp_path)
+    before = DAYS[DAYS.index(PLANTED) - 1]
+    assert (made_record.stress_move, made_record.leg) == (Decimal("0.3"), USO)
+    assert (made_record.moved_from, made_record.moved_to) == (before, PLANTED)
+    assert (made_record.one_session, made_record.one_session_on) == (Decimal("0.3"), PLANTED)
+    # A run beside its own record counts the one-session move that set it, and says nothing.
+    filled = ran.out.replace('what = ""', 'what = "made up"')
+    again = Ran(tmp_path, root, "--through", THROUGH.isoformat(), records=filled)
+    assert again.out == ran.out
+
+
+def test_3_the_leg_that_set_m_over_one_session_is_named_over_anothers_two_session_move(
+    tmp_path: Path,
+) -> None:
+    """GLD's one-session rise of 30% sets m, though USO's 20% fall over two sessions is the larger.
+
+    GLD falls back only to 44 after it, so none of GLD's two-session moves passes 16%.
+    """
+    walks = (("GLD", _spike(after=44)), ("USO", USO_WALK))
+    series = [made.Made(t, made.ONE.format(t), OLD, w) for t, w in walks]
+    ran = Ran(tmp_path, made.build(tmp_path / "the-lake", series), "--through", str(THROUGH))
+    made_record = record(ran.out, tmp_path)
+    before = DAYS[DAYS.index(PLANTED) - 1]
+    assert (made_record.stress_move, made_record.leg) == (Decimal("0.3"), GLD)
+    assert (made_record.moved_from, made_record.moved_to) == (before, PLANTED)
+    assert made_record.one_session_leg == GLD
+
+
+def test_3_a_one_session_move_that_ties_a_two_session_one_names_the_two(tmp_path: Path) -> None:
+    walks = (("GLD", GLD_WALK), ("USO", _spike(tie=True)))
+    series = [made.Made(t, made.ONE.format(t), OLD, w) for t, w in walks]
+    ran = Ran(tmp_path, made.build(tmp_path / "the-lake", series), "--through", str(THROUGH))
+    made_record = record(ran.out, tmp_path)
+    assert made_record.stress_move == made_record.one_session == Decimal("0.3")
+    assert (made_record.moved_from, made_record.moved_to) == (DAYS[DAYS.index(TIED) - 2], TIED)
+    assert made_record.one_session_on == PLANTED
+
+
 def test_3_a_record_below_any_of_the_strategys_says_so_above_it(lake: Path, tmp_path: Path) -> None:
     earlier = printed(lake, tmp_path).replace('"0.20000000"', '"0.20000001"')
     plain = Ran(tmp_path, lake, *ARGS).out
