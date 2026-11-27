@@ -838,11 +838,23 @@ def test_3_every_enumeration_an_entry_can_hold_is_frozen_above() -> None:
     assert found == set(FROZEN)
 
 
-def test_2_this_release_writes_the_committed_bytes_of_every_kind(tmp_path: Path) -> None:
-    journal = Journal(FolderStore(tmp_path), FIXED, "0123456789abcdef" * 2)
+def write_committed(into: Path) -> Journal:
+    """Record `_committed()` into an empty folder, under the writer the committed bytes hold.
+
+    The bytes test below and scripts/regenerate_journal_fixture.py both write through this
+    one function, so the script writes what the test checks.
+    """
+    journal = Journal(FolderStore(into), FIXED, "0123456789abcdef" * 2)
     view = journal.view()
     for record, at in _committed():
         _, view = journal.record(view, record, at)
+    return journal
+
+
+def test_2_this_release_writes_the_committed_bytes_of_every_kind(tmp_path: Path) -> None:
+    """After a merge appends an entry on both sides, scripts/regenerate_journal_fixture.py
+    writes the committed folder again and checks that no entry `main` holds moves."""
+    journal = write_committed(tmp_path)
     committed = sorted((ORDERS / "journal" / FIXED).iterdir())
     written = sorted((tmp_path / "journal" / FIXED).iterdir())
     assert [p.name for p in written] == [p.name for p in committed]
