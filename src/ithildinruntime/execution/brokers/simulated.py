@@ -16,8 +16,8 @@ fill rule by order type and no branch on a mode or a test.
   never an exception. Before the close the gate's mark halts on both first.
   Under `reject_later` or `fill_none` it rests instead, and it never fills at a
   close. One on its way fills as it arrives, and only under its own decision's
-  prices, so one that arrives under another decision's, or whose quote has a
-  fault, is missed. A read of the orders leaves it on its way, as the last item
+  prices, so one that arrives under another decision's, or whose quote is
+  missing or has a fault, is missed. A read of the orders leaves it on its way, as the last item
   says.
 - **Any other order is rejected.**
 - **It moves only forward.** A call whose clock reads before the log's newest
@@ -423,8 +423,9 @@ class SimulatedBroker:
     def _arrivals(self, events: SimEvents, now: datetime, of_orders: bool) -> SimEvents:
         """Each order on its way whose call has come, placed or missed.
 
-        A market order needs its quote to arrive, so a read of the orders, which
-        reads no price, leaves it on its way to the next call that reads one.
+        A market order of this decision needs its quote to arrive, so a read of the
+        orders, which reads no price, leaves it on its way to the next call that
+        reads one.
         """
         log = self._log
         for order in log.account_now.delayed:

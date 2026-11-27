@@ -282,8 +282,8 @@ never shares the paper account's lease.
    stays inside the journal's raw limit. Under the faults `reject_later` and `fill_none` it
    rests instead, and one still working at its close expires unfilled. One on
    its way fills as it arrives, and only under its own decision's prices, so
-   one that arrives under another decision's, or whose quote has a fault, is not
-   taken. A read of the orders leaves it on its way, as item 9 says. Any other
+   one that arrives under another decision's, or whose quote is missing or has a
+   fault, is not taken. A read of the orders leaves it on its way, as item 9 says. Any other
    order is rejected.
 6. **A client order id of an order it took, or has or had on its way, is refused** with
    an answer that says so, which the order path reads as in doubt.
@@ -330,19 +330,21 @@ asks.
    quote whatever the time of the call, so its cost from the decision's midpoint
    is half the spread by construction and never shows the market moving in
    between. `OrderPath` abandons a send past the moment its quote stops being
-   readable, which bounds how late a fill can come, apart from an order that
-   arrives late, such as one a test's `Late` fault holds.
+   readable, which bounds how late a fill can come, apart from an order a test's
+   `Late` fault holds on its way.
 7. **An order on its way across decisions.** A market order on its way that
    arrives under another decision's prices is not taken, where a real broker
    fills an order whenever it lands. So a test of an order in doubt on this
    simulator never meets one that fills in a later decision after a lookup found
    nothing, which is the case where sending it again would double it. Within one
-   decision a read of the orders can find nothing while such an order waits on
-   its way, and the next call that reads a price fills it.
+   decision a read of the orders can find nothing while a market order waits on
+   its way, and the next call that reads a price takes it or misses it, as item 5
+   of `#### What fills, and when` says.
 8. **The quote's kind.** The bid and the ask are what the quote-kind contract in
    `data/quote_kinds.csv` says of them. On shadow and paper they read as the best
-   bid and ask, though the source marks some answers NFL rather than NBBO and
-   marketlake's columns do not say which, as `## Decisions` of
+   bid and ask, though the source types each answer as NBBO, the national best bid
+   and offer across every US exchange, or NFL, which it calls a non-fee-liable
+   quote, and marketlake's columns do not say which, as `## Decisions` of
    [2026-11-26](../design.md#2026-11-26) records.
 
 The figure below is a C4 dynamic diagram.
