@@ -574,7 +574,7 @@ def test_a_take_of_an_expired_lease_stores_the_list_and_journals_the_takeover_fi
     ran_out = (NOW - timedelta(minutes=1)).isoformat()
     assert f"taken over from {FROZEN} of the run {RUN}, whose lease ran out at {ran_out}" in said
     assert f"the broker's order list is stored at {entry.orders.key}, and finds {late} late" in said
-    # An ordinary takeover names no taker that failed one before it.
+    # An ordinary takeover names no earlier taker that held the lease with the takeover owed.
     assert "with the takeover still owed" not in said
 
 
@@ -648,7 +648,7 @@ def test_a_failed_takeover_halts_new_orders_and_the_next_take_owes_it(fails: str
         (late,),
     )
     assert any(f"taken over from {FROZEN}" in said for said in world.alarms.sent)
-    # The release left the lease free, so no taker died holding it.
+    # The release left the lease free, so no taker held it last with the takeover owed.
     assert not any("with the takeover still owed" in said for said in world.alarms.sent)
     if fails == "the journal":
         # Its list was stored under the same time, so the second is stored beside it.
@@ -753,10 +753,11 @@ def test_a_takeover_whose_closing_rewrite_fails_has_alarmed_and_halts(answered: 
             replaced.append(number)
             if len(replaced) >= 2:
                 if answered:
-                    # Another handler's take of this handler's lease once it ran out, which found
-                    # the takeover still owed from the frozen holder.
+                    # Another handler's take, which carries the takeover still owed from the
+                    # frozen holder and when that holder's lease ran out.
                     other = _held("e" * 32 + "-1", expires=timedelta(seconds=30))
-                    _plant(world, replace(other, owed=True, owed_from=FROZEN, owed_expired=NOW))
+                    ran_out = NOW - timedelta(minutes=1)
+                    _plant(world, replace(other, owed=True, owed_from=FROZEN, owed_expired=ran_out))
                     world.store.before = lambda *_: None
                     return
                 raise StoreUnavailable(key, "SlowDown: the store's own text")
@@ -766,6 +767,7 @@ def test_a_takeover_whose_closing_rewrite_fails_has_alarmed_and_halts(answered: 
         reason = halted(world, "now carries another handler's rewrite", lambda: world.send(2))
         # The entry is journaled, so the halt says it stands, not that the takeover failed.
         assert "takeover entry stands journaled" in reason
+        assert "A handler took the lease over after this handler's ran out" in reason
         assert "journals a takeover of its own before it acts, if it has not already" in reason
         assert "until a takeover stores the list" not in reason
         assert "a write of this handler's own" not in reason

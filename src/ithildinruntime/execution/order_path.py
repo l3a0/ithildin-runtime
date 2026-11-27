@@ -1272,10 +1272,10 @@ class OrderPath:
             reason = (
                 "the account's lease now carries another handler's rewrite, so this handler's "
                 "rewrite after its takeover, which marks the takeover done, did not stand. This "
-                "handler's takeover entry stands journaled. The other handler took the lease over "
-                "after this handler's ran out, so it journals a takeover of its own before it "
-                "acts, if it has not already. This send halts, and the next order's take reads "
-                "the lease again"
+                "handler's takeover entry stands journaled. A handler took the lease over after "
+                "this handler's ran out, and it journals a takeover of its own before it acts, if "
+                "it has not already. This send halts, and the next order's take reads the lease "
+                "again"
             )
             raise Halt(f"{reason}{shared.alarm(reason)}") from None
 
