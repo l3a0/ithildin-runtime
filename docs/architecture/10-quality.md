@@ -90,8 +90,9 @@ package.
 | Order manager, a plan's cancels and replacements, the Alpaca adapter around its SDK, the account's lease | [#10](https://github.com/l3a0/ithildin-runtime/issues/10) |
 | `Monitoring`, reconciliation, reports, alert channel adapter, dead-man check, kill switch, startup order, the alarms and their drills, each worker's deadline, the third level of CI and its second required check, the journal entry for a capture lost when a worker's process dies, and the supervisor and the fake-broker test as proposed below | [#11](https://github.com/l3a0/ithildin-runtime/issues/11) |
 
-Each module issue also writes its own worker's entry point under `runtime`,
-the code that picks that worker's adapters for a mode.
+Each module issue also writes its own worker's rows and handlers under
+`runtime`, and `runtime/entry.py` picks every worker's adapters for its
+environment.
 
 Equal risk weight sizes each forecast's basket so they all carry the same
 risk. With one basket in slice 1, it reduces to sizing that basket, so its

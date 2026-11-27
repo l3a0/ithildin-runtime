@@ -47,16 +47,15 @@ import re
 import statistics
 import sys
 import tempfile
-import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import NoReturn, TextIO
 
-from ithildinruntime.adapters import FolderBucket, WallClock
+from ithildinruntime.adapters import FolderBucket, SystemTimer, WallClock
 from ithildinruntime.core import (
     BeforeClose,
     Bucket,
@@ -566,19 +565,6 @@ def _day(text: str) -> date:
         raise argparse.ArgumentTypeError(f"{text!r} is no date") from None
 
 
-class _SystemTimer:
-    """`core.Timer` on the machine's own clocks."""
-
-    def now(self) -> datetime:
-        return datetime.now(UTC)
-
-    def monotonic(self) -> float:
-        return time.monotonic()
-
-    def after(self, seconds: float) -> object:
-        raise NotImplementedError
-
-
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -601,7 +587,7 @@ def main(
                 given.first,
                 given.through,
                 normal_status=given.normal_status,
-                clock=clock or WallClock(_SystemTimer(), servers=None),
+                clock=clock or WallClock(SystemTimer(), servers=None),
                 kinds=kinds,
             )
         print(render(measured), end="", file=out or sys.stdout)

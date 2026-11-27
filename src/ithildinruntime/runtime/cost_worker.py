@@ -1,4 +1,4 @@
-"""The cost worker's entry point: its rows in the stage table and its handlers.
+"""The cost worker's rows in the stage table and its handlers, which `runtime.entry` starts.
 
 Each strategy has a cost stage of its own, which reads data's result, so the
 one worker runs a stage per strategy the table declares. It builds no adapter
