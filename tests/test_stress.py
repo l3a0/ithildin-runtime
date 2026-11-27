@@ -208,6 +208,9 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     )
     assert f"where a leg {beyond}" in why
     assert "where two legs hold one index at different multiples" in why
+    # The stop ends only on the owner's ruling, never on a strategy's own proposal.
+    assert "until the owner rules on a strategy that proposes such a pair" in why
+    assert "such caps are not written until the owner rules on that strategy" in steps
     assert "such as IVV or VOO for the S&P 500 and QQQM for the Nasdaq-100" in why
     assert "takes the move L gives over the same two sessions, 1 − (1 + L × r₁)(1 + L × r₂)" in why
     # Every figure with a decimal point the paragraph holds, and how many times, so a typo in one
