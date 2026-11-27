@@ -299,7 +299,11 @@ def test_2_a_kill_at_a_store_call(at: int, after: bool) -> None:
     landed = sum(1 for n in CREATES if n < at or (after and n == at))
     assert world.kinds() == SENT[:landed]
     assert world.submits == (at > BEFORE_SUBMIT)
-    assert world.alarms.sent == []
+    # A kill once the renewal has landed cuts its answer short, so the release that follows names
+    # that write as another handler's, and pages. Nothing else pages.
+    renewed = after and at == BEFORE_SUBMIT
+    assert len(world.alarms.sent) == renewed
+    assert all("so its release was refused" in said for said in world.alarms.sent)
     world.store.before = world.store.after = lambda n, op, key: None
     # A new process finds what is stored, and asks the broker nothing twice. It starts once a
     # lease the kill left held has expired.

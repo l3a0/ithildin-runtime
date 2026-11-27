@@ -65,7 +65,6 @@ apart from a halt `core.Storage` raises on a decision's files or the hard caps.
 from __future__ import annotations
 
 import secrets
-import sys
 import threading
 from collections import deque
 from collections.abc import Callable
@@ -700,9 +699,7 @@ class OrderPath:
             self._take(client_order_id)
             return self._sent(client_order_id)
         finally:
-            # An exception that ends the process, rather than the send, pages nothing more.
-            ending = sys.exc_info()[1]
-            self._let_go(page=ending is None or isinstance(ending, Exception))
+            self._let_go()
 
     def _sent(self, client_order_id: str) -> OrderState:
         found = self._approve(client_order_id)
@@ -749,7 +746,8 @@ class OrderPath:
             raise Halt(
                 f"the order {name} is a late order under an older lease, {sent}: the takeover at "
                 f"entry {late} found it sent with no answer, and the broker's order list it "
-                f"stored omits it, so it is {state} and never acknowledged{added}"
+                f"stored omits it, so it is {state} and never acknowledged. It may be working at "
+                f"the broker, so a person looks it up there{added}"
             )
 
     def hold(self, client_order_ids: tuple[str, ...] | list[str]) -> tuple[OrderState, ...]:
@@ -1197,14 +1195,16 @@ class OrderPath:
             read = self._called("orders", OrdersRead, lambda b: b.orders(since))
         except (Halt, BrokerUnavailable) as failed:
             raise self._failed("the broker's order list could not be read", _said(failed)) from None
-        if read.whole is not True:
-            raise self._failed("the broker's order list did not come whole", "")
         count, mine = taken.held.lease.count, taken.held.lease
         assert mine.handler is not None
         stored = TakeoverRead(
             FORMAT, shared.account, mine.handler, mine.release, count, since, asked, read
         )
+        # Stored before it is judged, a list that did not come whole too, since the broker's
+        # answer cannot be had again.
         ref = self._stored_list(where, stored)
+        if read.whole is not True:
+            raise self._failed(f"the broker's order list did not come whole, as {ref.key}", "")
         listed = {row.client_order_id for row in read.orders}
         owed_from, expired = taken.held.lease.owed_from, taken.held.lease.owed_expired
         for _ in range(_STARTS_OVER + 1):
@@ -1326,15 +1326,17 @@ class OrderPath:
                 raise self._outage(lost.reason) from None
             raise
 
-    def _let_go(self, *, page: bool) -> None:
+    def _let_go(self) -> None:
         held, self._lease = self._lease, None
         if held is None:
             return
         refused = self._shared.lease.release(held, self._shared.patience.tries(self._report))
-        if refused is None or not page:
+        if refused is None:
             return
         # The lease expires, and the next order of this process or any other halts on it as held
-        # until then, so the cause is paged here.
+        # until then, so the cause is paged here. An exception that cut short the answer to this
+        # handler's own last rewrite leaves that write unknown here, so the page can then name
+        # it as another handler's.
         ends = held.lease.expires
         reason = f"{refused.reason}. It expires at {ends.isoformat()}" if ends else refused.reason
         if refused.unanswered:

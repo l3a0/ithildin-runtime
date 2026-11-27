@@ -239,7 +239,9 @@ def test_a_lease_another_handler_holds_ends_the_order_with_nothing_journaled() -
     _plant(world, _held(expires=timedelta(seconds=10)))
     before = world.every_kind()
     reason = halted(world, "held by")
-    assert FROZEN in reason
+    assert f"held by {FROZEN} of the run {RUN} on the release r1 until " in reason
+    takeover_at = (NOW + timedelta(seconds=10) + MARGIN).isoformat()
+    assert f"the first take after {takeover_at} takes it over and alarms" in reason
     assert world.every_kind() == before
     assert _lease(world) == _held(expires=timedelta(seconds=10))
 
@@ -263,7 +265,10 @@ def test_a_lease_taken_over_before_the_broker_call_ends_the_order_unsent() -> No
             _plant(world, _held(other, expires=timedelta(seconds=30)))
 
     world.store.before = before
-    halted(world, "rewritten by another handler, so its renewal was refused")
+    halted(
+        world,
+        "rewritten since this handler.s last answered write of it, so its renewal was refused",
+    )
     assert world.state() is OrderState.ABANDONED
     assert _lease(world).handler == other
 
@@ -309,6 +314,38 @@ def test_a_release_the_store_does_not_answer_leaves_the_lease_to_expire() -> Non
     assert world.submits == 1
 
 
+def test_a_release_the_store_refuses_after_a_send_that_halted_still_pages() -> None:
+    world = World()
+    world.store.put(kill_switch_key(ACCOUNT), b"{}")
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY):
+            raise StoreUnavailable(key, "SlowDown: the store's own text")
+
+    world.store.before = before
+    halted(world, "kill switch stands")
+    (said,) = [a for a in world.alarms.sent if "release was not stored" in a]
+    assert f"It expires at {(NOW + PERIOD).isoformat()}" in said
+
+
+def test_a_release_another_handler_refused_pages_without_an_outage() -> None:
+    world = World()
+    replaced: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY):
+            replaced.append(number)
+            if len(replaced) == 2:
+                _plant(world, _held("e" * 32 + "-1", expires=timedelta(seconds=30)))
+
+    world.store.before = before
+    assert world.send() is OrderState.ACKNOWLEDGED
+    (said,) = world.alarms.sent
+    assert "so its release was refused" in said
+    assert f"It expires at {(NOW + PERIOD).isoformat()}" in said
+    assert "The owner's step" not in said
+
+
 def test_a_release_whose_first_try_landed_unanswered_leaves_the_lease_free() -> None:
     world = World()
     replaced: list[int] = []
@@ -345,6 +382,7 @@ def test_an_absent_lease_with_a_sending_in_the_journal_halts_new_orders_and_page
     assert view.sent_at is not None
     key = account_halt_key(ACCOUNT, "execution", "lease_absent", view.sent_at, view.through.seq)
     assert _halts(world) == [key]
+    assert f"absent at {KEY}" in reason and f"the halt stands at {key}" in reason
     stored = decode(world.store.blobs[key], AbsentHalt)
     assert (stored.format, stored.account, stored.through) == (1, ACCOUNT, view.through.seq)
     assert stored.sent_at == view.sent_at and stored.halt.reason == reason
@@ -434,7 +472,10 @@ def test_a_take_of_an_expired_lease_stores_the_list_and_journals_the_takeover_fi
     assert sent is not None and entry.since == stored.since == sent - timedelta(seconds=60)
     # The take, the rewrite that clears `owed`, the renewal and the release.
     assert _lease(world) == free_lease(15, False)
-    assert any(f"taken over from {FROZEN}" in said for said in world.alarms.sent)
+    (said,) = [a for a in world.alarms.sent if "taken over from" in a]
+    ran_out = (NOW - timedelta(minutes=1)).isoformat()
+    assert f"taken over from {FROZEN} of the run {RUN}, whose lease ran out at {ran_out}" in said
+    assert f"the broker's order list is stored at {entry.orders.key}, and finds {late} late" in said
 
 
 def test_an_order_the_broker_lists_is_not_named_late() -> None:
@@ -467,6 +508,11 @@ def test_a_failed_takeover_halts_new_orders_and_the_next_take_owes_it(fails: str
     before = world.every_kind()
     reason = halted(world, "the takeover of the account's lease failed", lambda: world.send(2))
     assert "No new order goes out until a takeover stores the list" in reason
+    if fails == "a list not whole":
+        # The partial list is stored before it is judged, and the reason names it.
+        (kept,) = [k for k in world.store.blobs if "/execution/takeovers/" in k]
+        assert f"did not come whole, as {kept}" in reason
+        assert decode(world.store.blobs[kept], TakeoverRead).orders.whole is False
     if fails == "the journal":
         # The list stood stored, and the reason names it, since no entry does.
         assert f"the list at {takeover_key(DEPLOYMENT, RUN, NOW)}" in reason
@@ -558,11 +604,16 @@ def test_a_takeover_whose_closing_rewrite_fails_has_alarmed_and_halts(answered: 
                 raise StoreUnavailable(key, "SlowDown: the store's own text")
 
     world.store.before = before
-    halted(
-        world,
-        "rewrite after its takeover" if not answered else "rewrite after its entry",
-        lambda: world.send(2),
-    )
+    if answered:
+        halted(world, "rewrite after its entry was refused", lambda: world.send(2))
+    else:
+        # The entry is journaled, so the halt is the store's outage, not a takeover still owed.
+        with pytest.raises(Outage) as raised:
+            world.send(2)
+        assert "rewrite after its takeover was not stored" in raised.value.reason
+        assert "The owner's step: the broker's site" in raised.value.reason
+        assert "until a takeover stores the list" not in raised.value.reason
+        assert world.submits == 0
     assert "takeover" in world.every_kind()
     assert any(f"taken over from {FROZEN}" in said for said in world.alarms.sent)
 
@@ -805,8 +856,11 @@ def test_the_pause_scenario_leaves_exactly_one_order_at_the_broker() -> None:
         return accepted(intent, number, NOW)
 
     world.broker.answer = submit
-    with pytest.raises(Halt, match="a late order under an older lease"):
+    with pytest.raises(Halt, match="a late order under an older lease") as raised:
         world.send(1)
+    took = [e.seq for e in world.reader().read() if e.body["kind"] == "takeover"]
+    assert f"the takeover at entry {took[0]} found it sent with no answer" in raised.value.reason
+    assert "so a person looks it up there" in raised.value.reason
     assert world.submits == 1
     assert [o.client_order_id for o in world.broker.had] == [world.orders[0].client_order_id]
     assert world.state(1) is not OrderState.ACKNOWLEDGED

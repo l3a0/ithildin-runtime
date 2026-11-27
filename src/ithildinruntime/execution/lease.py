@@ -263,10 +263,15 @@ class AccountLease:
             owes = lease.owed or lease.handler is not None
             # The holder a takeover is owed from: the one whose lease ran out, or the one an
             # earlier takeover that failed was owed from, or none for a person's clear.
-            if lease.handler is not None:
-                owed: tuple[str | None, datetime | None] | None = (lease.handler, lease.expires)
+            # A takeover already owed keeps whom it is owed from, though a later taker that
+            # failed it too then died holding the lease.
+            owed: tuple[str | None, datetime | None] | None
+            if lease.owed:
+                owed = (lease.owed_from, lease.owed_expired)
+            elif lease.handler is not None:
+                owed = (lease.handler, lease.expires)
             else:
-                owed = (lease.owed_from, lease.owed_expired) if lease.owed else None
+                owed = None
             mine = self._holding(lease, holder, now, owed)
             try:
                 new = self._write(tag, mine, tries)
@@ -319,11 +324,17 @@ class AccountLease:
     def _rewrite(self, held: Held, lease: Lease, what: str, tries: Tries) -> Held:
         try:
             tag = self._write(held.tag, lease, tries)
-        except (StaleTag, BlobMissing):
+        except StaleTag:
             raise LeaseLost(
-                f"the account's lease was rewritten by another handler, so its {what} was "
-                "refused. This handler held it no longer, as after a pause past its expiry, and "
-                "the handler that took it over alarms"
+                f"the account's lease was rewritten since this handler's last answered write of "
+                f"it, so its {what} was refused. Either another handler took it over after its "
+                "expiry, and that takeover alarms, or a write of this handler's own landed with "
+                "its answer lost"
+            ) from None
+        except BlobMissing:
+            raise LeaseLost(
+                f"the account's lease is gone from {self.key}, so its {what} was refused, and "
+                "the next take halts on it as absent"
             ) from None
         except StoreError as error:
             raise LeaseLost(

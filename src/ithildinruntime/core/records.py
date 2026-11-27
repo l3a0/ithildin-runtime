@@ -1496,7 +1496,8 @@ class Lease(_Record):
     from a take of an expired lease or a person's clear until the takeover is
     journaled, so a release in between leaves the takeover owed. `owed_from` and
     `owed_expired` name the holder the takeover is owed from and when its lease
-    ran out, kept across that release, and are `None` for a person's clear.
+    ran out, kept across that release and through a later taker that dies
+    holding the lease, and are `None` for a person's clear.
     """
 
     format: int

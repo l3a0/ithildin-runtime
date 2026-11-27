@@ -160,6 +160,32 @@ def test_a_free_lease_with_a_takeover_owed_is_taken_as_a_takeover(store: object)
     assert _stored(store) == free_lease(10, False)
 
 
+def test_a_settled_takeover_owes_nothing_and_names_nobody(store: object) -> None:
+    clock = Clock()
+    lease = _lease(store, clock)
+    lease.take(A, _tries(clock), False, _absent)
+    clock.at += PERIOD + MARGIN + timedelta(seconds=1)
+    taken = lease.take(B, _tries(clock), True, _absent)
+    assert (taken.held.lease.owed_from, taken.held.lease.owed_expired) == (A.handler, AT + PERIOD)
+    lease.settled(taken.held, _tries(clock))
+    stored = _stored(store)
+    assert (stored.owed, stored.owed_from, stored.owed_expired) == (False, None, None)
+
+
+def test_a_takeover_owed_keeps_its_holder_through_a_taker_that_died_holding_it(
+    store: object,
+) -> None:
+    clock = Clock()
+    lease = _lease(store, clock)
+    lease.take(A, _tries(clock), False, _absent)
+    clock.at += PERIOD + MARGIN + timedelta(seconds=1)
+    # B takes it over, fails its takeover and dies holding the lease, with nothing released.
+    lease.take(B, _tries(clock), True, _absent)
+    clock.at += PERIOD + MARGIN + timedelta(seconds=1)
+    third = lease.take(Holder("c" * 32 + "-1"), _tries(clock), True, _absent)
+    assert (third.held.lease.owed_from, third.held.lease.owed_expired) == (A.handler, AT + PERIOD)
+
+
 def test_every_write_holds_new_bytes_and_a_new_tag(store: object) -> None:
     clock = Clock()
     lease = _lease(store, clock)
@@ -197,7 +223,7 @@ def test_a_holder_whose_lease_was_taken_over_cannot_renew_or_release_it(store: o
     frozen = lease.take(A, _tries(clock), False, _absent).held
     clock.at += PERIOD + MARGIN + timedelta(seconds=1)
     new = lease.take(B, _tries(clock), True, _absent).held
-    with pytest.raises(LeaseLost, match="rewritten by another handler"):
+    with pytest.raises(LeaseLost, match="rewritten since this handler.s last answered write"):
         lease.renew(frozen, _tries(clock))
     lost = lease.release(frozen, _tries(clock))
     assert lost is not None and "refused" in lost.reason

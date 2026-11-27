@@ -367,8 +367,10 @@ class TakeoverEntry:
     had expired unrenewed, or was free with a takeover still owed, before it acts.
 
     - `tag` is the lease's tag the take rewrote, and `count` the count it wrote.
-    - `holder` names the handler the lease held, or is `None` where it was free.
-    - `expired` is when that holder's lease ran out, or `None` where it was free.
+    - `holder` names the handler the takeover is owed from: the one whose lease
+      ran out, or the one an earlier takeover that failed was owed from. It is
+      `None` only after a person's clear.
+    - `expired` is when that holder's lease ran out, or `None` after a clear.
     - `orders` names the broker's order list the take read and stored, from `since`.
     - `late` names each order that had a `sending` and no answer here, `Sending`
       or `InDoubt`, and that the list omits. An older holder may still send one,

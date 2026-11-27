@@ -237,7 +237,7 @@ def _unless_late(view: View, client_order_id: str | None, what: str) -> None:
         raise Halt(
             f"{what} under {client_order_id}, a late order under an older lease: the takeover "
             f"at entry {took} found it sent with no answer, and the broker's order list it "
-            "stored omits it"
+            "stored omits it. It may be working at the broker, so a person looks it up there"
         )
 
 

@@ -898,6 +898,8 @@ classDiagram
         +str status
         +int count
         +bool owed
+        +str owed_from
+        +datetime owed_expired
     }
     class Plan {
         +int format
@@ -2115,7 +2117,7 @@ The supervisor writes the same record for a worker that failed, naming its resta
 
 - `Plan` holds the run's decisions, each with its time and the strategies deciding at it. One function in `core` builds it from the schedules and the trading calendar.
 - `JournalEntry` is the one numbered record of what the platform did, chained to the entry before it.
-- `Lease` names its holder down to the handler, and when it expires, and leaves those `null` while the lease is free. It carries `status` only on a plan's lease, where it holds the run's status, so an account's lease leaves it `null`. `count` rises by one on every rewrite, so no two writes hold the same bytes and S3's tag never repeats. `owed` is set only on an account's lease, from a take of an expired lease or a person's clear until the takeover's entry is journaled, so a release in between leaves the takeover owed.
+- `Lease` names its holder down to the handler, and when it expires, and leaves those `null` while the lease is free. It carries `status` only on a plan's lease, where it holds the run's status, so an account's lease leaves it `null`. `count` rises by one on every rewrite, so no two writes hold the same bytes and S3's tag never repeats. `owed` is set only on an account's lease, from a take of an expired lease or a person's clear until the takeover's entry is journaled, so a release in between leaves the takeover owed. `owed_from` and `owed_expired` name the holder the takeover is owed from and when its lease ran out, kept across that release and through a later taker that dies holding the lease, and are `null` after a person's clear.
 
 ##### How the storage port rewrites a blob
 
