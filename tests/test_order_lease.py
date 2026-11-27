@@ -393,11 +393,30 @@ def test_a_renewal_that_finds_the_lease_gone_sends_nothing(sent: bool) -> None:
                 world.store.drop(KEY)
 
     world.store.before = before
-    halted(world, f"the account's lease is gone from {KEY}, so its renewal was refused")
+    reason = halted(world, f"the account's lease is gone from {KEY}, so its renewal was refused")
+    assert "The owner's step" not in reason, "a gone lease is not a store's outage"
     assert world.state() is OrderState.ABANDONED
     world.store.before = lambda *_: None
-    # Its own `sending` is in the journal now, so the next take finds the lease lost.
+    # The next take finds the lease lost: on a first use its only `sending` is the refused
+    # order's own, and on a journal that sent an earlier one stands as well.
     halted(world, "lease is absent", lambda: world.send(2))
+
+
+def test_a_renewal_unanswered_that_finds_the_lease_gone_on_reading_back_sends_nothing() -> None:
+    """The renewal's answer is lost, and the read that settles it finds no lease at all."""
+    world = World()
+    replaces: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY):
+            replaces.append(number)
+            if len(replaces) == 1:
+                world.store.drop(KEY)
+                raise StoreUnavailable(key, "no answer")
+
+    world.store.before = before
+    halted(world, "so its renewal was refused")
+    assert world.state() is OrderState.ABANDONED
 
 
 def test_a_release_whose_first_try_landed_unanswered_leaves_the_lease_free() -> None:
@@ -604,6 +623,8 @@ def test_a_failed_takeover_halts_new_orders_and_the_next_take_owes_it(fails: str
         (late,),
     )
     assert any(f"taken over from {FROZEN}" in said for said in world.alarms.sent)
+    # The release left the lease free, so no taker died holding it.
+    assert not any("failed that takeover" in said for said in world.alarms.sent)
     if fails == "the journal":
         # Its list was stored under the same time, so the second is stored beside it.
         assert entry.orders.key == takeover_key(DEPLOYMENT, RUN, NOW, 2)
