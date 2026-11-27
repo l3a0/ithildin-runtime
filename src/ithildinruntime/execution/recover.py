@@ -91,8 +91,8 @@ from .sync import UNSETTLED, journal_read, keeper, read_broker
 
 __all__ = ["RecoverStage", "differences", "fills_since"]
 
-# The format of the stage's files, each lookup it stores included, and of its result header. Format 2's capture holds the
-# records read, which format 1's does not.
+# The format of the stage's files, each lookup it stores included, and of its result header.
+# Format 2's capture holds the records read, which format 1's does not.
 _FORMAT = 2
 # How long before the bound's own time the records and the fills are asked from, so one the
 # broker posts late is still fetched.
