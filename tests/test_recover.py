@@ -919,6 +919,35 @@ def test_2_a_store_that_stops_answering_mid_settle_pages_once_and_names_every_or
     assert names.endswith("Look each up on the broker's site")
 
 
+def test_2_a_store_that_stops_answering_while_a_lookup_is_stored_pages_once() -> None:
+    """Storage's outage is the order path's `Outage`, so the next order is not looked up."""
+    world = planned_pair(*SENT, *((kind, 2) for kind, _ in SENT))
+    asked: list[str] = []
+
+    def down(number: int, op: str, key: str) -> None:
+        if "/lookup-" in key:
+            raise StoreUnavailable(key, "AccessDenied: the store's own text")
+
+    def find_order(intent, *args):
+        asked.append(intent.client_order_id)
+        world.store.before = down
+        return world.broker().find_order(intent, *args)
+
+    alarms = len(world.alarms.sent)
+    result = world.attempt(world.stage(brokers=doctored(world, find_order=find_order)))
+    assert result.halt is not None
+    assert asked == [ONE]
+    reason = result.halt.reason
+    assert f"Nothing more is settled of the decisions at {AT1}, whose orders are {ONE}, {TWO}" in (
+        reason
+    )
+    # The outage's own page, and one naming every order.
+    sent = world.alarms.sent[alarms:]
+    assert len(sent) == 2, sent
+    assert "did not store" in sent[0] or "did not answer" in sent[0]
+    assert ONE in sent[1] and TWO in sent[1]
+
+
 def _other_row(world: RecoverWorld):
     """A list answer whose one row is the order sent under ONE, for other shares."""
     since = close_of(DAYS[0])

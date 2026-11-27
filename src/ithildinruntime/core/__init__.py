@@ -21,7 +21,7 @@ from .codec import (
 )
 from .exact import *  # noqa: F403
 from .exact import __all__ as _exact
-from .halt import Halt, Stopped
+from .halt import Halt, Outage, Stopped
 from .keys import *  # noqa: F403
 from .keys import __all__ as _keys
 from .limits import *  # noqa: F403
@@ -108,6 +108,7 @@ __all__ = [
     "CodecError",
     "ExchangeTime",
     "Halt",
+    "Outage",
     "Places",
     "ScheduleTime",
     "Session",
