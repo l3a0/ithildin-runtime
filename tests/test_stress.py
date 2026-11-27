@@ -149,8 +149,8 @@ def _section(text: str, opening: str) -> str:
 
 
 def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
-    # The owner types each floor into the hard caps by hand from what-a-person-runs.md, so a
-    # floor mistyped there, or a close or floor changed in design.md, fails here.
+    # The owner types each floor into the hard caps by hand from what-a-person-runs.md's steps, so
+    # those steps are held whole: each floor with its fund, and SPY's where a strategy holds both.
     design = (DOCS / "design.md").read_text(encoding="utf-8")
     why = _section(design, "**Why SPY's and QQQ's caps reach back to 1987.**")
     steps = _section(
@@ -159,8 +159,9 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     )
     spx, ndx = FLOORS["the-s-and-p-500"], FLOORS["the-nasdaq-100"]
     spy, qqq = spx[2], ndx[2]
-    # Every number the paragraph holds, and how many times, so a typo in one of two copies fails.
-    # The percentages are the falls and the records' moves the paragraph compares them with.
+    # Every figure with a decimal point the paragraph holds, and how many times, so a typo in one
+    # of two copies fails. The percentages are the falls and the records' moves it compares them
+    # with. Its dates and whole percentages are not held here.
     assert Counter(re.findall(r"\d+\.\d+", why)) == Counter(
         {**dict.fromkeys((*spx[0], *ndx[0]), 1), "224.84": 2, spy: 2, qqq: 2}
         | {"20.47": 1, "24.57": 1, "15.08": 1, "21.46": 1, "14.52": 1, "17.09": 2}
@@ -168,13 +169,20 @@ def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
     for fund, floor in (("SPY", spy), ("QQQ", qqq)):
         leg = f"{fund} leg write a `stress_move` of at least {floor} and a `stress_low` of {floor}"
         assert leg in why, fund
-    assert f"{spy} where a leg is SPY" in steps and f"{qqq} where a leg is QQQ" in steps
+    assert "and a strategy with both legs writes the larger, SPY's" in why
+    assert f"{spy} where a leg is SPY, and otherwise {qqq} where a leg is QQQ" in steps
     table = (DOCS / "architecture" / "08-crosscutting-concepts.md").read_text(encoding="utf-8")
-    assert f"{spy} for a strategy with a SPY leg" in table
-    assert f"{qqq} for one with a QQQ leg" in table
-    # Every page that names a number of eight places or more from 0.2 to 0.3 names a floor.
+    alone = "a QQQ leg and no SPY leg"
+    assert (
+        f"{spy} for a strategy with a SPY leg, and at or above {qqq} for one with {alone}" in table
+    )
+    assert f"SPY leg hold it at or above {spy}, and of one with {alone} at or above {qqq}" in design
+    # A number on any page that has eight places or more from 0.2, or that starts as a floor does
+    # to its sixth place, is a floor whole. So a floor mistyped in an early place, or cut short,
+    # fails.
     for page in sorted(DOCS.rglob("*.md")):
-        for named in re.findall(r"\b0\.2\d{7,}\b", page.read_text(encoding="utf-8")):
+        text = page.read_text(encoding="utf-8")
+        for named in re.findall(r"\b0\.2\d{7,}\b|\b0\.(?:245705|214556)\d*", text):
             assert named in (spy, qqq), f"{page.name} names {named}"
 
 
