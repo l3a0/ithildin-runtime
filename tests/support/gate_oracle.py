@@ -11,9 +11,10 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from fractions import Fraction
 from itertools import chain, combinations
+from zoneinfo import ZoneInfo
 
 from ithildinruntime.core import GateInputs, OrderIntent, Snapshot, StressRecord
 
@@ -52,6 +53,32 @@ class Answer:
     # The same with no order counted but the open ones.
     account_resting: Mapping[str, tuple[Fraction, Fraction]]
     strategy_resting: Mapping[str, tuple[Fraction, Fraction]]
+
+
+def _split_ahead(snapshot: Snapshot, instrument: str, close: datetime) -> bool:
+    """A split row whose first session is the session the close ends or later, on a bar it misses.
+
+    A bar accounts for a split where its basis is `adjusted` and its source
+    adjusted it on or after the split's first session, or where it is raw, on
+    or after the split, and the split falls before the instrument's first
+    covered session.
+    """
+    today = close.astimezone(ZoneInfo("America/New_York")).date()
+    bars = snapshot.bars.get(instrument, {}).get("1d", ())
+    covered = snapshot.splits.covered_from.get(instrument)
+
+    def accounts(bar: object, first: date) -> bool:
+        as_of = getattr(bar, "source_as_of", None)
+        basis = getattr(bar, "basis", None)
+        if basis == "adjusted" and as_of is not None and as_of >= first:
+            return True
+        session = getattr(bar, "session", None)
+        return basis == "raw" and session >= first and covered is not None and first < covered
+
+    return any(
+        row.first_session >= today and not all(accounts(b, row.first_session) for b in bars)
+        for row in snapshot.splits.rows.get(instrument, ())
+    )
 
 
 def answer(
@@ -185,6 +212,7 @@ def answer(
         ("max_open_orders", len(opens) + 1 > count, Fraction(len(opens) + 1), Fraction(count)),
         ("max_net", "max_net" in refusing, refusing.get("max_net"), bounds["max_net"]),
         ("loss_stop", loss > stop, loss, stop),
+        ("split", adding and _split_ahead(snapshot, i, close), None, None),
         (
             "moc_cutoff",
             str(intent.type) == "market_on_close" and minutes < cutoff,

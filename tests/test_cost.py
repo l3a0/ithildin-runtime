@@ -56,6 +56,7 @@ from ithildinruntime.runtime.loop import Item, ReceiveLoop, Stage, Table, routes
 from tests.support.queues import Folder, SystemTimer, running
 from tests.support.queues import storage as folder_storage
 from tests.support.quotes import NONE_READ
+from tests.support.splits import NO_SPLITS
 from tests.test_data_source import Timer
 from tests.test_storage_contract import Alarms
 
@@ -189,6 +190,7 @@ def snapshot(*instruments: str) -> Snapshot:
         ledgers={},
         **NONE_READ,
         clock=ClockReading(AT, None),
+        splits=NO_SPLITS,
     )
 
 

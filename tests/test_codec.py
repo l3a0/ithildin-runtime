@@ -293,6 +293,40 @@ def test_decode_reads_every_kind_of_value_a_field_can_hold() -> None:
         faults=("a reason",),
         quotes_read_at=AT,
         clock=core.ClockReading(AT, None),
+        splits=core.SplitsRead(
+            sha256="0" * 64,
+            rows={
+                InstrumentId("USO"): (
+                    core.SplitRow(
+                        added=date(2026, 11, 27),
+                        kind="split",
+                        instrument=InstrumentId("USO"),
+                        first_session=date(2020, 4, 29),
+                        last_session=None,
+                        new_shares=1,
+                        old_shares=8,
+                        known_at=AT,
+                        read_from="made up",
+                        line=18,
+                    ),
+                )
+            },
+            covered_from={InstrumentId("USO"): date(2026, 10, 30)},
+            pairs=(
+                core.PairCover(
+                    instrument=InstrumentId("USO"),
+                    earlier=date(2026, 11, 2),
+                    later=date(2026, 11, 3),
+                    covered=None,
+                    source="sealed",
+                    partition="quotes/ticker=USO/date=2026-11-03.parquet",
+                    partition_sha256="1" * 64,
+                    close_prices=("60.25",),
+                    close_kind="the previous session's close",
+                    fault=None,
+                ),
+            ),
+        ),
     )
     back = decode(encode(value), core.Snapshot)
     assert back == value
@@ -391,21 +425,21 @@ def test_a_decimal_too_large_to_write_is_refused() -> None:
         (
             b'{"bars":{},"clock":{"answers":null,"read_at":"2026-11-02T20:40:00.000000Z"},'
             b'"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},"ledgers":{},'
-            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":{},"status":{}}',
+            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":{},"splits":{"covered_from":{},"pairs":[],"rows":{},"sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"status":{}}',
             core.Snapshot,
             "an object where a list is",
         ),
         (
             b'{"bars":{},"clock":{"answers":null,"read_at":"2026-11-02T20:40:00.000000Z"},'
             b'"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},"ledgers":{},'
-            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":[],"status":{"USO":"rotten"}}',
+            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":[],"splits":{"covered_from":{},"pairs":[],"rows":{},"sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"status":{"USO":"rotten"}}',
             core.Snapshot,
             "a status no BarStatus names",
         ),
         (
             b'{"bars":{},"clock":{"answers":null,"read_at":"2026-11-02T20:40:00.000000Z"},'
             b'"decision_at":"2026-11-02T20:40:00.000000Z","faults":[],"flags":{},"ledgers":[],'
-            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":[],"status":{}}',
+            b'"partitions":[],"provisional":false,"quotes":{},"quotes_read_at":null,"rows":{},"segments":[],"splits":{"covered_from":{},"pairs":[],"rows":{},"sha256":"0000000000000000000000000000000000000000000000000000000000000000"},"status":{}}',
             core.Snapshot,
             "a list where a mapping is",
         ),

@@ -23,6 +23,7 @@ from ithildinruntime.core import (
     parse_strategy,
 )
 from tests.support.quotes import NONE_READ, quote, read_at
+from tests.support.splits import NO_SPLITS
 
 GLD, USO = InstrumentId("GLD"), InstrumentId("USO")
 TABLE = load_sessions()
@@ -101,6 +102,7 @@ def snapshot(
         "ledgers": {},
         **NONE_READ,
         "clock": ClockReading(at or TABLE.session(gld[-1].session).close, None),
+        "splits": NO_SPLITS,
     }
     return Snapshot(**fields | changes)  # type: ignore[arg-type]
 

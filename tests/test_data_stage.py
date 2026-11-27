@@ -40,6 +40,7 @@ from ithildinruntime.runtime.loop import Item, Table
 from tests.support import lake as lakes
 from tests.support.clocks import never_asked
 from tests.support.quotes import quote
+from tests.support.splits import NO_SPLITS
 from tests.test_data_source import FIRST, LAST, Clock, Timer, before, close, settings, unlist
 from tests.test_data_spikes import bar
 from tests.test_storage_contract import Alarms
@@ -580,7 +581,9 @@ def test_18_the_reread_alarm_names_what_changed_in_the_snapshot(names: tuple[str
 
     hashes = {"chan_bollinger": "c" * 64}
     header = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
-    base = Snapshot(close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None, MEASURED_NOTHING)
+    base = Snapshot(
+        close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None, MEASURED_NOTHING, NO_SPLITS
+    )
     gld = InstrumentId("GLD")
     flag = SpikeFlag(LAST, "close", Decimal(1), Decimal(2), "a rule", "a note")
     two = close(LAST) + timedelta(minutes=1)
@@ -626,7 +629,9 @@ def test_18_the_reread_alarm_names_a_change_in_the_header(change: str, said: str
 
     hashes = {"chan": "c" * 64}
     first = BlobHeader(1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", hashes)
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None, MEASURED_NOTHING)
+    snap = Snapshot(
+        close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None, MEASURED_NOTHING, NO_SPLITS
+    )
     later, later_snap = first, snap
     if change == "config_hashes":
         later = dataclasses.replace(first, config_hashes={**hashes, "other": "d" * 64})
@@ -660,7 +665,9 @@ def test_18_the_reread_alarm_names_a_capture_that_holds_other_than_one_snapshot(
     header = BlobHeader(
         1, DEPLOYMENT, RUN, "data", "capturing", close(LAST), {}, "r1", TABLE.hashes_for("data")
     )
-    snap = Snapshot(close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None, MEASURED_NOTHING)
+    snap = Snapshot(
+        close(LAST), {}, {}, {}, False, {}, (), (), {}, {}, (), None, MEASURED_NOTHING, NO_SPLITS
+    )
 
     def holding(n: int) -> bytes:
         return encode_output(Snapshot, OutputFile(header, (snap,) * n, False))

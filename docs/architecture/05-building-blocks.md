@@ -170,7 +170,7 @@ moment, not against a blob.
 | Backtest | A folder holding marketlake's lake and the folder of segments beside it, the bars and quotes a test names | History clock | Simulated, by order type: a market-on-close order at its session's official close, and the day's market order at once, a buy at the decision's ask and a sale at its bid | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
 | Shadow | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until a decision's stored snapshot holds the official close, which the data source holds from the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten: at the stale lag of 0 a strategy's file writes, data reads the instrument as stale and its result holds the halt. The order keeps working | The shadow environment's bucket, with the shadow journal | Sent |
 | Paper | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
-| Live | marketlake's S3 bucket, captured bars, once [a split record covers them](../team-charter.md#5-release), and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
+| Live | marketlake's S3 bucket, captured bars, read under [the record of splits](../team-charter.md#5-release), and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
 
 Every mode reads bars through one `DataSource`, which sits inside `data` and calls the same marketlake reader over the same mirror. The modes differ in
 which bucket the mirror reads, which bars that bucket holds and which clock drives them, not in how they read. A lookback that holds the imported download beside captured bars [halts](../design.md#a-lookback-that-crosses-a-change-of-series), unless the download is Schwab's, adjusted to the session capture began on. For GLD and USO an exploratory comparison with a second vendor shows the two on one scale there, and nothing measures it for another instrument. Shadow
@@ -439,7 +439,38 @@ classDiagram
         +list faults
         +datetime or None quotes_read_at
         +ClockReading clock
+        +SplitsRead splits
         +require_fresh(needed)
+    }
+    class SplitsRead {
+        +str sha256
+        +dict rows
+        +dict covered_from
+        +list pairs
+    }
+    class PairCover {
+        +InstrumentId instrument
+        +date earlier
+        +date later
+        +SplitRow or None covered
+        +str or None source
+        +str or None partition
+        +str or None partition_sha256
+        +list close_prices
+        +str close_kind
+        +str or None fault
+    }
+    class SplitRow {
+        +date added
+        +str kind
+        +InstrumentId instrument
+        +date first_session
+        +date or None last_session
+        +int or None new_shares
+        +int or None old_shares
+        +datetime or None known_at
+        +str read_from
+        +int line
     }
     class ClockReading {
         +datetime read_at
@@ -750,6 +781,7 @@ classDiagram
         CLOSE_ENTRY
         IN_DOUBT
         POSITION
+        SPLIT
     }
     class PastLimit {
         +Limit limit
@@ -926,6 +958,10 @@ classDiagram
     Snapshot o-- Segment
     Snapshot o-- SpikeFlag
     Snapshot o-- ClockReading
+    Snapshot o-- SplitsRead
+    SplitsRead o-- SplitRow
+    SplitsRead o-- PairCover
+    PairCover --> SplitRow
     ClockReading o-- TimeAnswer
     Bar --> Instrument
     Quote --> Instrument
@@ -1441,7 +1477,9 @@ A snapshot's quotes share one `captured_at`, and `Snapshot` refuses to be built 
 
 `clock` is the reading of the machine's clock the decision was judged by, taken after the last answer the read waited on, as [The time servers](03-context-and-scope.md#the-time-servers) says. Its `answers` are `None` where nothing measured the clock, and otherwise hold two servers or more.
 
-The data module's file format is 4. The codec refuses a record with a field it does not know or lacks, so a release on either side of this refuses the other's snapshot rather than misreading it.
+`splits` is what the decision read of the record of splits, `data/splits.csv`, which `data/splits.py` loads and judges each stored snapshot by: the file's SHA-256, every split row known by the decision for each instrument it reads, the first session of each instrument's earliest covered row, and, for each pair of sessions the checks read, the covered row that holds it or the quote that states the close of the session before, with a sealed day's key and SHA-256. A replay reads these and decides the same, whatever the file holds later. The design doc's rule that [a split reads as neither a gain nor a loss](../design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) says what each halts. How many sealed days the read opened is in `Reading` and the read's log line, not here, because the run's cache answers a second read of one decision with none.
+
+The data module's file format is 5. The codec refuses a record with a field it does not know or lacks, so a release on either side of this refuses the other's snapshot rather than misreading it.
 
 A snapshot's `flags` map each flagged instrument to its `SpikeFlag` records, each holding the session, the price, the price it was judged against, the rule and a note, so monitoring's alert has a field to read. A bar's flag from the contradiction rule halts the decision once its snapshot is stored, a quote's adds no halt to the judge's, and a flag from the move rule or the below-the-low rule halts nothing. The price itself stays as received in its bar or its quote. A flag on a quote names the field `bid`, `ask` or `midpoint`.
 
@@ -1666,7 +1704,7 @@ A refusal names the first of these that applies, so the same order always names 
 2. A close entry.
 3. An order in doubt on the same instrument.
 4. An order that names no strategy, which has no position to count a worst loss against.
-5. The seven limits, in the order of the table below. A figure at its limit passes, for all seven.
+5. The seven limits, in the order of the table below. A figure at its limit passes, for all seven. Between the loss stop and the market-on-close cutoff the gate reads one state, `SPLIT`: an order that adds on an instrument for which the snapshot holds a known split row whose first session is on or after the decision's, on bars that leave it unaccounted for, as the design doc's rule that [a split reads as neither a gain nor a loss](../design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) says. It carries no figure.
 
 `Verdict` carries what a person needs to see why: the figure and its bound, whether the order adds, the strategy's worst loss with the order counted, the stress move the check used, the day's loss, and each of `max_position`, `max_gross` and `max_net` that is past. Figures are compared exactly and rounded only to be recorded. A worst loss rounds up, so it is never recorded smaller than it is. A verdict that contradicts itself, such as an approval that names a limit, raises an error as it is built.
 

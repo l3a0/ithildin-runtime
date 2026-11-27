@@ -74,11 +74,15 @@ judges both. Data's stage halts where one leg's bars are of two series, such as
 `adjusted` and `raw` ones, and where a bar leaves one of its four price-kind
 fields unstated. It passes one change, from Schwab's import to the captured bars
 from the session the import is adjusted to, which it reads as one scale. A
-window of one series can be of prices as traded, as captured bars are, and no
-halt on the prices stops a split inside it, across that one change, or between
-its newest bar and the quote. docs/design.md's rule that a split reads as neither a gain nor
-a loss says what that costs, and hard limit 3's second exception, on shadow and
-paper alone, covers captured bars and the quote after them.
+window of one series can be of prices as traded, as captured bars are, so data
+checks it against the record of splits, `data/splits.csv`, which halts a
+decision on a split it holds and on one it does not, inside the window, across
+that one change or between its newest bar and the quote. docs/design.md's rule
+that a split reads as neither a gain nor a loss says what each halt costs, and
+which splits still read as a move: one that moves the price by 1 percent or
+less, a forward split under ten for seven or a reverse split whose rise is
+under 42.9 percent that Schwab does not restate, and one inside a covered span
+both vendor lists missed.
 
 Every figure is a `Decimal` at 28 digits, worked out inside a context of the
 model's own, so the context a caller set changes no byte. The model decides on

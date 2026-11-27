@@ -69,6 +69,7 @@ from ithildinruntime.risk import Gate
 from tests.support import gates
 from tests.support.order_world import Alarms, Clock, Wired, caps_blob, order
 from tests.support.quotes import NONE_READ, quote, read_at
+from tests.support.splits import NO_SPLITS
 
 ACCOUNT, DEPLOYMENT = "sim-1", "d-7"
 CASH = Decimal(1_000_000)
@@ -180,6 +181,7 @@ class SimWorld:
             "ledgers": {},
             **read,
             "clock": ClockReading(at, None),
+            "splits": NO_SPLITS,
         }
         return Snapshot(**fields | changes)  # type: ignore[arg-type]
 

@@ -55,6 +55,7 @@ from tests.support import gates, segments
 from tests.support import lake as lakes
 from tests.support import made_lake as made
 from tests.support.order_world import caps_blob
+from tests.support.splits import all_covered
 from tests.support.trading import _record, vintage
 from tests.test_captured_bars import BEFORE_CAPTURE, CAPTURED, IMPORTED, WALKS
 from tests.test_storage_contract import Alarms
@@ -73,6 +74,8 @@ FILE = TRACKED.replace("entry = 1\n", "entry = 0.01\n")
 KINDS = QuoteKinds(
     (QuoteKindRow(DAYS[0], QUOTE_SOURCE, DAYS[0], DAYS[-1], segments.KIND, "a test"),)
 )
+# A record of splits that covers the made-up dates, as test_captured_bars.py's does.
+SPLITS = all_covered(WALKS)
 START_ORDER = ("data", "alpha", "cost", "risk", "portfolio", "execution")
 
 
@@ -180,6 +183,7 @@ class Run:
                 mirror=self.root / "mirror",
                 servers=None,
                 quote_kinds=KINDS,
+                splits=SPLITS,
             ),
             "alpha": lambda: entry.run_alpha(self.worker("alpha")),
             "cost": lambda: entry.run_cost(self.worker("cost")),

@@ -30,7 +30,9 @@ from ithildinruntime.core import (
     classify,
     exposure,
 )
+from tests.support import splits
 from tests.support.gate_oracle import Answer, answer
+from tests.support.gate_oracle import _split_ahead as split_ahead
 from tests.support.gates import (
     CENT,
     CHAN,
@@ -40,6 +42,8 @@ from tests.support.gates import (
     LOOSE,
     OTHER,
     SPY,
+    TABLE,
+    TODAY,
     USO,
     World,
     book,
@@ -53,6 +57,8 @@ from tests.support.gates import (
     valuation,
 )
 from tests.support.quotes import quote, read_at
+
+DAYS = sorted(TABLE.sessions)
 
 NAMES = (GLD, USO, SPY)
 SEEDS = 4_000
@@ -207,7 +213,44 @@ def _world(seed: int) -> World:
     # the net cap is half of it.
     worth = made.losing(draw.randint(-30, 30)).inputs.valuation.value
     made = made.given(valuation=_valued(draw, max(worth, Decimal(1)), instruments))
-    return made.at(records=_records(seed, made))
+    return _split(seed, made.at(records=_records(seed, made)))
+
+
+def _split(seed: int, made: World) -> World:
+    """A split row on the order's instrument in some worlds, before or after the session.
+
+    Drawn apart from the rest, so the other worlds are the ones the earlier seeds made.
+    """
+    draw = random.Random(f"splits of {seed}")
+    if draw.random() >= 0.6:
+        return made
+    i = made.intent.instrument
+    first = DAYS[DAYS.index(TODAY) + draw.choice((-1, 0, 0, 0, 1, 3))]
+    row = splits.split(str(i), first, draw.choice((2, 1)), draw.choice((1, 8)) or 1)
+    if row.new_shares == row.old_shares:
+        row = replace(row, new_shares=3)
+    snap = made.snapshot
+    shape = draw.choice(("as built", "adjusted", "mixed", "raw"))
+    if shape != "as built":
+        # Adjusted after the split, which trades through it, raw, or the newest bar alone raw.
+        def bar_of(b: object, n: int, count: int) -> object:
+            if shape == "raw" or (shape == "mixed" and n == count - 1):
+                return replace(b, basis="raw", source_as_of=None)
+            return replace(b, source_as_of=first)
+
+        snap = replace(
+            snap,
+            bars={
+                k: {"1d": tuple(bar_of(b, n, len(by["1d"])) for n, b in enumerate(by["1d"]))}
+                for k, by in snap.bars.items()
+            },
+        )
+    covered = {}
+    if draw.random() < 0.5:
+        # The instrument's first covered session, on either side of the split.
+        covered = {i: DAYS[DAYS.index(first) + draw.choice((-2, 0, 1, 1))]}
+    split_read = replace(snap.splits, rows={i: (row,)}, covered_from=covered)
+    return made.at(snapshot=replace(snap, splits=split_read))
 
 
 def _records(seed: int, made: World) -> tuple[StressRecord, ...]:
@@ -367,6 +410,12 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
             close = world.snapshot.bars[i]["1d"][-1].close
             middle = price(world.snapshot, i)
             seen["four prices apart"] += len({q.bid, q.ask, q.last, close, middle}) == 5
+        snap = world.snapshot
+        uncovered = replace(snap, splits=replace(snap.splits, covered_from={}))
+        seen["refused or released by the first covered session"] += verdict.adding and (
+            split_ahead(snap, intent.instrument, CLOSE)
+            != split_ahead(uncovered, intent.instrument, CLOSE)
+        )
         seen["approved"] += verdict.approved
         if verdict.limit is not None:
             seen[f"refused on {verdict.limit}"] += 1
@@ -395,6 +444,7 @@ def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[W
         "a quote beside a close",
         "a midpoint at five places",
         "four prices apart",
+        "refused or released by the first covered session",
         *(f"refused on {limit}" for limit in Limit if limit is not Limit.CLOSE_ENTRY),
     ):
         assert seen[kind] > 10, (kind, seen)

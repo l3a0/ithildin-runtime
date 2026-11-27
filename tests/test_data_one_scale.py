@@ -180,6 +180,16 @@ OTHER_BARS = {
 }
 
 
+# The record of splits halts too where a change moves where its pairs start, since the stored
+# covers are of the bars as read. A raw earlier bar starts them at the import's first session.
+SPLITS_TOO = {
+    "a-raw-earlier-bar": (
+        "the stored snapshot names no cover for 39 pairs of USO's sessions from 2026-09-04 to "
+        "2026-10-30, so it is not the read this release writes",
+    ),
+}
+
+
 @pytest.mark.parametrize("name", OTHER_BARS)
 def test_2_a_pair_that_differs_in_one_field_or_origin_halts_on_the_stored_snapshot(
     first: Decided, name: str
@@ -191,8 +201,10 @@ def test_2_a_pair_that_differs_in_one_field_or_origin_halts_on_the_stored_snapsh
     stored = replace(first.snapshot, bars={**first.snapshot.bars, USO: {"1d": bars}})
     one, two = bars[len(IMPORTED) - 1], bars[len(IMPORTED)]
     assert (one.session, two.session) == (IMPORTED[-1], SEAM)
-    assert judge(stored, (GLD, USO), measured=False) == (
+    found = judge(stored, (GLD, USO), measured=False)
+    assert found == (
         reason("USO", one.session, two.session, str(series_of(one)), str(series_of(two))),
+        *SPLITS_TOO.get(name, ()),
     )
 
 
@@ -210,6 +222,10 @@ def test_2_the_pair_in_the_other_order_halts(first: Decided) -> None:
             CAPTURED_SERIES,
             f"adjusted from {SCHWAB_IMPORT} as of {SEAM}",
         ),
+        "the stored snapshot names no cover for 1 pairs of USO's sessions from 2026-11-03 to "
+        "2026-12-01, so it is not the read this release writes",
+        "USO's newest bar is of 2026-11-03, not the session before the quote's own of 2026-12-01, "
+        "so no quote states its close. A bar of the session before releases it",
     )
 
 

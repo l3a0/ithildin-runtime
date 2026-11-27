@@ -39,6 +39,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.risk import Gate
 from tests.support.quotes import NONE_READ, quote, read_at
+from tests.support.splits import NO_SPLITS
 from tests.support.spreads import bar
 
 GLD, USO, SPY = InstrumentId("GLD"), InstrumentId("USO"), InstrumentId("SPY")
@@ -213,6 +214,7 @@ def snapshot(
         "ledgers": {},
         **NONE_READ,
         "clock": ClockReading(at, None),
+        "splits": NO_SPLITS,
     }
     return Snapshot(**fields | changes)  # type: ignore[arg-type]
 

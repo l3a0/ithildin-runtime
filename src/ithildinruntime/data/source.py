@@ -85,7 +85,7 @@ import itertools
 import logging
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -106,10 +106,12 @@ from ithildinruntime.core import (
     CodecError,
     Halt,
     InstrumentId,
-    Series,
+    PairCover,
+    Quote,
     Session,
     Snapshot,
     SpikeFlag,
+    SplitsRead,
     Timer,
     clock_faults,
     exceeds_places,
@@ -128,7 +130,6 @@ from .mirror import MANIFEST, Checked, LakeRoot, Mirror, vintage_id
 from .reference import (
     CAPTURE_SOURCE,
     QUOTE_SOURCE,
-    SCHWAB_IMPORT,
     PriceKinds,
     QuoteKinds,
     SecurityMaster,
@@ -136,7 +137,7 @@ from .reference import (
     load_price_kinds,
     load_quote_kinds,
 )
-from .sealed import is_listed, read_sealed
+from .sealed import StatedClose, is_listed, partition_key, read_sealed, stated_close
 from .segments import read_quotes
 from .spikes import (
     CONTRADICT,
@@ -147,6 +148,7 @@ from .spikes import (
     quote_flags,
     spike_flags,
 )
+from .splits import QUOTE, SEALED, Pair, SplitRecord, check_splits, load_splits, one_scale, pairs
 
 __all__ = ["DAILY", "DataSettings", "LakeSource", "Reading", "judge"]
 
@@ -229,6 +231,9 @@ class Reading:
     quote_calls: int
     quote_seconds: float | None
     cycle_age: timedelta | None
+    # The sealed days the record of splits opened, which the run's cache makes 0 on a second
+    # read of the same decision, so it is not in the snapshot.
+    split_days: int = 0
 
 
 @dataclass
@@ -236,6 +241,8 @@ class _Answers:
     """Each session's answer from `load_bars`, kept for the run, keyed by file hashes."""
 
     rows: dict[tuple[Any, ...], dict[str, Any] | None] = field(default_factory=dict)
+    # Each sealed day's stated close, keyed by its partition's key and SHA-256 in the manifest.
+    closes: dict[tuple[str, str], StatedClose] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -258,6 +265,7 @@ class LakeSource:
         master: SecurityMaster | None = None,
         kinds: PriceKinds | None = None,
         quote_kinds: QuoteKinds | None = None,
+        splits: SplitRecord | None = None,
     ) -> None:
         self._mirror = mirror
         self._live = live
@@ -271,6 +279,15 @@ class LakeSource:
         self._kinds = kinds or load_price_kinds()
         self._quote_kinds = quote_kinds or load_quote_kinds()
         self._answers = _Answers()
+        # A record that cannot be loaded halts every decision, as a missing input.
+        self._splits: SplitRecord | Halt
+        if splits is not None:
+            self._splits = splits
+        else:
+            try:
+                self._splits = load_splits(master=self._master, sessions=self._sessions)
+            except Halt as halt:
+                self._splits = halt
 
     @property
     def instruments(self) -> tuple[InstrumentId, ...]:
@@ -288,7 +305,7 @@ class LakeSource:
         `core.DataSource` returns a snapshot alone, so a caller of this method
         never sees `Reading.halts`. A clock past a bound, a missing, stale or
         unstated input, a bar whose prices contradict each other, two bars of one
-        instrument that are of two series, but for the one change `_one_scale`
+        instrument that are of two series, but for the one change `one_scale`
         passes, or a quote that cannot be read,
         therefore raises here rather than come back as a snapshot that reads as
         usable.
@@ -305,6 +322,9 @@ class LakeSource:
         `report` is called after each call the read of the quotes makes.
         """
         settings = self._settings
+        record = self._splits
+        if isinstance(record, Halt):
+            raise Halt(record.reason)
         if settings.stale_lag is None:
             raise Halt("no stale lag is written, and an absent lag is a missing input")
         latest = self._latest_ended(decision_at)
@@ -350,6 +370,9 @@ class LakeSource:
                     found = quote_flags(quote, session.day, held, settings.spike_multiple)
                     if found:
                         flags[instrument] = flags.get(instrument, ()) + found
+            splits, split_days = self._covers(
+                root, record, bars, quoted.quotes if quoted else {}, session, decision_at, latest
+            )
             # After the last answer the read waited on, so it judges the clock the read ended on.
             clock = self._clock.reading()
             snapshot = Snapshot(
@@ -366,8 +389,10 @@ class LakeSource:
                 faults=quoted.faults if quoted else (),
                 quotes_read_at=quoted.read_at if quoted else None,
                 clock=clock,
+                splits=splits,
             )
             halts.extend(_quote_halts(snapshot, settings.instruments, self._sessions))
+            halts.extend(check_splits(snapshot, self._sessions))
             return Reading(
                 snapshot,
                 (*clock_faults(clock, measured=self._measured), *halts),
@@ -379,9 +404,117 @@ class LakeSource:
                 quote_calls=quoted.calls if quoted else 0,
                 quote_seconds=quote_seconds,
                 cycle_age=quoted.cycle_age if quoted else None,
+                split_days=split_days,
             )
         finally:
             root.remove()
+
+    def _covers(
+        self,
+        root: LakeRoot,
+        record: SplitRecord,
+        bars: Mapping[InstrumentId, Mapping[str, tuple[Bar, ...]]],
+        quotes: Mapping[InstrumentId, Quote],
+        session: Session | None,
+        decision_at: datetime,
+        latest: date,
+    ) -> tuple[SplitsRead, int]:
+        """What covers each pair the checks read, and how many sealed days it opened.
+
+        A covered row covers a pair. The pair to the decision's own quote reads
+        that quote's `close_price` whatever covers it, and any other pair a
+        covered row does not hold reads the sealed day of its later session. A
+        sealed day is never read for the decision's own session, so a backtest
+        reads no row a live decision could not.
+        """
+        quote_day = session.day if session is not None else None
+        covers: list[PairCover] = []
+        opened = 0
+        for pair in pairs(bars, quotes, quote_day, self._sessions):
+            row = record.covering(pair.instrument, pair.earlier, pair.later)
+            kind = self._quote_kinds.kind(pair.later).close_kind
+            cover = PairCover(
+                instrument=pair.instrument,
+                earlier=pair.earlier,
+                later=pair.later,
+                covered=row,
+                source=None,
+                partition=None,
+                partition_sha256=None,
+                close_prices=(),
+                close_kind=kind,
+                fault=None,
+            )
+            if pair.quoted:
+                said = quotes[pair.instrument].received.get("close_price")
+                stated = () if said is None else (said,)
+                cover = replace(cover, source=QUOTE if stated else None, close_prices=stated)
+            elif row is None:
+                found, fresh = self._stated_close(root, pair)
+                opened += fresh
+                if found is not None:
+                    cover = replace(
+                        cover,
+                        source=SEALED if found.values else None,
+                        partition=found.key,
+                        partition_sha256=found.sha256,
+                        close_prices=found.values,
+                        fault=found.fault,
+                    )
+            covers.append(cover)
+        self._prune(latest)
+        if opened:
+            log.info(
+                "data opened %d sealed days to check the record of splits for the decision at %s",
+                opened,
+                decision_at.isoformat(),
+            )
+        read = SplitsRead(
+            sha256=record.sha256,
+            rows={i: record.known(i, decision_at) for i in self._settings.instruments},
+            covered_from={
+                i: first
+                for i in self._settings.instruments
+                if (first := record.covered_from(i)) is not None
+            },
+            pairs=tuple(covers),
+        )
+        return read, opened
+
+    def _stated_close(self, root: LakeRoot, pair: Pair) -> tuple[StatedClose | None, int]:
+        """The sealed day's stated close, kept for the run by its partition's SHA-256.
+
+        The count is 1 where this read opened the day, and 0 where the run held
+        it. An answer that holds a fault is not kept.
+        """
+        try:
+            ticker = self._master.ticker(pair.instrument, pair.later)
+        except Halt as halt:
+            return StatedClose("", None, (), halt.reason), 0
+        key = partition_key(ticker, pair.later)
+        entry = root.entries.get(key)
+        if entry is None:
+            return None, 0
+        sha = entry.get("sha256")
+        cache = (key, sha if isinstance(sha, str) else "")
+        with self._answers.lock:
+            if cache in self._answers.closes:
+                return self._answers.closes[cache], 0
+        found = stated_close(self._mirror, root, ticker, pair.later)
+        if found is None:
+            return None, 0
+        # A day whose read failed is read again by the next decision, as a failed bar is.
+        if found.fault is None:
+            with self._answers.lock:
+                self._answers.closes[cache] = found
+        return found, 1
+
+    def _prune(self, latest: date) -> None:
+        """Keep no sealed day older than the oldest session a lookback ending now reads."""
+        oldest = self._lookback(latest)[0]
+        with self._answers.lock:
+            for cache in [c for c in self._answers.closes if _day_of(c[0]) < oldest]:
+                del self._answers.closes[cache]
 
     def _quotes(
         self,
@@ -674,7 +807,7 @@ def judge(
     4. each bar `LakeSource.read` halts on, through the same `_bar_halts`: one
        whose prices contradict each other, one of unstated kind, and one of
        another series than the bar before it in its own instrument, but for
-       the one change `_one_scale` passes;
+       the one change `one_scale` passes;
     5. each stored flag that is not the move rule's and that this release's
        rules do not find in the bars and the quotes. Within one release they
        raise every flag stored beside them, so such a flag means the record is
@@ -682,7 +815,9 @@ def judge(
        rather than guess what it meant. A flag the bars raise and the
        record lacks adds no halt of its own;
     6. each reason `_quote_halts` gives, which is what the first delivery judges
-       its quotes by.
+       its quotes by;
+    7. each reason `data.splits.check_splits` gives, which the first delivery
+       judges its record of splits by.
 
     A stored status keeps no session, so its reason names the stored snapshot
     rather than the session, and it is trusted as recorded.
@@ -715,6 +850,7 @@ def judge(
                     f"by the rule {flag.rule!r}"
                 )
     reasons.extend(_quote_halts(snapshot, instruments, sessions))
+    reasons.extend(check_splits(snapshot, sessions))
     return tuple(reasons)
 
 
@@ -827,32 +963,14 @@ def _unstated(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
 def _changed(instrument: InstrumentId, bars: Sequence[Bar]) -> list[str]:
     """A halt for each two consecutive bars of two series, which can be on two scales.
 
-    One pair is let through, which `_one_scale` names.
+    One pair is let through, which `one_scale` names.
     """
     return [
         f"{instrument}'s bars for {one.session.isoformat()} and {two.session.isoformat()} are of "
         f"two series, {series_of(one)} and {series_of(two)}"
         for one, two in itertools.pairwise(bars)
-        if series_of(one) != series_of(two) and not _one_scale(one, two)
+        if series_of(one) != series_of(two) and not one_scale(one, two)
     ]
-
-
-def _one_scale(one: Bar, two: Bar) -> bool:
-    """Whether two consecutive bars of two series are the one change read as one scale.
-
-    The earlier bar is imported from `SCHWAB_IMPORT`, `adjusted` as of the later
-    bar's session, and the later bar is captured. Schwab's candles come back on
-    the scale of the day they are fetched, on the two forward splits
-    l3a0/marketlake#951 measured, so the import is on the scale of that
-    session, and a captured bar is as traded on it. docs/design.md's
-    `#### A lookback that crosses a change of series` says what it costs.
-    """
-    return (
-        one.origin == _IMPORTED
-        and series_of(one) == Series("adjusted", SCHWAB_IMPORT, two.session)
-        and two.origin == _CAPTURED
-        and series_of(two) == Series("raw", None, None)
-    )
 
 
 def _stamp(value: object, where: str, name: str) -> tuple[str | None, datetime | None]:
@@ -887,3 +1005,8 @@ def _partition_key(ticker: str, day: date) -> str:
 
 def _is_bars(key: str) -> bool:
     return key.startswith("bars/")
+
+
+def _day_of(key: str) -> date:
+    """The day of a sealed quotes partition, from its key's last part."""
+    return date.fromisoformat(Path(key).stem[-10:])

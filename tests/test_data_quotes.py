@@ -176,7 +176,7 @@ def test_7_close_minus_20_reads_its_quotes_and_its_snapshot_names_each_segment(
     assert result.halt is None and alarms.reasons == []
     snap = stored(tmp_path)
     data = (tmp_path / "store" / key()).read_bytes()
-    assert decode_output(data, Snapshot).header.format == 4
+    assert decode_output(data, Snapshot).header.format == 5
     assert snap.provisional is True
     held = [
         FolderBucket(live).read(key_of(ticker, back))
@@ -243,7 +243,7 @@ def test_7_the_entry_points_buckets_read_the_folder_beside_the_lake(
     assert set(snap.quotes) == {GLD, USO}
     assert snap.quotes_read_at == AT
     # The tracked rows start in 2026, and this session is in 2012.
-    assert load_quote_kinds().kind(DAY) == QuoteKind(*[UNSTATED] * 5)
+    assert load_quote_kinds().kind(DAY) == QuoteKind(*[UNSTATED] * 6)
     assert result.halt is not None
     assert (
         result.halt.reason
@@ -276,6 +276,7 @@ def test_7_the_entry_points_default_source_reads_the_quote_kind_contract(
             venues=q.venues,
             volume_counted=q.volume_counted,
             normal_status=q.normal_status,
+            close_kind=KIND.close_kind,
         )
         assert stated == KIND
     assert result.halt is None

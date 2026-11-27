@@ -29,6 +29,7 @@ from decimal import ROUND_CEILING, Decimal
 from typing import NamedTuple
 
 from ithildinruntime.core import (
+    DAILY,
     BeforeClose,
     Book,
     Constraints,
@@ -59,6 +60,7 @@ from ithildinruntime.core import (
     hold_to_record,
     load_sessions,
     mark,
+    not_adjusted_for,
     places,
     position,
     quotient,
@@ -126,7 +128,9 @@ class Gate:
         adding = classify(book, intent) is Effect.ADDS
         reached = {i: exposure(book, i, intent) for i in read.marks}
         past = tuple(f for f in _three(intent, reached, read) if f.value > f.bound)
-        first = next(_refusals(intent, book, inputs, read, now, adding, reached, past), None)
+        first = next(
+            _refusals(intent, book, inputs, read, now, adding, reached, past, snapshot), None
+        )
         return Verdict(
             approved=first is None,
             limit=first.limit if first else None,
@@ -383,6 +387,7 @@ def _refusals(
     adding: bool,
     reached: Mapping[InstrumentId, Exposure],
     past: tuple[_Figure, ...],
+    snapshot: Snapshot,
 ) -> Iterator[_Figure]:
     """Every refusal of one order, in the order that fixes which limit is named."""
     if inputs.stop is not StopState.ABSENT:
@@ -413,10 +418,31 @@ def _refusals(
         yield from _widened_net(intent, book, read, _net(reached, read))
     if read.reading.past:
         yield _Figure(Limit.LOSS_STOP, read.loss, limits.loss_stop)
+    if adding and _split_ahead(intent.instrument, snapshot, read.session):
+        yield _Figure(Limit.SPLIT)
     if intent.type == OrderType.MARKET_ON_CLOSE and now > read.cutoff:
         left = Decimal((read.session.close - now) // timedelta(microseconds=1))
         minutes = quotient("the minutes to the close", left, Decimal(_MINUTE), _VALUE)
         yield _Figure(Limit.MOC_CUTOFF, minutes, Decimal(limits.moc_cutoff))
+
+
+def _split_ahead(instrument: InstrumentId, snapshot: Snapshot, session: Session) -> bool:
+    """Whether a known split of the instrument takes effect on or after the decision's session.
+
+    Only where a bar the decision reads of it leaves the split unaccounted for,
+    by `core.not_adjusted_for`, the rule data's halt reads, so a position added
+    now would be held across a split that halts every decision on it from its
+    first session. On that session data's stage halts the decision first, and
+    this refuses it too. The alert #11 builds names the row from the snapshot
+    the verdict read, since a verdict holds no reason.
+    """
+    bars = snapshot.bars.get(instrument, {}).get(DAILY, ())
+    covered_from = snapshot.splits.covered_from.get(instrument)
+    return any(
+        row.first_session >= session.day
+        and any(not_adjusted_for(b, row.first_session, covered_from) for b in bars)
+        for row in snapshot.splits.rows.get(instrument, ())
+    )
 
 
 def _widened_net(

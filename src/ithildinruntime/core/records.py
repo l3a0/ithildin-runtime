@@ -98,8 +98,11 @@ __all__ = [
     "SentOrder",
     "Signal",
     "Sizing",
+    "PairCover",
     "Snapshot",
     "SpikeFlag",
+    "SplitRow",
+    "SplitsRead",
     "Statistic",
     "StopState",
     "StrategyEnd",
@@ -110,6 +113,8 @@ __all__ = [
     "TimeInForce",
     "Valuation",
     "Verdict",
+    "adjusted_for",
+    "not_adjusted_for",
 ]
 
 InstrumentId = NewType("InstrumentId", str)
@@ -381,6 +386,109 @@ class ClockReading(_Record):
 
 
 @dataclass(frozen=True)
+class SplitRow(_Record):
+    """One row of data/splits.csv, as a decision read it.
+
+    `kind` is `split`, `covered` or `withdrawn`. `new_shares`, `old_shares` and
+    `known_at` are set on a split row alone, and `last_session` on a covered row
+    alone. `line` is the row's line in the file, counting from 1.
+    """
+
+    added: date
+    kind: str
+    instrument: InstrumentId
+    first_session: date
+    last_session: date | None
+    new_shares: int | None
+    old_shares: int | None
+    known_at: datetime | None
+    read_from: str
+    line: int
+
+
+@dataclass(frozen=True)
+class PairCover(_Record):
+    """What covered one pair of consecutive sessions of one instrument in a decision's read.
+
+    - `covered` is the covered row whose span holds both sessions, or `None`.
+    - `source` is `quote` for the decision's own quote, `sealed` for the sealed
+      day of the later session, or `None` where no quote was read for the pair.
+    - `partition` and `partition_sha256` name the sealed day read, and are
+      `None` otherwise.
+    - `close_prices` holds each distinct `close_price` the quote states, as
+      received, so two of them halt on the first read and on a redelivery.
+    - `close_kind` is what data/quote_kinds.csv states of `close_price` on the
+      later session, or `unstated`.
+    - `fault` is why the sealed day could not be read, or `None`.
+    """
+
+    instrument: InstrumentId
+    earlier: date
+    later: date
+    covered: SplitRow | None
+    source: str | None
+    partition: str | None
+    partition_sha256: str | None
+    close_prices: tuple[str, ...]
+    close_kind: str
+    fault: str | None
+
+
+@dataclass(frozen=True)
+class SplitsRead(_Record):
+    """What a decision read of data/splits.csv, and what covered each pair it checked.
+
+    - `sha256` is of the file's bytes as read.
+    - `rows` maps each instrument the decision reads to every split row known
+      by the decision, after withdrawals and corrections, by first session.
+    - `covered_from` maps an instrument to the first session of its earliest
+      covered row, where it has one. That row starts on the instrument's first
+      captured bar, or on the last session of Schwab's import before it, as
+      tests/test_data_files.py pins, so a split before it falls before the
+      platform held any captured bar of the instrument.
+    - `pairs` holds what covered each pair the read checked, in order.
+    """
+
+    sha256: str
+    rows: Mapping[InstrumentId, tuple[SplitRow, ...]]
+    covered_from: Mapping[InstrumentId, date]
+    pairs: tuple[PairCover, ...]
+
+
+def adjusted_for(bar: Bar, first_session: date) -> bool:
+    """Whether a bar sits on a series already adjusted for a split of that first session.
+
+    That is an adjusted series whose source adjusted it on or after the split's
+    first session. A raw bar is as traded, so it is adjusted for no split.
+    """
+    return (
+        bar.basis == "adjusted"
+        and bar.source_as_of is not None
+        and bar.source_as_of >= first_session
+    )
+
+
+def not_adjusted_for(bar: Bar, first_session: date, covered_from: date | None) -> bool:
+    """Whether a bar a decision reads leaves a split of that first session unaccounted for.
+
+    A series its source adjusted for the split accounts for it. A raw bar
+    before the split does not. A raw bar on or after it is on the new scale,
+    which a book or a share cap written before the split is not, so it
+    accounts for the split only where the split falls before `covered_from`,
+    the first session of the instrument's earliest covered row, before which
+    the platform held no captured bar of it. With no covered row, nothing
+    says so, and the bar does not. data/splits.py halts on such a bar from the
+    split's first session, and risk/gate.py refuses an order that adds on one
+    up to and on it.
+    """
+    if adjusted_for(bar, first_session):
+        return False
+    if bar.basis != "raw" or bar.session < first_session:
+        return True
+    return covered_from is None or first_session >= covered_from
+
+
+@dataclass(frozen=True)
 class Snapshot(_Record):
     """The bars and quotes one decision read, with each instrument's status.
 
@@ -400,6 +508,8 @@ class Snapshot(_Record):
       read of the quotes, and `None` exactly when the decision read none.
     - `clock` is the reading of the machine's clock, taken after the last answer
       the read waited on, which `core.clock_faults` judges.
+    - `splits` is what the decision read of data/splits.csv and what covered
+      each pair of sessions its checks read, which `data.splits` states.
     """
 
     decision_at: datetime
@@ -415,6 +525,7 @@ class Snapshot(_Record):
     faults: tuple[str, ...]
     quotes_read_at: datetime | None
     clock: ClockReading
+    splits: SplitsRead
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -1048,7 +1159,7 @@ class JournalAck(_Record):
 
 
 class Limit(StrEnum):
-    """What a refusal names: one of the seven limits, or one of four states that refuse.
+    """What a refusal names: one of the seven limits, or one of five states that refuse.
 
     The seven come in the order the gate reads them.
     """
@@ -1064,10 +1175,11 @@ class Limit(StrEnum):
     CLOSE_ENTRY = "close_entry"
     IN_DOUBT = "in_doubt"
     POSITION = "position"
+    SPLIT = "split"
 
 
-# The four states carry no figure, because nothing was measured against a bound.
-_STATES = frozenset({Limit.STOP, Limit.CLOSE_ENTRY, Limit.IN_DOUBT, Limit.POSITION})
+# The five states carry no figure, because nothing was measured against a bound.
+_STATES = frozenset({Limit.STOP, Limit.CLOSE_ENTRY, Limit.IN_DOUBT, Limit.POSITION, Limit.SPLIT})
 # The three limits an order that only reduces may go out past, in the order the gate reads
 # them. They are the three a target is sized within, too.
 _PASSABLE = (Limit.MAX_POSITION, Limit.MAX_GROSS, Limit.MAX_NET)

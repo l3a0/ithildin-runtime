@@ -28,6 +28,7 @@ from ithildinruntime.adapters import FolderBucket, S3Bucket
 from ithildinruntime.core import Bucket, Clock, Halt, Mode, StageKind, Storage, Timer
 from ithildinruntime.data import STAGE, DataStage, LakeSource, Mirror, data_settings
 from ithildinruntime.data.reference import QuoteKinds
+from ithildinruntime.data.splits import SplitRecord
 
 from .loop import Stage, Table
 
@@ -84,6 +85,7 @@ def data_handler(
     release: str,
     table: Table,
     quote_kinds: QuoteKinds | None = None,
+    splits: SplitRecord | None = None,
 ) -> DataStage:
     """Data's handler for the receive loop, reading `bucket` through a mirror in `mirror`.
 
@@ -98,7 +100,8 @@ def data_handler(
     session's answer for the run. `measured` is true where the clock is the
     machine's, so a history clock wired into a trading run halts.
     `quote_kinds` is the tracked quote-kind table unless a test hands it a
-    made-up row, since the tracked one holds none yet.
+    made-up row, since the tracked one holds none yet. `splits` is the tracked
+    record of splits unless a test hands it one that covers its made-up dates.
     """
     source: LakeSource | Halt
     try:
@@ -114,6 +117,7 @@ def data_handler(
             timer=timer,
             measured=measured,
             quote_kinds=quote_kinds,
+            splits=splits,
         )
     return DataStage(
         source,

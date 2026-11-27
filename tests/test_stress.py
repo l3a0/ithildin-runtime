@@ -578,7 +578,8 @@ def test_4_each_key_left_out_halts_naming_it(tmp_path: Path, key: str) -> None:
 
 def test_4_every_field_of_the_record_is_a_key() -> None:
     names = {f.name for f in dataclasses.fields(StressRecord)}
-    assert set(KEYS) == names - {"withdrawn"}
+    # A record measured before data/splits.csv existed holds neither of its two fields.
+    assert set(KEYS) == names - {"withdrawn", "splits", "split_rows"}
 
 
 def put(old: str, new: str) -> str:
@@ -1018,3 +1019,36 @@ def test_5_the_pair_is_checked_first() -> None:
     three = {GLD: LOOSE, USO: LOOSE, SPY: LOOSE}
     with pytest.raises(Halt, match="the constraints limit SPY, which the hard caps do not"):
         hold_to_record(constraints(max_position=three, max_order_qty=three), OWN, ())
+
+
+# 13 of #189. The record of splits a stress record names.
+
+SPLIT_LINES = (
+    'splits = "' + "b" * 64 + '"\n'
+    "split_rows = [\n"
+    '    { instrument = "USO", first_session = 2020-04-29, new_shares = 1, old_shares = 8 },\n'
+    "]\n"
+)
+
+
+def test_13_a_record_reads_the_record_of_splits_it_names(tmp_path: Path) -> None:
+    from ithildinruntime.core import KnownSplit
+
+    (named,) = read(tmp_path, SAMPLE + SPLIT_LINES)
+    assert named.splits == "b" * 64
+    assert named.split_rows == (KnownSplit(InstrumentId("USO"), date(2020, 4, 29), 1, 8),)
+    (old,) = read(tmp_path, SAMPLE)
+    assert (old.splits, old.split_rows) == (None, ())
+
+
+@pytest.mark.parametrize(
+    ("text", "said"),
+    [
+        (SAMPLE + SPLIT_LINES.split("\n", 1)[1], "names split rows and not the SHA-256"),
+        (SAMPLE + SPLIT_LINES.replace("new_shares = 1", "new_shares = 0"), "new_shares is 0"),
+        (SAMPLE + SPLIT_LINES.replace('"' + "b" * 64, '"' + "B" * 64), "splits is"),
+    ],
+)
+def test_13_a_bad_record_of_splits_halts(tmp_path: Path, text: str, said: str) -> None:
+    with pytest.raises(Halt, match=said):
+        read(tmp_path, text)
