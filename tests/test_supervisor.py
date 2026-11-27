@@ -806,6 +806,7 @@ def test_a_halted_runs_alarm_says_what_to_do_and_who_clears_it(world: World) -> 
     world.supervisor().run(TODAY)
     (alarm,) = world.alarms()
     assert "Settle at the broker each order this names" in alarm
+    assert "confirm the account's positions there" in alarm
     assert "Once the halt is stored, the next session's start holds every strategy" in alarm
     assert "The operator clears it" in alarm
 
@@ -1642,11 +1643,17 @@ def test_a_run_with_no_halt_stored_at_all_stays_up_until_one_lands(world: World)
             call == "create" and (key == halt or "/halts/" in key) and world.ticks < 3
         ),
     )
+    # A wait that never ends fails here in seconds rather than after 2,000 ticks.
+    world.most_ticks = 10
     assert world.supervisor().run(TODAY).code == EXIT_HALTED
     assert world.ticks == 3 and world.blob(halt) is not None
     (alarm,) = [a for a in world.alarms() if "no halt holds any strategy in its place" in a]
-    assert "Pull the account's kill switch" in alarm and "does not end until one lands" in alarm
+    assert (
+        "Pull the account's kill switch" in alarm and "tries the halt again on each tick" in alarm
+    )
+    assert "the store alarms on each try it fails" in alarm
     assert not any("asked to stop" in a for a in world.alarms())
+    assert any(f"the run's halt of {TODAY.isoformat()} is stored now" in a for a in world.alarms())
     first = next(a for a in world.alarms() if "the supervisor halts" in a)
     assert "Once the halt is stored, the next session's start holds every strategy" in first
 
@@ -1664,6 +1671,8 @@ def test_halts_in_place_that_land_on_a_later_tick_end_the_wait(world: World) -> 
             call == "create" and (key == halt or ("/halts/" in key and world.ticks < 2))
         ),
     )
+    # A wait that never ends fails here in seconds rather than after 2,000 ticks.
+    world.most_ticks = 10
     assert world.supervisor().run(TODAY).code == EXIT_FAILED
     assert world.ticks == 2 and world.held() and world.blob(halt) is None
 
@@ -1679,7 +1688,49 @@ def test_a_stop_asked_before_any_halt_lands_says_nothing_records_it(world: World
     assert world.supervisor().run(TODAY).code == EXIT_ASKED
     (alarm,) = [a for a in world.alarms() if "asked to stop before the run's halt" in a]
     assert "nothing records the halt" in alarm and "kill switch" in alarm
+    assert "Leave the supervisor's unit stopped for the rest of the session" in alarm
+    assert "until each position is confirmed at the broker" in alarm
     assert not world.held() and world.blob(halt) is None
+    assert not any("is stored now" in a for a in world.alarms())
+
+
+def test_a_stop_asked_once_the_store_answers_stores_the_halt_first(world: World) -> None:
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    # The store answers by the first tick, which is also when the stop is asked.
+    _refusing(
+        world,
+        lambda call, key: (
+            call == "create" and (key == halt or "/halts/" in key) and world.ticks < 1
+        ),
+    )
+    world.most_ticks = 1
+    assert world.supervisor().run(TODAY).code == EXIT_HALTED
+    assert world.blob(halt) is not None
+
+
+def test_halts_in_place_are_tried_at_one_key_each(world: World) -> None:
+    world.opened()
+    world.ran()
+    _doubtful(world, DECIDED[TODAY])
+    world.timer.at = _deadline(DECIDED[TODAY]) + timedelta(seconds=1)
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    tried: set[str] = set()
+
+    def refused(call: str, key: str) -> bool:
+        if call == "create" and "/halts/" in key:
+            tried.add(key)
+        return call == "create" and (key == halt or "/halts/" in key) and world.ticks < 3
+
+    _refusing(world, refused)
+    # A wait that never ends fails here in seconds rather than after 2,000 ticks.
+    world.most_ticks = 10
+    assert world.supervisor().run(TODAY).code == EXIT_HALTED
+    # Three ticks of tries, and still one key for the strategy's halt.
+    assert len(tried) == 1
 
 
 def test_some_strategy_halts_stored_in_place_name_what_is_not_held(world: World) -> None:
@@ -1696,6 +1747,8 @@ def test_some_strategy_halts_stored_in_place_name_what_is_not_held(world: World)
     table = deployment_table(Deployment(DEPLOYMENT, ACCOUNT, both), folder)
     other = strategy_halts_prefix(ACCOUNT, OTHER)
     _refusing(world, lambda call, key: call == "create" and (key == halt or key.startswith(other)))
+    # A wait that never ends fails here in seconds rather than after 2,000 ticks.
+    world.most_ticks = 10
     assert world.supervisor(table=table, schedules=both).run(TODAY).code == EXIT_FAILED
     (alarm,) = [a for a in world.alarms() if "could not be stored" in a and "In its place" in a]
     assert f"a halt holds {CHAN}" in alarm and f"no halt of {OTHER} could be stored" in alarm

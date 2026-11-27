@@ -510,7 +510,6 @@ class Supervisor:
             if stored is not None:
                 return stored
         halt = Halt(f"the supervisor halted the run: {reason}")
-        halt = Halt(f"the supervisor halted the run: {reason}")
         for at in decisions:
             for stage in stages:
                 key = result_key(self._deployment, plan.run, at, stage)
@@ -530,6 +529,8 @@ class Supervisor:
         tries again on each tick, because a restart would know nothing of the halt.
         """
         strategies = sorted(s.name for s in self._table.strategies)
+        # One time for every try, so a halt whose create landed unanswered is not written twice.
+        at = self._timer.now()
         alarmed = False
         while True:
             held = write_halts(
@@ -538,8 +539,8 @@ class Supervisor:
                 strategies,
                 plan.run,
                 f"{OWED}{record.reason}",
-                self._timer.now(),
-                self._timer.now(),
+                at,
+                at,
                 cause=RUN_HALT_CAUSE,
                 quiet=True,
             )
@@ -563,23 +564,33 @@ class Supervisor:
                     f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
                     f"{_said(error)}, and no halt holds any strategy in its place. Pull the "
                     "account's kill switch now. The supervisor tries the halt again on each "
-                    "tick, and does not end until one lands"
+                    "tick until one lands, and the store alarms on each try it fails"
                 )
                 alarmed = True
-            if self._wait(self._tick):
-                self._alerts.alarm(
-                    f"{self._deployment}: the supervisor was asked to stop before the run's halt "
-                    f"of {plan.run}, or any halt in its place, was stored, so nothing records "
-                    "the halt and a restart judges the run afresh. Keep the account's kill switch "
-                    "pulled until each position is confirmed at the broker"
-                )
-                return Outcome(EXIT_ASKED, f"asked to stop before {plan.run}'s halt was stored")
+            asked = self._wait(self._tick)
+            # Tried once more after a stop is asked, since the store may answer by then.
             try:
                 self._storage.keep(key, encode(record))
             except Exception as again:
                 error = again
             else:
+                self._alerts.alarm(
+                    f"{self._deployment}: the run's halt of {plan.run} is stored now, so the next "
+                    "session's start holds every strategy. Keep the account's kill switch pulled "
+                    "until each position is confirmed at the broker"
+                )
                 return None
+            if asked:
+                self._alerts.alarm(
+                    f"{self._deployment}: the supervisor was asked to stop before the run's halt "
+                    f"of {plan.run}, or any halt in its place, was stored, so nothing records "
+                    "the halt. Leave the supervisor's unit stopped for the rest of the session: "
+                    "with no stop stored, the next session's start holds every strategy. A start "
+                    "in this session judges the run afresh, and stores the run's stop unless an "
+                    "order is still late. Keep the account's kill switch pulled until each "
+                    "position is confirmed at the broker"
+                )
+                return Outcome(EXIT_ASKED, f"asked to stop before {plan.run}'s halt was stored")
 
     def _halt_result(self, plan: Plan, stage: str, at: datetime, halt: Halt) -> DecisionResult:
         row = self._table.stage(stage)
