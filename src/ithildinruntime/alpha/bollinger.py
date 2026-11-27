@@ -80,8 +80,9 @@ decision on a split it holds and on one it does not, inside the window, across
 that one change or between its newest bar and the quote. docs/design.md's rule
 that a split reads as neither a gain nor a loss says what each halt costs, and
 which splits still read as a move: one that moves the price by 1 percent or
-less, one under three for two that Schwab does not restate, and one inside a
-covered span both vendor lists missed.
+less, a forward split under ten for seven or a reverse split whose rise is
+under 42.9 percent that Schwab does not restate, and one inside a covered span
+both vendor lists missed.
 
 Every figure is a `Decimal` at 28 digits, worked out inside a context of the
 model's own, so the context a caller set changes no byte. The model decides on
