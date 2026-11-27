@@ -10,7 +10,7 @@ follows, and how it becomes UTC` gives the reasons.
 The table runs from 1993-01-01, before SPY's first session in Yahoo's daily
 history, 1993-01-29, the oldest bar a stress move reads, through the end of the
 next calendar year.
-Move `LAST` forward a year, and `FIRST` back for an older backtest, then run:
+Move `LAST` forward a year, and `FIRST` back for an older backtest or stress move, then run:
 
     uv run --no-project --python 3.12 --exclude-newer 2026-11-10 \\
         --with exchange_calendars==4.13.2 python scripts/regenerate_sessions.py

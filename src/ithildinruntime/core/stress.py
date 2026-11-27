@@ -339,8 +339,10 @@ def _record(where: str, value: object) -> StressRecord:
             "series", {"instrument", "first", "last", "basis"}, {"source", "source_as_of"}
         )
     )
-    if fields["one_session"] > fields["stress_move"]:
-        # m is the larger of the two, so a larger one-session move means m is too small.
+    withdrawn = table.read("withdrawn", _text)
+    if withdrawn is None and fields["one_session"] > fields["stress_move"]:
+        # m is the larger of the two, so a larger one-session move means m is too small. A record
+        # withdrawn for that reason still reads, so the file can say it was found wrong.
         raise Halt(
             f"{where}'s one_session is {fields['one_session']}, above its stress_move of "
             f"{fields['stress_move']}"
@@ -375,7 +377,7 @@ def _record(where: str, value: object) -> StressRecord:
         series=series,
         left_out=left_out,
         flagged=flagged,
-        withdrawn=table.read("withdrawn", _text),
+        withdrawn=withdrawn,
     )
 
 

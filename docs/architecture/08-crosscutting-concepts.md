@@ -232,7 +232,7 @@ A repair can overwrite a partition, whose old copy marketlake's bucket versionin
 
 marketlake's lake is private and backed up off the machine, which is what the premise asks of captured bars, and it keeps them out of this public repository. The checksums this repository commits are the partition checksums a snapshot records, for any run a test or a report pins.
 
-Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import. Yahoo's two files of GLD and USO are in no repository. marketlake's import accepts each of them only at the SHA-256 that [l3a0/marketlake#1025](https://github.com/l3a0/marketlake/issues/1025) pins, and the files, kept off the lake, stay the record.
+Imported history from quantitative-trading arrives with that repository's own checksums, from its [`data/vintages.jsonl`](https://github.com/l3a0/quantitative-trading/blob/19aadbeb9730bf34f724af5688669b6bc208d136/data/vintages.jsonl), so the import can prove it read the recorded bytes. [l3a0/marketlake#938](https://github.com/l3a0/marketlake/issues/938) built the import. Yahoo's two files of GLD and USO are in no repository. marketlake's import accepts each of them only at the SHA-256 that [l3a0/marketlake#1025](https://github.com/l3a0/marketlake/issues/1025) pins, and the files, kept off the lake, stay the record. Yahoo's two files of SPY and QQQ are held the same way, each at the SHA-256 that [l3a0/marketlake#1043](https://github.com/l3a0/marketlake/issues/1043) pins.
 
 #### Run records
 
@@ -519,7 +519,7 @@ A rule written in UTC would move by an hour against the close each time the cloc
 Five rules hold the table.
 
 1. A session missing from the table halts.
-2. The table runs from the first session any committed backtest reads through the end of the next calendar year.
+2. The table runs from before the oldest session any committed backtest or stress move reads through the end of the next calendar year.
 3. The table names the range it covers, and a date outside it halts, since a missing input stops trading (hard limit 3).
 4. The plan builder reports how many sessions the table has left, so an alarm can fire before a run meets its end. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) sets that bound and builds the alarm.
 5. A closure announced after the table was cut reads as a session with no data, which halts, since a missing input stops trading (hard limit 3).

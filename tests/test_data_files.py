@@ -8,6 +8,7 @@ adding one means adding it here too.
 
 from __future__ import annotations
 
+import csv
 import re
 from dataclasses import replace
 from datetime import date
@@ -126,13 +127,15 @@ _YAHOO_138_READ_FROM = {
         "c2aafddba5c921de725a341b10c1a3f7a9424866906479ad0abcea67855832c6. In an "
         "exploratory comparison Massive's unadjusted daily closes sum to the same cent in "
         "each of the 21 months from 2025-01-02 to 2026-09-04 and its volume to within "
-        "0.0494 percent. Before 2025 a second vendor checked only the largest one-session "
-        "and two-session moves of SPY and QQQ which Alpha Vantage's daily closes give the "
-        "same. Ten closes of the two funds that could hide a larger move are listed there "
-        "and no second vendor has checked them. Every volume is a whole multiple of 100. "
-        "That the volume is consolidated is measured from 2025 on and inferred before it "
-        "and the price's venues rest on the ruling. Yahoo publishes no statement of its "
-        "close so official close is the usual meaning of a Yahoo close for a US ETF"
+        "0.0494 percent. Before 2025 Alpha Vantage's daily closes give the same largest "
+        "one-session and two-session moves of SPY and QQQ and the same daily returns "
+        "around five more closes of SPY. QQQ's one-session move agrees once Yahoo's two "
+        "closes are rounded to the cent. Ten closes of the two funds that could hide a "
+        "larger move are listed there and no second vendor has checked them. Every volume "
+        "is a whole multiple of 100. That the volume is consolidated is measured from "
+        "2025 on and inferred before it and the price's venues rest on the ruling. Yahoo "
+        "publishes no statement of its close so official close is the usual meaning of a "
+        "Yahoo close for a US ETF"
     ),
     "qqq": (
         "owner's ruling of 2026-11-27 on #138 at "
@@ -141,18 +144,20 @@ _YAHOO_138_READ_FROM = {
         "f9edb7d87e161d62ebc27d6618d512726a6fe8ae0dfe49eb4b2911a76f5a8662. In an "
         "exploratory comparison Massive's unadjusted daily closes sum to the same cent in "
         "each of the 21 months from 2025-01-02 to 2026-09-04 and its volume to within "
-        "0.0494 percent. Before 2025 a second vendor checked only the largest one-session "
-        "and two-session moves of SPY and QQQ which Alpha Vantage's daily closes give the "
-        "same. Ten closes of the two funds that could hide a larger move are listed there "
-        "and no second vendor has checked them. Its source adjusts for QQQ's two-for-one "
-        "split of 2000-03-20 so prices before it read half those that traded and volume "
-        "twice the shares traded. Every volume from the split on is a whole multiple of "
-        "100 and every one before it of 200. That the volume is consolidated is measured "
-        "from 2025 on and inferred before it and the price's venues rest on the ruling. "
-        "Yahoo publishes no statement of its close so official close is the usual meaning "
-        "of a Yahoo close for a US ETF"
+        "0.0494 percent. Before 2025 Alpha Vantage's daily closes give the same largest "
+        "one-session and two-session moves of SPY and QQQ and the same daily returns "
+        "around five more closes of SPY. QQQ's one-session move agrees once Yahoo's two "
+        "closes are rounded to the cent. Ten closes of the two funds that could hide a "
+        "larger move are listed there and no second vendor has checked them. Its source "
+        "adjusts for QQQ's two-for-one split of 2000-03-20 so prices before it read half "
+        "those that traded and volume twice the shares traded. Every volume from the "
+        "split on is a whole multiple of 100 and every one before it of 200. That the "
+        "volume is consolidated is measured from 2025 on and inferred before it and the "
+        "price's venues rest on the ruling. Yahoo publishes no statement of its close so "
+        "official close is the usual meaning of a Yahoo close for a US ETF"
     ),
 }
+
 KIND_ROWS = (
     [
         f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
@@ -224,6 +229,14 @@ def test_every_row_held_when_it_was_added_is_still_there_unchanged(
     rows = _data_rows(path)
     assert rows[: len(pinned)] == pinned
     assert len(rows) == len(pinned), f"a row was added to {path.name}, so pin it here too"
+
+
+@pytest.mark.parametrize("path", [MASTER, PRICE_KINDS, QUOTE_KINDS])
+def test_every_row_has_the_fields_its_header_names(path: Path) -> None:
+    """A comma inside a field splits it, and the reader would drop what follows unseen."""
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    head, *rows = list(csv.reader(line for line in lines if not line.startswith("#")))
+    assert [n for n, row in enumerate(rows, 1) if len(row) != len(head)] == []
 
 
 def test_every_file_loads() -> None:

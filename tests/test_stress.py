@@ -422,6 +422,14 @@ def test_4_a_one_session_move_equal_to_m_reads(tmp_path: Path) -> None:
     assert made.one_session == made.stress_move == d("0.1798")
 
 
+def test_4_a_withdrawn_record_whose_one_session_move_is_above_m_reads(tmp_path: Path) -> None:
+    """A record found wrong for that reason gains `withdrawn`, and the file must still read."""
+    wrong = put('"0.11290000"', '"0.17980001"') + 'withdrawn = "m read two sessions alone"\n'
+    (made,) = read(tmp_path, wrong)
+    assert made.one_session > made.stress_move and made.withdrawn == "m read two sessions alone"
+    assert not made.counts_for("chan", (GLD, USO))
+
+
 KEYS = [line.split(" = ")[0] for line in SAMPLE.splitlines() if " = " in line and line[0] != " "]
 
 
