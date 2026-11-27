@@ -964,7 +964,8 @@ def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
     reason = result.halt.reason
     assert tried == [] and made.submits() == [first]
     down = "since a store stopped answering"
-    assert f"{second} was not journaled abandoned by this stage, {down}" in reason
+    # The path's own halt says what became of the order it stopped, so the stage claims nothing.
+    assert "not journaled abandoned" not in reason
     assert f"stand so: {first} acknowledged, {second} not sent, {down}" in reason
     # The outage's own page and the one naming every leg.
     sent = made.alarms.sent[alarms:]

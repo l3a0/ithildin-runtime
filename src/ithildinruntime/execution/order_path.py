@@ -331,8 +331,9 @@ class Unstored:
         store does not answer it, the entry stays, and each `settle` tries it, as
         it tries every kept entry. An outage of another blob, such as the hard
         caps, leaves the journal answering, so the entry lands at once. A journal
-        that refuses the entry still pages, as `put` does, and any other halt is
-        raised with the entry kept.
+        that refuses the entry raises its halt with the entry kept, and the
+        caller's halt names it. One whose fold takes the `in_doubt` that stands
+        in for the entry pages that, as `put` does.
         """
         kept = _Kept(name, record, at, sent)
         with self._lock:
@@ -1622,6 +1623,8 @@ class OrderPath:
         patience = self._shared.patience
         journal = self._shared.journal
         tries = patience.once(self._report) if once else patience.tries(self._report)
+        # Each append gets a deadline of its own unless every call is made once.
+        appends = tries if once else None
         shows = "the journal could not be read"
         for _ in range(_STARTS_OVER + 1):
             try:
@@ -1631,13 +1634,13 @@ class OrderPath:
                     shows = f"the journal showed no entry of {name}"
                     planned = self._planned(view, name)
                     _, view = self._record(
-                        view, IntentEntry(planned.seq, planned.order), tries=tries
+                        view, IntentEntry(planned.seq, planned.order), tries=appends
                     )
                     order = view.orders[name]
                 shows = f"the journal showed {name} {order.state}"
                 if order.state not in _NOT_SENT:
                     return order.state
-                self._record(view, AbandonedEntry(name, _text(reason)), tries=tries)
+                self._record(view, AbandonedEntry(name, _text(reason)), tries=appends)
                 return OrderState.ABANDONED
             except NumberTaken:
                 continue

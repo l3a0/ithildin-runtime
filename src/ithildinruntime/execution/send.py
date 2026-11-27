@@ -530,12 +530,17 @@ class SendStage:
         # A journal that cannot be read takes no abandon either, and each would say why again.
         down = down or view is None
         left: list[str] = []
+        # The order whose path met the outage, which its halt already says what became of.
+        unsent: list[str] = []
         for at, order in enumerate(orders[place:], start=place):
             name = order.client_order_id
             found = None if view is None else view.orders.get(name)
             if found is not None and found.state not in NOT_SENT:
                 continue
-            if view is None and at == place and not isinstance(halt, Outage):
+            if at == place and isinstance(halt, Outage):
+                unsent.append(name)
+                continue
+            if view is None and at == place:
                 # It may be at the broker, and only the journal could say.
                 continue
             if down:
@@ -561,7 +566,9 @@ class SendStage:
             def stands(name: str) -> str:
                 if name in sent:
                     return f"{name} acknowledged"
-                return f"{name} not sent" if name in left else f"{name} not known"
+                if name in left or name in unsent:
+                    return f"{name} not sent"
+                return f"{name} not known"
 
             named = ", ".join(stands(order.client_order_id) for order in orders)
             legs = f"{named}, since {why}"
