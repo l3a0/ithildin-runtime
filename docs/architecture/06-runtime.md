@@ -539,7 +539,7 @@ The stage is `execution/recover.py`, and its reads of the broker and what the jo
 9. It reads the owner's hard caps.
 10. It stores `caps.json`, `book.json` and `valuation.json`, each with one entry. The loop then stores its result.
 
-A record the broker dates before the time the records are asked from is never fetched. That time is one day before the newest read a decision followed, or before the `sending` of the oldest order not yet ended where that is earlier, as `fills_since` says. So a record posted up to a day late is fetched again and skipped by its id, and one dated earlier is never captured and halts as a difference in cash. A split halts until [#191](https://github.com/l3a0/ithildin-runtime/issues/191) reconciles one,. An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
+A record the broker dates before the time the records are asked from is never fetched. That time is one day before the newest read a decision followed, or before the `sending` of the oldest order not yet ended where that is earlier, as `fills_since` says. So a record posted up to a day late is fetched again and skipped by its id, and one dated earlier is never captured and halts as a difference in cash. A split halts until [#191](https://github.com/l3a0/ithildin-runtime/issues/191) reconciles one. An order that both sides still hold open past its session's close alarms once in a process, and again after a restart, and halts nothing, because the comparison agrees.
 
 Every halt after step 4 lists the capture in its result. A halt's reason or an alarm shows a broker's order or fill id where it is one the journal takes, an instrument where it is a name, and a client order id where it is a stamp of the platform's, and no other text of the broker's. An alarm goes once in a process, and again after a restart.
 
@@ -1071,7 +1071,7 @@ The journal's fold works out the state from those entries.
 The command takes four steps, which [#203](https://github.com/l3a0/ithildin-runtime/issues/203) builds.
 
 1. Where no firing stands and the blob is a covered firing's, an earlier clear died before its delete, so it deletes that blob on its tag and journals nothing.
-2. It completes the firing as a settle does, and stops unless the firing then has its `stop_stored`.
+2. It completes the firing as the order path's settle before each send does, and stops unless the firing then has its `stop_stored`.
 3. It journals `stop_cleared`.
 4. It deletes the blob with `If-Match` on the tag the firing's `stop_stored` names.
 
