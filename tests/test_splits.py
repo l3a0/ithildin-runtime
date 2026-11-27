@@ -721,10 +721,12 @@ def test_9_a_faulted_pair_ends_a_run_of_unreached_pairs() -> None:
         cover(USO, days[2], days[3]),
     )
     found = check_splits(snap(flat(4), covers=covers), TABLE)
-    assert found == [
-        found[0],
-        "a made-up fault",
-        found[2],
-    ]
+    assert len(found) == 3
+    assert found[1].startswith("a made-up fault. A read that succeeds, or a covered row reaching")
     assert f"the sessions {days[0]} and {days[1]}" in found[0]
     assert f"the sessions {days[2]} and {days[3]}" in found[2]
+    # A pair with no stored cover ends a run the same way, beside its own reason.
+    missing = check_splits(snap(flat(4), covers=(covers[0], covers[2])), TABLE)
+    assert len(missing) == 3 and "names no cover for 1 pairs" in missing[0]
+    assert f"the sessions {days[0]} and {days[1]}" in missing[1]
+    assert f"the sessions {days[2]} and {days[3]}" in missing[2]

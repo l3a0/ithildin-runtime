@@ -3353,6 +3353,7 @@ Rishi K. Narang's *Inside the Black Box* (3rd ed., Wiley, 2024) draws the boxes 
    | --- | --- | --- |
    | The record is missing, unreadable or holds a bad row | Every decision | A corrected file in a release |
    | A pair no covered row and no quote covers | Every decision whose window holds the pair | A covered row reaching its later session |
+   | A sealed day the record reads that cannot be linked or read, or that marketlake quarantines | Every decision whose window holds the pair | A read that succeeds, or a covered row reaching its later session |
    | A restated close outside 0.95 to 1.05 | Every decision whose window holds the pair | A split row, a correction or a `withdrawn` row, or a covered row where Schwab did not restate |
    | A step of 30 percent down or 42.9 percent up on a pair only a quote covers | Every decision whose window holds the pair, exits included | A split row, or a covered row that says the move was real |
    | A recorded split, from its first session, until [#190](https://github.com/l3a0/ithildin-runtime/issues/190) and [#191](https://github.com/l3a0/ithildin-runtime/issues/191) | Every decision that reads bars of that instrument not already adjusted for it, exits included | [#190](https://github.com/l3a0/ithildin-runtime/issues/190) and [#191](https://github.com/l3a0/ithildin-runtime/issues/191) |

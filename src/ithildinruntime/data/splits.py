@@ -488,7 +488,11 @@ def _instrument(
                 yield _short(instrument, short)
                 short = []
             if cover is not None:
-                yield cover.fault
+                yield f"{cover.fault}. " + _reached(
+                    pair,
+                    f"A read that succeeds, or a covered row reaching {pair.later.isoformat()}, "
+                    "releases it",
+                )
             continue
         usable = cover.close_kind != UNSTATED and bool(cover.close_prices)
         if cover.covered is None and not usable:
