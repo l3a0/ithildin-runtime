@@ -300,7 +300,7 @@ def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
         "raises": "ValueError: broken",
         "raises-a-halt": "Halt: the handler's own halt",
         "returns-a-halt": "Halt: the handler's own halt",
-        "returns-a-result": "a result that could not be stored: Halt: S3 did not store",
+        "returns-a-result": "a result that could not be stored: Outage: S3 did not store",
     }[ends]
     assert f"The item had ended with {ended}" in detail
 

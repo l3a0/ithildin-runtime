@@ -22,6 +22,7 @@ from ithildinruntime.core import (
     Stopped,
     StoreUnavailable,
     StrategyEnd,
+    caps_key,
     claim_key,
     kill_switch_key,
     loss_stop_key,
@@ -696,9 +697,13 @@ def test_a_strategy_switch_that_cannot_be_read_halts() -> None:
     made = world()
     made.ready(close_of(FULL), PAIR)
     made.store.refuse(("get", off_switch_key("sim-1", CHAN)))
+    alarms = len(made.alarms.sent)
     result = made.send_attempt()
     assert result.halt is not None and "off switch unreadable" in result.halt.reason
     assert "decision" not in made.kinds(made.before)
+    # The store did not answer, so it pages once with the owner's step (#211).
+    (page,) = made.alarms.sent[alarms:]
+    assert "strategy off switch unreadable" in page and "The owner's step" in page
 
 
 def test_a_switch_cleared_between_the_legs_never_sends_the_second_alone() -> None:
@@ -958,11 +963,203 @@ def test_an_outage_the_path_raises_stops_every_write_and_pages_the_legs_once(
     result = made.send_attempt()
     reason = result.halt.reason
     assert tried == [] and made.submits() == [first]
-    assert f"{second} was not journaled abandoned, since the journal could not be read" in reason
-    assert f"stand so: {first} acknowledged, {second} not sent, since the journal" in reason
+    down = "since a store stopped answering"
+    assert f"{second} was not journaled abandoned by this stage, {down}" in reason
+    assert f"stand so: {first} acknowledged, {second} not sent, {down}" in reason
     # The outage's own page and the one naming every leg.
     sent = made.alarms.sent[alarms:]
     assert len(sent) == 2 and "The plan's orders stand so" in sent[1]
+
+
+def test_an_outage_at_a_legs_last_checks_pages_once_and_keeps_its_abandoned(monkeypatch) -> None:
+    """The real path meets the outage after the `sending`, so the leg was not sent (#211 item 11).
+
+    Its `abandoned` is tried once with no page, kept while the store is down, and stored at the
+    next settle.
+    """
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath._checked
+
+    def checked(self, cleared):
+        if cleared.name == second:
+            made.store.refuse(("*", "journal/"))
+        return real(self, cleared)
+
+    monkeypatch.setattr(OrderPath, "_checked", checked)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    reason = result.halt.reason
+    assert made.submits() == [first]
+    assert f"The abandoned of {second} is kept and tried again before the next send" in reason
+    down = "since a store stopped answering"
+    assert f"stand so: {first} acknowledged, {second} not sent, {down}" in reason
+    # The outage's own page and the one naming every leg.
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2, sent
+    assert "could not be read" in sent[0] and "The plan's orders stand so" in sent[1]
+    made.store.refuse()
+    made.account.settle(lambda: None)
+    assert made.view().orders[second].state is OrderState.ABANDONED
+
+
+def test_an_outage_at_an_orders_gate_check_pages_once_and_leaves_it_for_recover(
+    monkeypatch,
+) -> None:
+    """The journal goes between the order's `intent` and its check, so no `abandoned` is tried."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath._before
+    calls: list[str] = []
+
+    def before(self, name, last):
+        calls.append(name)
+        if len(calls) == 1:
+            # The first `_before` of a send is the gate check's, inside `_asked`.
+            made.store.refuse(("*", "journal/"))
+        return real(self, name, last)
+
+    monkeypatch.setattr(OrderPath, "_before", before)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    assert result.halt is not None
+    assert made.submits() == []
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2, sent
+    assert "could not be read" in sent[0] and "The plan's orders stand so" in sent[1]
+    made.store.refuse()
+    assert made.view().orders[first].state is OrderState.INTENDED
+    assert second not in made.view().orders
+
+
+def test_a_sending_missing_at_its_read_back_is_no_outage(monkeypatch) -> None:
+    """The store answered that the entry is gone, so it halts as before and pages no outage."""
+    from ithildinruntime.core import BlobMissing, journal_entry_key
+
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath._just_sending
+    once: list[str] = []
+
+    def just_sending(self, view, cleared, tries):
+        if cleared.name == second:
+            key = journal_entry_key(ACCOUNT, cleared.ack.seq)
+
+            def gone(number: int, op: str, k: str) -> None:
+                if op == "get" and k == key and not once:
+                    once.append(k)
+                    raise BlobMissing(k, "no such key")
+
+            made.store.before = gone
+        return real(self, view, cleared, tries)
+
+    monkeypatch.setattr(OrderPath, "_just_sending", just_sending)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    assert made.submits() == [first] and once
+    assert "could not be read: BlobMissing" in result.halt.reason
+    (page,) = made.alarms.sent[alarms:]
+    assert "The owner's step" not in page
+    assert made.view().orders[second].state is OrderState.ABANDONED
+
+
+def test_an_outage_reading_back_a_legs_sending_pages_once_and_keeps_its_abandoned(
+    monkeypatch,
+) -> None:
+    """The read back of the `sending` among the last checks is an outage like the rest."""
+    from ithildinruntime.core import journal_entry_key
+
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath._just_sending
+
+    def just_sending(self, view, cleared, tries):
+        if cleared.name == second:
+            made.store.refuse(("get", journal_entry_key(ACCOUNT, cleared.ack.seq)))
+        return real(self, view, cleared, tries)
+
+    monkeypatch.setattr(OrderPath, "_just_sending", just_sending)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    assert made.submits() == [first]
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2, sent
+    assert "could not be read" in sent[0] and "The owner's step" in sent[0]
+    made.store.refuse()
+    assert "could not be read" in result.halt.reason
+    assert made.view().orders[second].state is OrderState.ABANDONED
+
+
+@pytest.mark.parametrize(
+    ("key", "said"),
+    [
+        (lambda: caps_key(ACCOUNT), "the hard caps could not be read again"),
+        (lambda: kill_switch_key(ACCOUNT), "kill switch unreadable"),
+    ],
+    ids=["the hard caps", "a control"],
+)
+def test_an_outage_at_a_read_among_the_last_checks_pages_once_and_keeps_its_abandoned(
+    monkeypatch, key, said: str
+) -> None:
+    """A read the store does not answer is an outage, not a halt that pages nowhere."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath._checked
+
+    def checked(self, cleared):
+        if cleared.name == second:
+            made.store.refuse(("get", key()))
+        return real(self, cleared)
+
+    monkeypatch.setattr(OrderPath, "_checked", checked)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    reason = result.halt.reason
+    assert made.submits() == [first]
+    assert said in reason
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2, sent
+    assert said in sent[0]
+    assert "The owner's step" in sent[0] and "The plan's orders stand so" in sent[1]
+    # The path's outage stops every later read, so the legs come from what this call saw.
+    down = "since a store stopped answering"
+    assert f"stand so: {first} acknowledged, {second} not sent, {down}" in reason
+    made.store.refuse()
+    made.account.settle(lambda: None)
+    assert made.view().orders[second].state is OrderState.ABANDONED
+
+
+def test_an_outage_at_an_abandon_after_a_failed_send_names_a_store(monkeypatch) -> None:
+    """The send's halt is no outage and the journal answers, then the first abandon meets one."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    real = OrderPath.send
+
+    def send(self, name):
+        if name == first:
+            raise Halt("the first leg halted")
+        return real(self, name)
+
+    def abandon(self, name, reason):
+        made.store.refuse(("*", "journal/"))
+        raise self._outage("the journal could not be read: StoreUnavailable")
+
+    monkeypatch.setattr(OrderPath, "send", send)
+    monkeypatch.setattr(OrderPath, "abandon", abandon)
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    reason = result.halt.reason
+    down = "since a store stopped answering"
+    assert f"{first}, {second} were not journaled abandoned by this stage, {down}" in reason
+    assert f"The plan's orders stand so: {first} not sent, {second} not sent, {down}" in reason
+    # The abandon's own outage page and the one naming every leg.
+    assert len(made.alarms.sent[alarms:]) == 2
 
 
 def test_a_first_leg_whose_call_failed_with_the_journal_gone_leaves_the_second_unsent(
@@ -981,7 +1178,8 @@ def test_a_first_leg_whose_call_failed_with_the_journal_gone_leaves_the_second_u
     result = made.send_attempt()
     reason = result.halt.reason
     assert made.submits() == []
-    assert f"{second} was not journaled abandoned, since the journal could not be read" in reason
+    unread = "since the journal could not be read"
+    assert f"{second} was not journaled abandoned by this stage, {unread}" in reason
     assert f"stand so: {first} not known, {second} not sent, since the journal" in reason
 
 
@@ -1021,6 +1219,41 @@ def test_a_refused_plan_stops_its_writes_at_the_first_outage(monkeypatch, at: st
     sent = made.alarms.sent[alarms:]
     assert len(sent) == 2 and sent[1].startswith("account sim-1: nothing is sent: refused")
     assert sum("could not be read" in a for a in sent) == 2
+
+
+@pytest.mark.parametrize("whole", [False, True], ids=["its inputs", "the whole store"])
+def test_an_outage_reading_a_plans_inputs_at_the_ask_pages_once_and_asks_nothing_more(
+    monkeypatch, whole: bool
+) -> None:
+    """The ask meets the outage, which is no refusal, so the hold never reads the inputs again."""
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    real = OrderPath._inputs
+
+    def down(number: int, op: str, key: str) -> None:
+        # Each input of the decision, and not the stage's own files, so its halt is stored.
+        inputs = op == "get" and key.startswith("runs/") and "/execution/" not in key
+        if inputs or (whole and key.startswith("journal/")):
+            raise StoreUnavailable(key, "AccessDenied: the store's own text")
+
+    def inputs(self, planned):
+        made.store.before = down
+        return real(self, planned)
+
+    held: list[str] = []
+    monkeypatch.setattr(OrderPath, "_inputs", inputs)
+    monkeypatch.setattr(OrderPath, "hold", lambda self, n: held.append("hold"))
+    alarms = len(made.alarms.sent)
+    result = made.send_attempt()
+    assert result.halt is not None and held == []
+    assert made.submits() == []
+    sent = made.alarms.sent[alarms:]
+    assert len(sent) == 2, sent
+    assert "did not answer a read" in sent[0]
+    assert sent[1].startswith("account sim-1: nothing is sent")
+    # Nothing is journaled after the plan, for the next recover to settle.
+    made.store.before = lambda n, o, k: None
+    assert made.view().orders == {}
 
 
 def test_a_refused_plan_whose_journal_cannot_be_read_still_pages_that_nothing_is_sent(
