@@ -2,9 +2,10 @@
 
 The net cap is the share of V over the stress move, so a stress move too small
 lets a lone leg lose more than the share the owner set. The stress move is the
-largest two-session move, in either direction, across a strategy's legs over a
-recorded vintage. `largest_move` is that calculation, `stress_vintage` names
-the bars it read, `load_records` reads the tracked records, and
+larger of the largest one-session move and the largest two-session move, in
+either direction, across a strategy's legs over a recorded vintage.
+`largest_move` is the calculation for one count of sessions, `stress_vintage`
+names the bars it read, `load_records` reads the tracked records, and
 `hold_to_record` holds the owner's hard caps to them.
 
 It sits in `core` because the gate, the risk model and portfolio construction
@@ -338,6 +339,12 @@ def _record(where: str, value: object) -> StressRecord:
             "series", {"instrument", "first", "last", "basis"}, {"source", "source_as_of"}
         )
     )
+    if fields["one_session"] > fields["stress_move"]:
+        # m is the larger of the two, so a larger one-session move means m is too small.
+        raise Halt(
+            f"{where}'s one_session is {fields['one_session']}, above its stress_move of "
+            f"{fields['stress_move']}"
+        )
     ends = {}
     for run in series:
         ends[run.instrument] = max(run.last, ends.get(run.instrument, run.last))

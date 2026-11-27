@@ -416,6 +416,12 @@ def test_4_a_record_reads_field_by_field(tmp_path: Path) -> None:
     assert gone == replace(made, withdrawn="mistyped")
 
 
+def test_4_a_one_session_move_equal_to_m_reads(tmp_path: Path) -> None:
+    """m is the larger of the two lengths, so a one-session move may equal it and not pass it."""
+    (made,) = read(tmp_path, put('"0.11290000"', '"0.17980000"'))
+    assert made.one_session == made.stress_move == d("0.1798")
+
+
 KEYS = [line.split(" = ")[0] for line in SAMPLE.splitlines() if " = " in line and line[0] != " "]
 
 
@@ -476,6 +482,10 @@ BAD = {
     "a-negative-m": (put('"0.17980000"', '"-0.17980000"'), "1's stress_move is"),
     "an-infinite-m": (put('"0.17980000"', '"Infinity"'), "1's stress_move is"),
     "a-one-session-of-no-form": (put('"0.11290000"', '"x"'), "1's one_session is"),
+    "a-one-session-above-m": (
+        put('"0.11290000"', '"0.17980001"'),
+        "1's one_session is 0.17980001, above its stress_move of 0.17980000",
+    ),
     "a-leg-of-no-text": (put('leg = "USO"\nmoved', "leg = 1\nmoved"), "1's leg is 1"),
     "a-flag-of-no-what": (put("a real move", ""), "1's flagged 1's what is ''"),
     "a-flag-of-a-blank-what": (put("a real move", "  "), "1's flagged 1's what is"),

@@ -118,6 +118,41 @@ _SCHWAB_READ_FROM = (
     "equal to the cent on 80 of 80 imported bars of GLD and USO. Their volume was not compared "
     "and is stated as the capture row states it because it comes from the same endpoint"
 )
+_YAHOO_138_READ_FROM = {
+    "spy": (
+        "owner's ruling of 2026-11-27 on #138 at "
+        "https://github.com/l3a0/ithildin-runtime/issues/138#issuecomment-7209802208. "
+        "l3a0/marketlake#1043 pins the file at sha256 "
+        "c2aafddba5c921de725a341b10c1a3f7a9424866906479ad0abcea67855832c6. In an "
+        "exploratory comparison Massive's unadjusted daily closes sum to the same cent in "
+        "each of the 21 months from 2025-01-02 to 2026-09-04 and its volume to within "
+        "0.0494 percent. Before 2025 a second vendor checked only the largest one-session "
+        "and two-session moves of SPY and QQQ which Alpha Vantage's daily closes give the "
+        "same. Ten closes of the two funds that could hide a larger move are listed there "
+        "and no second vendor has checked them. Every volume is a whole multiple of 100. "
+        "That the volume is consolidated is measured from 2025 on and inferred before it "
+        "and the price's venues rest on the ruling. Yahoo publishes no statement of its "
+        "close so official close is the usual meaning of a Yahoo close for a US ETF"
+    ),
+    "qqq": (
+        "owner's ruling of 2026-11-27 on #138 at "
+        "https://github.com/l3a0/ithildin-runtime/issues/138#issuecomment-7209802208. "
+        "l3a0/marketlake#1043 pins the file at sha256 "
+        "f9edb7d87e161d62ebc27d6618d512726a6fe8ae0dfe49eb4b2911a76f5a8662. In an "
+        "exploratory comparison Massive's unadjusted daily closes sum to the same cent in "
+        "each of the 21 months from 2025-01-02 to 2026-09-04 and its volume to within "
+        "0.0494 percent. Before 2025 a second vendor checked only the largest one-session "
+        "and two-session moves of SPY and QQQ which Alpha Vantage's daily closes give the "
+        "same. Ten closes of the two funds that could hide a larger move are listed there "
+        "and no second vendor has checked them. Its source adjusts for QQQ's two-for-one "
+        "split of 2000-03-20 so prices before it read half those that traded and volume "
+        "twice the shares traded. Every volume from the split on is a whole multiple of "
+        "100 and every one before it of 200. That the volume is consolidated is measured "
+        "from 2025 on and inferred before it and the price's venues rest on the ruling. "
+        "Yahoo publishes no statement of its close so official close is the usual meaning "
+        "of a Yahoo close for a US ETF"
+    ),
+}
 KIND_ROWS = (
     [
         f"2026-11-22,quantitative-trading:data/inputdata_etf/{name}.csv,2006-04-26,2012-04-09,"
@@ -138,6 +173,14 @@ KIND_ROWS = (
     + [
         "2026-11-26,schwab:pricehistory,2026-09-04,2026-10-30,official close,consolidated,none,"
         f"consolidated in shares as of the fetch,{_SCHWAB_READ_FROM}"
+    ]
+    + [
+        "2026-11-27,yahoo:spy_daily_yahoo_2026-11-26.csv,1993-01-29,2026-09-04,official close,"
+        "consolidated,none,consolidated in shares to the nearest hundred,"
+        + _YAHOO_138_READ_FROM["spy"],
+        "2026-11-27,yahoo:qqq_daily_yahoo_2026-11-26.csv,1999-03-10,2026-09-04,official close,"
+        "consolidated,none,consolidated in shares to the nearest hundred "
+        "before its source's split adjustment," + _YAHOO_138_READ_FROM["qqq"],
     ]
 )
 
@@ -232,6 +275,28 @@ def test_the_yahoo_rows_name_the_digest_the_chan_rows_compared_with(name: str) -
     (digest,) = re.findall(r"pins the file at sha256 ([0-9a-f]{64}) ", yahoo)
     (chan,) = [r for r in rows if r.startswith("2026-11-22,quant") and f"/{name}.csv," in r]
     assert f"{name}_daily_yahoo_2026-11-22.csv at sha256 {digest}" in chan
+
+
+@pytest.mark.parametrize(
+    ("name", "before", "first"),
+    [("spy", date(1993, 1, 28), date(1993, 1, 29)), ("qqq", date(1999, 3, 9), date(1999, 3, 10))],
+)
+def test_spy_and_qqqs_yahoo_rows_read_the_kind_on_each_side_of_their_edges(
+    name: str, before: date, first: date
+) -> None:
+    """The rows the owner's ruling of 2026-11-27 on #138 states, to the import's last session."""
+    kinds, own = load_price_kinds(), f"yahoo:{name}_daily_yahoo_2026-11-26.csv"
+    # Typed again, so a typo shared by a row and its pin is still caught.
+    counted = (
+        "consolidated in shares to the nearest hundred"
+        + {
+            "spy": "",
+            "qqq": " before its source's split adjustment",
+        }[name]
+    )
+    stated = Kind("official close", "consolidated", "none", counted)
+    days = (before, first, date(2026, 9, 4), date(2026, 9, 8))
+    assert [kinds.kind(own, day) for day in days] == [NOTHING, stated, stated, NOTHING]
 
 
 def test_the_captured_bars_row_reads_the_kind_it_should_on_each_side_of_its_edges() -> None:

@@ -603,8 +603,9 @@ The reader refuses each of these as a halt naming the file, and the record and t
 2. A key it does not know, or one left out.
 3. A value of another form, such as an m at or below zero or a flag with an empty `what`.
 4. A `leg` that is none of the record's instruments, because the hold counts a record by its leg.
-5. A `through` that is not the last session of each leg's `series`, because the stress move's age counts from it.
-6. Two records of one strategy and vintage.
+5. A `one_session` above `stress_move`, because m is the larger of the largest one-session move and the largest two-session move.
+6. A `through` that is not the last session of each leg's `series`, because the stress move's age counts from it.
+7. Two records of one strategy and vintage.
 
 The risk and portfolio workers' entry points take the file's path and hand on the records or the halt. The price is that a partition marketlake rewrote with the same close makes a new vintage, whose record has to be measured again.
 
