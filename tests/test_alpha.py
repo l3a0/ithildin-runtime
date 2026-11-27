@@ -947,12 +947,12 @@ HALTS = {
     "a-decision-past-the-calendar": (
         replace(HAND_SNAPSHOT, decision_at=datetime(2050, 1, 3, 21, 0, tzinfo=UTC)),
         "strategy chan cannot place its decision on a session: 2050-01-03T21:00:00+00:00 is "
-        "outside the session table's range, 2006-01-01 to 2027-12-31",
+        "outside the session table's range, 1993-01-01 to 2027-12-31",
     ),
     "a-decision-on-the-calendars-first-session": (
         replace(HAND_SNAPSHOT, decision_at=TABLE.session(DAYS[0]).close),
         "strategy chan cannot place its decision on a session: the session table holds no "
-        "session before 2006-01-03",
+        "session before 1993-01-04",
     ),
     "too-few-sessions": (
         HAND.at(NEWEST, 4),

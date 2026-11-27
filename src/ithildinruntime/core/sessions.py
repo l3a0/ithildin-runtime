@@ -50,7 +50,7 @@ __all__ = [
 ]
 
 TABLE = Path(__file__).with_name("sessions-xnys.csv")
-TABLE_SHA256 = "bea308f0969a5511fb700a32736fa853d76eee91f8ff0f3f5ddf2a0ef4d0e9e7"
+TABLE_SHA256 = "06da47b80e0c0545b48fd58889d3dc13fb429fc90faddbc7dc1092b5f712cad7"
 _HEADER = "session,open_utc,close_utc,utc_offset_minutes"
 _RANGE = re.compile(r"range,([0-9]{4}-[0-9]{2}-[0-9]{2}),([0-9]{4}-[0-9]{2}-[0-9]{2})")
 _ROW = re.compile(

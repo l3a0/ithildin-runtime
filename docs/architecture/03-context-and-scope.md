@@ -28,7 +28,7 @@ flowchart LR
         loop["The live loop<br/>data, alpha, risk, cost,<br/>portfolio, execution, monitoring"]
     end
     qt[("quantitative-trading<br/>committed vintages")]
-    yahoo[("Yahoo Finance<br/>two downloaded files")]
+    yahoo[("Yahoo Finance<br/>four downloaded files")]
     vendor[("Vendor download<br/>fetches recent sessions once")]
     lake[("marketlake<br/>bars and quotes")]
     broker["Broker<br/>paper or live account"]
@@ -80,7 +80,7 @@ marketlake holds four kinds of bar.
 | --- | --- | --- |
 | Captured | marketlake's capture, which has held GLD and USO since Monday 2026-11-02's session | Shadow and paper trading, and live trading once [a split record covers them](../team-charter.md#5-release) |
 | Committed vintages | quantitative-trading, imported once | The backtest, and the stress move's measurement |
-| Yahoo's GLD and USO | Yahoo's two downloaded files, 2012-04-10 to 2026-09-03, imported once | The stress move's measurement |
+| Yahoo's GLD, USO, SPY and QQQ | Yahoo's four downloaded files, imported once: GLD's and USO's from 2012-04-10 to 2026-09-03, SPY's from 1993-01-29 and QQQ's from 1999-03-10, both to 2026-09-04 | The stress move's measurement |
 | Recent vendor download | One download of the latest sessions, imported once | The strategy's first decisions, until capture covers them |
 
 The vendor download exists because each decision reads 60 sessions of closes.
@@ -109,7 +109,7 @@ No session ages out for the runtime, and only a day's capture segments go, as
 says. marketlake's VM can delete older partitions
 from its own disk once its backup bucket holds them, but the runtime reads a
 mirror of that bucket, which keeps every session, and never the VM's disk. So
-the 2006 to 2026 history and a lookback of any length stay readable.
+the history from 1993 and a lookback of any length stay readable.
 
 The figure below is a C4 container diagram.
 
