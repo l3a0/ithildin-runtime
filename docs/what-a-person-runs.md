@@ -456,12 +456,12 @@ A withdrawal ends what the record held, so the net cap can grow with nothing hal
 1. Save every answer fetched for the record of splits, whether or not a row cites it, under `~/.config/ithildin-runtime/splits/<date>/`, where `<date>` is the UTC date of the fetch, never in the repository. Save an issuer's filing as fetched and a vendor's answer as its connector returned it, and list each file's address and UTC fetch time in a `README.md` there.
 2. Write the SHA-256 of each file a row cites into the row's `read_from`, beside its address and fetch time. `read_from` holds no comma, because the loader splits the row on commas.
 
-These answers are recorded data, and an issuer's filing can be fetched again while a vendor's answer of that day cannot. So two things must hold.
+These answers are recorded data, and an issuer's filing can be fetched again while a vendor's answer of that day cannot. So two things must hold for every saved answer, and [#250](https://github.com/l3a0/ithildin-runtime/issues/250) builds how.
 
-1. A saved answer is never replaced or deleted. Until something enforces it, this holds by hand: give each fetch a name no file in the folder has, and lock each file with `chflags uchg` once it is saved.
-2. A copy off the machine exists for every saved answer, with each SHA-256 checked against it, and before a decision relies on a row that cites one. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds that copy, because the [replication rule](design.md#rule-1-the-replica-before-live) gives saved published texts no prefix yet.
+1. A saved answer is never replaced or deleted.
+2. A copy off the machine, checked against each answer's SHA-256, exists before anything relies on the answer. Until [#11](https://github.com/l3a0/ithildin-runtime/issues/11) gives saved published texts a prefix the [replication rule](design.md#rule-1-the-replica-before-live) copies, the owner makes that copy by hand.
 
-Today the folder is the only copy, its files are not locked, and nothing reads them back. The merge that adds a row deploys to shadow, so the first decisions that rely on it start then, and the second copy is due before it. Until a copy exists, losing the disk leaves the covered rows citing answers nobody holds, and no vendor gives those answers again. A further price is that a connector's rendering of a vendor's answer is what is kept, so a connector that drops a row or a page goes unseen in the saved file.
+Today the folder is the only copy, nothing locks its files, and nothing reads them back. Nothing deploys yet, so the first reads that rely on a row are a stress run or a backtest run by hand, and then the shadow run of [#16](https://github.com/l3a0/ithildin-runtime/issues/16). The price is that losing or changing a file leaves rows citing answers nobody holds, and no vendor gives those answers again. A connector's rendering of a vendor's answer is what is kept, so a connector that drops a row or a page also goes unseen in the saved file.
 
 #### Write a split row
 
