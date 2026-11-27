@@ -532,6 +532,7 @@ class Supervisor:
         # One time for every try, so a halt whose create landed unanswered is not written twice.
         at = self._timer.now()
         alarmed = False
+        asked = False
         while True:
             held = write_halts(
                 self._storage,
@@ -559,6 +560,20 @@ class Supervisor:
                     "unit by hand once the store answers"
                 )
                 return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
+            if asked:
+                # Exit 3, which the host never restarts, since a restart in this session would
+                # judge the run afresh and could store its stop.
+                self._alerts.alarm(
+                    f"{self._deployment}: the supervisor was asked to stop before the run's halt "
+                    f"of {plan.run}, or any halt in its place, was stored, so nothing records "
+                    "the halt. It ends with a code the host does not restart. Leave the "
+                    "supervisor's unit stopped for the rest of the session: with no stop stored, "
+                    "the next session's start holds every strategy. A start in this session "
+                    "judges the run afresh, and stores the run's stop unless an order is still "
+                    "late. Keep the account's kill switch pulled until each position is confirmed "
+                    "at the broker"
+                )
+                return Outcome(EXIT_HALTED, f"asked to stop before {plan.run}'s halt was stored")
             if not alarmed:
                 self._alerts.alarm(
                     f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
@@ -568,7 +583,8 @@ class Supervisor:
                 )
                 alarmed = True
             asked = self._wait(self._tick)
-            # Tried once more after a stop is asked, since the store may answer by then.
+            # Tried once more after a stop is asked, the run's halt here and the halts in its
+            # place at the top of the loop, since the store may answer by then.
             try:
                 self._storage.keep(key, encode(record))
             except Exception as again:
@@ -580,17 +596,6 @@ class Supervisor:
                     "until each position is confirmed at the broker"
                 )
                 return None
-            if asked:
-                self._alerts.alarm(
-                    f"{self._deployment}: the supervisor was asked to stop before the run's halt "
-                    f"of {plan.run}, or any halt in its place, was stored, so nothing records "
-                    "the halt. Leave the supervisor's unit stopped for the rest of the session: "
-                    "with no stop stored, the next session's start holds every strategy. A start "
-                    "in this session judges the run afresh, and stores the run's stop unless an "
-                    "order is still late. Keep the account's kill switch pulled until each "
-                    "position is confirmed at the broker"
-                )
-                return Outcome(EXIT_ASKED, f"asked to stop before {plan.run}'s halt was stored")
 
     def _halt_result(self, plan: Plan, stage: str, at: datetime, halt: Halt) -> DecisionResult:
         row = self._table.stage(stage)
