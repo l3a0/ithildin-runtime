@@ -56,8 +56,10 @@ __all__ = [
     "run_part",
     "run_stop_key",
     "sim_account_key",
+    "starts_prefix",
     "strategy_halt_key",
     "strategy_halts_prefix",
+    "supervisor_start_key",
     "takeover_key",
     "timestamp_part",
     "utc_time_part",
@@ -233,6 +235,16 @@ def run_halt_key(deployment: str, run: str) -> str:
 
 def run_stop_key(deployment: str, run: str) -> str:
     return f"{_run_prefix(deployment, run)}/stop.json"
+
+
+def starts_prefix(deployment: str, run: str) -> str:
+    """The folder of a run's supervisor start records, of every boot, which a reader lists."""
+    return f"{_run_prefix(deployment, run)}/starts/"
+
+
+def supervisor_start_key(deployment: str, run: str, boot: str, count: int) -> str:
+    prefix = starts_prefix(deployment, run)
+    return f"{prefix}{_name(boot, 'boot')}/{_padded(count, 6, 'count')}.json"
 
 
 def result_key(deployment: str, run: str, decision_at: datetime, stage: str) -> str:

@@ -58,6 +58,7 @@ from .entries import (
     LostEntry,
     OpeningEntry,
     OutsideRecordEntry,
+    PauseEntry,
     ReadEntry,
     Record,
     RejectedEntry,
@@ -199,6 +200,7 @@ class _Shared:
         self.brokers: _Kept[str, str] = _Kept()
         # Each entry the loss stop's state is worked out from, by its number.
         self.stops: _Kept[int, Record] = _Kept()
+        self.pauses: _Kept[int, PauseEntry] = _Kept()
         # Each order a takeover found late, by its client order id, with the takeover's number.
         self.late: _Kept[str, int] = _Kept()
 
@@ -252,6 +254,11 @@ class View:
     @property
     def reads(self) -> Mapping[int, ReadEntry]:
         return _Upto(self._shared.reads, self.through.seq)
+
+    @property
+    def pauses(self) -> Mapping[int, PauseEntry]:
+        """Each `pause` entry, by its number."""
+        return _Upto(self._shared.pauses, self.through.seq)
 
     @property
     def fills(self) -> Mapping[str, Fill]:
@@ -543,6 +550,11 @@ def _worked_out(view: View, entry: JournalEntry) -> Step:
                     f"filled, and its fills come to {order.filled}"
                 )
             step.order(kind, order, state)
+        case PauseEntry():
+            # A pause moves no order and leaves the book as it was. A second
+            # pause of one run, such as two supervisors could write, is kept
+            # beside the first and halts nothing.
+            step.add(view._shared.pauses, seq, record)
         case _:
             raise Halt(f"entry {seq} is of the kind {kind}, which the book does not read")
     return step

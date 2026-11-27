@@ -1,4 +1,4 @@
-"""The risk worker's entry point: its row in the stage table and its handler.
+"""The risk worker's row in the stage table and its handler, which `runtime.entry` starts.
 
 One risk stage serves every strategy of the deployment, and reads data's and
 execution's recover results. It builds no adapter of its own, because the risk

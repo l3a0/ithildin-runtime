@@ -201,11 +201,13 @@ def test_3_the_list_names_every_state_and_every_kind_of_an_order() -> None:
     unowned = {"outside_record", "unmatched_record", "unmatched_fill", "unmatched_order"}
     # The loss stop's kinds move no order either, and tests/test_latch.py folds them.
     stop = {"stop_fired", "stop_stored", "stop_cleared"}
+    # A pause moves no order, as an opening, a read and a decision move none.
     # A takeover names late orders and moves none, and tests/test_order_lease.py folds it.
     assert {names.get(act, act) for act in ACTS} == set(KINDS) - {
         "opening",
         "read",
         "decision",
+        "pause",
         "takeover",
         *unowned,
         *stop,

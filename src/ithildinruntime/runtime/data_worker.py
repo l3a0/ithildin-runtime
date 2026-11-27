@@ -1,7 +1,8 @@
-"""The data worker's entry point: its row in the stage table, its buckets and its handler.
+"""The data worker's row in the stage table, its buckets and its handler.
 
-Each worker's entry point adds its own stage's row to the table, as
-`runtime.loop.table` says. Data's stage is capturing and reads no other
+Each worker's file declares its own stage's row, and `runtime/deployment.py`
+puts every row into one table, as `runtime.loop.table` says. `runtime.entry`
+starts the worker. Data's stage is capturing and reads no other
 stage's result.
 
 The entry point builds the two read-only buckets and hands them to `data`, which
@@ -26,6 +27,7 @@ from typing import Any, NamedTuple
 from ithildinruntime.adapters import FolderBucket, S3Bucket
 from ithildinruntime.core import Bucket, Clock, Halt, Mode, StageKind, Storage, Timer
 from ithildinruntime.data import STAGE, DataStage, LakeSource, Mirror, data_settings
+from ithildinruntime.data.reference import QuoteKinds
 
 from .loop import Stage, Table
 
@@ -81,6 +83,7 @@ def data_handler(
     run: str,
     release: str,
     table: Table,
+    quote_kinds: QuoteKinds | None = None,
 ) -> DataStage:
     """Data's handler for the receive loop, reading `bucket` through a mirror in `mirror`.
 
@@ -94,6 +97,8 @@ def data_handler(
     start. One `LakeSource` serves every decision, because it keeps each
     session's answer for the run. `measured` is true where the clock is the
     machine's, so a history clock wired into a trading run halts.
+    `quote_kinds` is the tracked quote-kind table unless a test hands it a
+    made-up row, since the tracked one holds none yet.
     """
     source: LakeSource | Halt
     try:
@@ -108,6 +113,7 @@ def data_handler(
             clock=clock,
             timer=timer,
             measured=measured,
+            quote_kinds=quote_kinds,
         )
     return DataStage(
         source,

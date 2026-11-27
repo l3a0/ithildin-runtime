@@ -2230,11 +2230,12 @@ An arrow means "may import". The diagram draws four rules.
    `core` holds ports and no adapter, so no module can build an S3 store or an SQS queue and choose its own mode.
 2. **Only `runtime` imports the modules together.**
    - The command that [measures a stress move](#how-the-stress-move-is-measured) lives there, in `runtime.stress_move`, because it reads through `data` and `adapters`. So does `runtime.quote_refusals`, which counts how often recorded quotes would be refused at a step of maximum ages and spreads, because it reads through `data`'s sealed read and `core`'s judge of a quote. [Count how often quotes would be refused](../what-a-person-runs.md#count-how-often-quotes-would-be-refused) says how to run it.
-   - Each worker's entry point lives there, and so does the one receive loop every worker and the supervisor run. It picks the adapters for the mode it is given, and the execution worker's entry point hands the risk module's `RiskGate` to the order path.
-   - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `journal`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports nothing from `ithildinruntime` but `core`, so the supervisor reaches no worker module through it.
-   - The table that declares each stage's kind and inputs, and the function that generates the routes from it, live in `runtime.loop` beside the loop, because the supervisor reads the table too. Each worker's entry point adds its own stage's row. The `Route` type and its key matcher live in `core`, because the folder adapter matches routes to deliver its events.
+   - Each worker's entry point lives there, in `runtime.entry`, and so does the one receive loop every worker runs. An entry point reads the machine's settings once, picks the adapters its environment's row in `runtime.deployment` names, and hands them to a core, `run_<worker>`, which CI starts with stand-ins. The execution worker's entry point hands the risk module's `RiskGate` to the order path.
+   - The supervisor lives there too, in `runtime.supervisor`, and imports `core`, `journal`, `adapters` and the receive loop's module, `runtime.loop`, and nothing else. `runtime.loop` itself imports nothing from `ithildinruntime` but `core`, so the supervisor reaches no worker module through it. So `runtime.entry` builds the supervisor's table and adapters and hands them in. The supervisor runs no receive loop, because the loop refuses a component with no stage, and reads storage on its own tick instead.
+   - The table that declares each stage's kind and inputs, and the function that generates the routes from it, live in `runtime.loop` beside the loop, because the supervisor reads the table too. Each worker's file declares its own stage's row, and `runtime.deployment` puts every row into one table for the strategies a deployment names, so every worker and the routes read the same one. The `Route` type and its key matcher live in `core`, because the folder adapter matches routes to deliver its events.
    - The supervisor starts no worker itself. The host's path unit starts each worker's unit once the supervisor writes the local release file. It writes nothing but these, which `core`'s storage contract and queue and the `journal` package cover, apart from that file:
      - the local release file, in memory-backed storage on its VM;
+     - its start record, under the run, which names its machine's boot, so a later start tells a restart the host supervised from a machine that was lost;
      - the plan's lease, whose conditional writes carry the run's status;
      - the plan;
      - the journal entry for each lease it clears or takes over;
@@ -2242,6 +2243,8 @@ An arrow means "may import". The diagram draws four rules.
      - its heartbeat;
      - the halts of workers that failed;
      - a halt of the run, with a halt for every decision left in the plan;
+     - after a stop that left no clean-shutdown record, a halt in each strategy's halts folder and one `pause` journal entry, as `runtime/supervisor/hold.py` says;
+     - where the run's halt cannot be stored, a halt in each strategy's halts folder that stands in for it, from which a later start of the same run stores the run's halt;
      - the run's stop.
 
      The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`.

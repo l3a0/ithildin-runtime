@@ -36,7 +36,7 @@ flowchart TB
         docker["Docker daemon<br/>pulls the pinned image"]
         wd["Host watchdog"]
         onf["OnFailure handler"]
-        subgraph ctrs["Two containers per component and two supervisors per deployment"]
+        subgraph ctrs["Two containers per component, and one supervisor per deployment until the plan's lease is built"]
             sup["Supervisor<br/>writes the plan, sets deadlines"]
             data["Data"]
             alpha["Alpha model"]
@@ -50,7 +50,7 @@ flowchart TB
         creds[("Memory-backed storage<br/>a credential, an error and a heartbeat<br/>directory per container, and the release file")]
         mirror[("Local lake mirror<br/>the partitions the strategies need")]
         timer -->|"starts the supervisor before the session"| sup
-        pathu -->|"starts the workers once the supervisor<br/>has read the run's plan"| ctrs
+        pathu -->|"starts the workers once the supervisor<br/>has finished its hold and stored the plan"| ctrs
         timer -->|"stops every container after the close"| ctrs
         docker --> ctrs
         wd -.->|"kills a container whose heartbeat stops"| ctrs
@@ -233,7 +233,7 @@ The hard caps blob can be written or deleted only by the owner's credential. An 
 | The runtime's credential | Each of those prefixes | List, without which S3 answers a missing key with "access denied" rather than "no such blob" |
 | The owner's credential on every account, and the operator's on paper and shadow, by this doc's proposal for [#11](https://github.com/l3a0/ithildin-runtime/issues/11) | `journal/` | Create, only with `If-None-Match` at the next number |
 
-"The runtime's credential" stands for each component's own role, and each role holds only the rows its component's writes need. Under `runs/` a stage's role creates only its own stage's blobs, and the supervisor's alone creates a run's plan, its halt and its stop, and the halt it writes at a failed worker's result key. Among the runtime's roles, only execution's, monitoring's and the supervisor's create entries under `journal/`, and only execution's creates under `sim/`. So a worker other than execution, monitoring and the supervisor, such as data, cannot write a journal entry or another stage's result. People, the rollback's credentials and the approved drill role create journal entries too, under the rows that name them. S3 cannot limit what an entry says. So which kinds of entry each person's credential, the rollback's credentials and the approved drill role may create, how the journal refuses any other kind, and what journals an operator's pull or switch-off on live are open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which also holds each role's exact grant.
+"The runtime's credential" stands for each component's own role, and each role holds only the rows its component's writes need. Under `runs/` a stage's role creates only its own stage's blobs, and the supervisor's alone creates a run's plan, its halt and its stop, its own start records under `runs/<deployment>/<run>/starts/`, and the halt it writes at a failed worker's result key or at every result key a halted run leaves. Under `accounts/` it creates a halt in each strategy's halts folder after a stop that left no clean-shutdown record, and where the run's halt cannot be stored, in its place. Among the runtime's roles, only execution's, monitoring's and the supervisor's create entries under `journal/`, and only execution's creates under `sim/`. So a worker other than execution, monitoring and the supervisor, such as data, cannot write a journal entry or another stage's result. People, the rollback's credentials and the approved drill role create journal entries too, under the rows that name them. S3 cannot limit what an entry says. So which kinds of entry each person's credential, the rollback's credentials and the approved drill role may create, how the journal refuses any other kind, and what journals an operator's pull or switch-off on live are open on [#11](https://github.com/l3a0/ithildin-runtime/issues/11), which also holds each role's exact grant.
 
 A [drill](../halts-and-drills.md#drills-with-no-alarm) checks that. The lease grants are narrower than the rest, as this doc proposes for [#11](https://github.com/l3a0/ithildin-runtime/issues/11).
 
@@ -287,7 +287,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 ### Rule 6: a rollback is a pin to an earlier digest
 
-**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The header's map from each strategy to its hash is one of three exceptions: no release from before it runs a worker, and one that read a map would halt, as [Rule 5](../design.md#rule-5-each-blob-names-what-made-it) says. Data's snapshot file is the second, at every format before the first release that runs a worker in an environment, for the same reason: no such release has run, so no environment holds a snapshot of an earlier format. It is at format 4. Execution's recover files and its send stage's files at format 2, whose broker reads hold the broker's records, and the journal's four kinds for a broker's record and what the platform did not send, with its kind for an order given up as lost, its kind for a takeover of the account's lease with the takeover's stored order list and an absent lease's halt, each at format 1, and the loss stop's three kinds, are the third: no release runs a worker in an environment, and none builds a broker there outside a backtest over a folder, so none holds a recover or send file of format 1 or a journal entry of those kinds. A pin back past the release that brought them halts on a broker read of format 2 and on any entry of those kinds. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so no session trades until it is cleared, and it stays set until the next session runs the earlier digest. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
+**A rollback is a pin to an earlier digest.** Every blob carries a format version, and each release writes only formats the release before it can read, so the old release reads what the new one left. The header's map from each strategy to its hash is one of four exceptions: no release from before it runs a worker, and one that read a map would halt, as [Rule 5](../design.md#rule-5-each-blob-names-what-made-it) says. Data's snapshot file is the second, at every format before the first release that runs a worker in an environment, for the same reason: no such release has run, so no environment holds a snapshot of an earlier format. It is at format 4. Execution's recover files and its send stage's files at format 2, whose broker reads hold the broker's records, and the journal's four kinds for a broker's record and what the platform did not send, with its kind for an order given up as lost, its kind for a takeover of the account's lease with the takeover's stored order list and an absent lease's halt, each at format 1, and the loss stop's three kinds, are the third: no release runs a worker in an environment, and none builds a broker there outside a backtest over a folder, so none holds a recover or send file of format 1 or a journal entry of those kinds. A pin back past the release that brought them halts on a broker read of format 2 and on any entry of those kinds. The journal's `pause` kind is the fourth, for the same reason: the release that first writes it is the first that runs a worker in an environment, and a pin back past it halts on a `pause` entry. The VM keeps the session's digest until the session ends and takes the pin at the next one, so nobody needs to reach the VM. A rollback during a session therefore first stops sending, by pulling the kill switch of every account in the environment or by waiting past the cancel cutoff, so nothing is left half sent. Then `ithildin pin set` writes the earlier digest, as `### Four environments` says, and the earlier release takes the next session. A switch pulled for the rollback stays set, so no session trades until it is cleared, and it stays set until the next session runs the earlier digest. [Roll a release back during a session](../what-a-person-runs.md#roll-a-release-back-during-a-session) gives the steps a person runs.
 
 ### Rule 7: systemd keeps every process running, up to a limit
 
@@ -295,7 +295,9 @@ The release writes every blob with one single-part upload, never a multipart one
 
 #### Which units systemd runs
 
-Each supervisor instance and each worker instance, two of each per deployment on slice 1's one VM and three across the cluster, has a unit of its own, the instances of each from one template unit, all part of one `ithildin.target`.
+Each worker instance, two of each component per deployment on slice 1's one VM and three across the cluster, has a unit of its own, the instances of each from one template unit, all part of one `ithildin.target`. So does each supervisor instance. A deployment runs one supervisor instance until [#210](https://github.com/l3a0/ithildin-runtime/issues/210) builds the plan's lease, and as many as each component after it, as [the 2026-11-27 decisions](../design.md#2026-11-27) record. One is safe because each write it makes is create-only.
+
+The local release file the supervisor writes holds three lines: the release, the run and the boot, as `runtime.supervisor.read_release_file` reads them. A unit reads the first with `head -n1`, never through `EnvironmentFile=`, and a worker starts only once all three name its plan's release, its run and its boot.
 
 #### What limits a unit's restarts
 
@@ -447,7 +449,7 @@ backtest, CI and the VM run the same bytes.
 
 The supervisor only sends messages, as [How a run starts](../design.md#rule-7-how-a-run-starts) says, so it
 needs no power over containers. A systemd unit per container, under [Systemd
-keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), starts the supervisor before the session and each worker once the supervisor has read the run's plan, restarts it when it exits or
+keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), starts the supervisor before the session and each worker once the supervisor has finished its hold check and stored the run's plan, restarts it when it exits or
 its heartbeat stops, and stops it after the close. No container holds the
 Docker socket or the system D-Bus, because either one is root on the
 host.
@@ -657,7 +659,7 @@ adapter stays SQS, as it already is on the VM.
 
 #### How slice 1 runs on one VM
 
-Slice 1 runs each environment's one VM in an Auto Scaling group of one, which replaces a lost VM without a person. That VM runs every instance of its deployment, two of each component and of the supervisor, under the units of [Systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), which give each supervisor instance and each worker instance a systemd unit of its own that restarts it, most of them up to a limit. Scaling out raises the group to three, one VM a zone, each running one supervisor instance and one instance of each component, so each component then runs three instances.
+Slice 1 runs each environment's one VM in an Auto Scaling group of one, which replaces a lost VM without a person. That VM runs every instance of its deployment, two of each component, and one supervisor until [#210](https://github.com/l3a0/ithildin-runtime/issues/210) builds the plan's lease and two after it, under the units of [Systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), which give each supervisor instance and each worker instance a systemd unit of its own that restarts it, most of them up to a limit. Scaling out raises the group to three, one VM a zone, each running one supervisor instance and one instance of each component, so each component then runs three instances.
 
 #### Which items hold for slice 1's one VM
 
