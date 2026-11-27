@@ -447,7 +447,7 @@ A larger record binds as soon as the release that carries it runs, whatever the 
 SPY's history starts in 1993, so its record leaves out the S&P 500's fall of October 1987, which the caps cover by hand. design.md's `**Why SPY's caps reach back to 1987.**`, under [Strategies, schedules and decisions](design.md#strategies-schedules-and-decisions), gives the reasoning.
 
 1. Write the caps' `stress_move` as the larger of 0.24570586 and the largest m of the strategy's records, and `stress_vintage` and `stress_through` on its record as usual.
-2. Write `stress_low` as 0.24570586 in the same write, so a later write of `stress_move` below the floor halts every order rather than loosening the cap with nothing said. That halt also stops the account's reading of the day's loss, so the loss stop cannot fire, for every strategy on the account, until the caps are fixed.
+2. Write `stress_low` as 0.24570586 in the same write, so a later write of `stress_move` below the floor halts every order rather than loosening the cap with nothing said.
 3. Write `stress_high` at or above that `stress_move` in the same write, because the caps halt every order otherwise.
 4. Keep `stress_move` at or above the floor at every later write, at the second step of [Raise the stress move](#raise-the-stress-move) and in [Withdraw a record](#withdraw-a-record).
 5. Read `stress_move` and `stress_low` back against 0.24570586 with the other fields, because no record holds the floor.
