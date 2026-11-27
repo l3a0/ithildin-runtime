@@ -48,6 +48,7 @@ from ithildinruntime.journal import (
 
 from .controls import Controls
 from .latch import Latch
+from .lease import AccountLease, Holder
 from .order_path import Named, OrderPath, Shared, Unstored, quietly
 from .patience import Patience, code_of
 
@@ -73,8 +74,10 @@ class Account:
     """The journal of one account, what its paths share, and the answers it still owes the journal.
 
     `account` is the platform's alias, never the broker's number. `writer` is
-    drawn afresh for this `Account`, as `Journal` says. `gate` is the one risk
-    gate, and `pause` waits between two tries of a store.
+    drawn afresh for this `Account`, as `Journal` says, and names every handler
+    that takes the account's lease. `gate` is the one risk gate, and `pause`
+    waits between two tries of a store. `release` and `run` are what the lease's
+    holder records of the process.
     """
 
     def __init__(
@@ -88,12 +91,15 @@ class Account:
         alerts: Alerts,
         retry: Retry,
         pause: Callable[[float], None],
+        release: str | None = None,
+        run: str | None = None,
     ) -> None:
         self.alias = account
         self._shared: Shared | Halt
         patience = Patience(clock, retry, pause)
         try:
             journal = Journal(store, account, writer)
+            lease = AccountLease(store, account, clock)
         except ValueError:
             self._shared = Halt(f"the account {account!r} is no alias a journal is kept under")
         else:
@@ -111,6 +117,8 @@ class Account:
                 controls=Controls(store, account),
                 unstored=Unstored(journal, named, patience, storage.owner_step),
                 latch=Latch(account, journal, store, storage, patience, clock, lock),
+                lease=lease,
+                holder=Holder(writer, release=release, run=run),
                 lock=lock,
             )
 

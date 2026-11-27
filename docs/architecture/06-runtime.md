@@ -595,7 +595,7 @@ The first recover of a session values the book at the official closes of the ses
 | Mode | What it builds | What lifts the halt |
 | --- | --- | --- |
 | A backtest over a folder | The simulated broker, with no fault | Nothing halts, unless the stage table's row of recover is not the one the worker declares, which halts both stages, or its row of send is not, which halts send alone |
-| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#148](https://github.com/l3a0/ithildin-runtime/issues/148) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151) and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) closes last |
+| Shadow | No broker. Every decision of each of its stages halts | Whichever of [#149](https://github.com/l3a0/ithildin-runtime/issues/149) to [#151](https://github.com/l3a0/ithildin-runtime/issues/151) and [#155](https://github.com/l3a0/ithildin-runtime/issues/155) closes last |
 | Paper | The same | [#153](https://github.com/l3a0/ithildin-runtime/issues/153), once all of shadow's are closed |
 | Live | The same | Only the owner switches an account to live |
 | An unknown mode, and a backtest over any other store | The same | The configuration |
@@ -656,7 +656,7 @@ Three more checks sit inside these steps, as [How a rerun never doubles anything
 The steps run in this order.
 
 1. **Claim the stage.** Whichever execution instance receives portfolio construction's result writes a create-only claim on the send stage, naming its process's writer and a token of this one call, so a second call in the same process never reads the first one's claim as its own. An instance that finds a claim it did not write never plans for that decision. It halts, and its reason names where each planned order of the decision stands, each order in doubt with the time its `sending` was stored, and each leg whose partner did not go. It alarms on each order in doubt, and then reads the day's loss, whose own halt joins the reason. All of that comes before any input is read, so an unreadable snapshot hides no order.
-2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again, afresh on every attempt, and stores the read at `broker-read-<n>.json` with the first number left free. Until [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s lease and [#211](https://github.com/l3a0/ithildin-runtime/issues/211) let another instance take over, a second attempt halts at the claim, so the read lands at `broker-read-1.json`. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. It also reads the broker's records and journals each ahead of the comparison, a listed one inside its range as an outside entry and any other as unmatched, as recover does. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
+2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again, afresh on every attempt, and stores the read at `broker-read-<n>.json` with the first number left free. Until [#211](https://github.com/l3a0/ithildin-runtime/issues/211) lets another instance take a send stage over, a second attempt halts at the claim, so the read lands at `broker-read-1.json`. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. It also reads the broker's records and journals each ahead of the comparison, a listed one inside its range as an outside entry and any other as unmatched, as recover does. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
 3. **Run the daily loss stop's test.** It is the gate's `loss`, which runs with no order needed, so a decision that plans no order still runs it. A reading past the stop fires it, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
 4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
    - **What the stored entry holds.** One stored entry holds seven things.
@@ -680,13 +680,12 @@ The steps run in this order.
 
 #### What the first slice builds of these steps
 
-`execution/send.py` builds steps 1 to 5 and step 7 for market-on-close orders and market orders for the day, in the plan's order. Five parts wait on later issues.
+`execution/send.py` builds steps 1 to 5 and step 7 for market-on-close orders and market orders for the day, in the plan's order. Four parts wait on later issues.
 
 1. Cancels and replacements, and so an open order under a target that wants a change, which halts until [#149](https://github.com/l3a0/ithildin-runtime/issues/149) builds them.
 2. The clock's check against the broker, which is [#153](https://github.com/l3a0/ithildin-runtime/issues/153)'s and [#165](https://github.com/l3a0/ithildin-runtime/issues/165)'s.
 3. A late forecast read as no change, which is [#54](https://github.com/l3a0/ithildin-runtime/issues/54)'s.
-4. The account's lease, which is [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s.
-5. Taking a book that holds an order in doubt at the sync, which halts until [#211](https://github.com/l3a0/ithildin-runtime/issues/211) builds it. Recover settles every order in doubt before this stage runs.
+4. Taking a book that holds an order in doubt at the sync, which halts until [#211](https://github.com/l3a0/ithildin-runtime/issues/211) builds it. Recover settles every order in doubt before this stage runs.
 
 A send that answers anything but `Acknowledged` ends that strategy's plan, whichever leg it was, and each later order of the strategy is journaled `Abandoned`. A strategy switched off before any leg of its reached the broker ends as partly sent, and the other strategies' orders go on. Any other answer, a switch with a leg at the broker, and any error halt the stage once each order not yet sent, from the one that failed on, is journaled `Abandoned`, with an alarm naming each leg's state. A plan of this decision that another writer journaled, and that is not this stage's, halts the stage before anything is asked, with an alarm naming both plans. A leg already at the broker is [#149](https://github.com/l3a0/ithildin-runtime/issues/149)'s to cancel, so until it is built no mode but a backtest runs, as [Which modes build a broker](#which-modes-build-a-broker) says. The stage's result holds a halt or the decision's outcome, never both, and the outcome names each order's end state, each strategy's end and each part of a position no order of the account's share step can trade.
 
@@ -694,7 +693,7 @@ A send that answers anything but `Acknowledged` ends that strategy's plan, which
 
 Each order goes through the order path alone, and the journal gains a line before the broker hears anything. The first step that fails decides what becomes of the order.
 
-1. Take the account's lease, which [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds.
+1. Take the account's lease, as [The account's lease, around each submit](#the-accounts-lease-around-each-submit) says. A lease another handler holds ends the order here with nothing journaled, and the send stage journals it `Abandoned` and halts the decision with the holder named.
 2. View the journal, find the order in its plan and read the hard caps afresh. An order in no plan, of a decision that is not the journal's newest, or off the account's share step, halts here with nothing journaled. One that has an entry already is not sent again, and one left `Intended` or `Approved` halts, and the next decision's recover journals it `Abandoned`, as [How recover settles an unfinished plan](#how-recover-settles-an-unfinished-plan) says.
 3. Journal the intent. A number another writer took starts the order over, at most five times.
 4. Check the kill switch, the halts, this decision's send result and the strategy's switch.
@@ -705,7 +704,7 @@ Each order goes through the order path alone, and the journal gains a line befor
 9. Make the checks in the table below, on a third view. A pass in which any read had to be tried again, or that took longer than 5 seconds, is made again whole.
 10. Send, with the order's client order id.
 11. Journal the broker's answer: the ack, the rejection, or the order's doubt. An answer that proves nothing was sent journals the order `Abandoned` and halts the decision.
-12. Release the lease by a conditional rewrite that clears its holder, so another instance's cancels wait for at most one order.
+12. Release the lease by a conditional rewrite that clears its holder, whatever ended the send, so another instance's cancels wait for at most one order.
 
 A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an order another writer has moved, which is left as it is, an `Abandoned` that loses its number six times, a store that takes no entry, where the halt names what the journal last showed, and an error the path does not expect, which may leave the order in the state its last stored entry gives it. Once a `sending` may be stored, an `Abandoned` the store does not take is kept and tried again before the next send. An entry the store does not answer for is sent again unchanged. Each try of the `sending` and a check at the submit ends by the order's last moment, and each try of the `verdict` by its cutoff or close, and the order is stopped there however long another read took.
 
@@ -717,7 +716,7 @@ A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an or
 | 2 | The order's strategy | It is not switched off, and no halt of its is stored |
 | 3 | The run's and the account's halts, and the plan's lease | No halt is stored, and the lease says the run is running, once [#11](https://github.com/l3a0/ithildin-runtime/issues/11) builds it |
 | 4 | The decision's own send result | It is still empty |
-| 5 | The account's lease | It still carries this instance's tag, once [#148](https://github.com/l3a0/ithildin-runtime/issues/148) builds it |
+| 5 | The account's lease | It still carries this handler's own last tag, which a rewrite on that tag proves and which moves its expiry a period on |
 | 6 | The loss stop | None has fired, and its state can be read |
 | 7 | The hard caps | Their limits are the ones the gate was handed |
 | 8 | The order's last moment: its market-on-close cutoff or its session's close, or the moment a quote the gate marked reaches its written maximum age where that is sooner | It has not passed |
@@ -725,6 +724,17 @@ A fault in steps 4 to 9 journals the order `Abandoned`. The exceptions are an or
 Any check that fails journals the order `Abandoned` and halts the decision. One exception is a switched-off strategy, whose orders are abandoned while the account's other strategies keep sending. The checks on the strategy are read after every other blob, so a switch hides no halt that a blob read ahead of it would give. Until the two leases are read, no mode but a backtest may run, as [Which modes build a broker](#which-modes-build-a-broker) says. An order under a valid close entry reads these checks as [What is checked right before a broker call](../design.md#rule-9-fourth-item-what-is-checked-right-before-a-broker-call) says.
 
 A cancel the plan asks for takes the same shape, as the sequence diagram above shows: take the lease, journal the cancel, check, call the broker, journal the outcome and release the lease.
+
+#### The account's lease, around each submit
+
+`execution/lease.py` holds the account's lease, and `OrderPath.send` holds it for one order, from before its first view of the order until the send ends, with its answer, its doubt or only its `sending` journaled. The rules are design.md's [Who may send, the account's lease](../design.md#rule-9-who-may-send-the-accounts-lease), and the sequence of a take, a renewal refused and a takeover is drawn in [Alarms on leases and takeover](../halts-and-drills.md#alarms-on-leases-and-takeover). A send goes through six steps.
+
+1. **Read the journal, then the lease.** That order keeps a first use apart from a lost lease. A lease that is absent while the journal holds a `sending` entry halts new orders and pages, and its one halt, an `AbsentHalt` of format 1 that holds the `HaltRecord`, is stored at `accounts/<account>/halts/execution-lease_absent-<t>-<n>.json`, where `n` is the journal's newest entry and `t` the newest `sending`'s time, so two handlers that find it raise one halt. A lease absent from a journal with no `sending` is a first use, and the take creates it.
+2. **Take it.** A free lease, or one whose holder's expiry is more than 5 seconds past, is rewritten on the tag that was read, naming this handler, with an expiry 30 seconds on. A lease another handler holds ends the order with nothing journaled by the path, the send stage journals it `Abandoned`, and the decision halts with the holder named, until [#237](https://github.com/l3a0/ithildin-runtime/issues/237) builds the waiting.
+3. **Take it over, where the take owes that.** A take of an expired lease, or of a free one whose `owed` is set, reads the broker's order list from the oldest `sending` still `Sending` or `InDoubt`, less 60 seconds, stores it at `runs/<deployment>/<run>/execution/takeovers/<UTC time>.json`, and journals a `takeover` entry naming it and each such order the list omits. It alarms, then clears `owed`, so a journaled takeover alarms even where that rewrite fails. A step that fails halts new orders, and `owed` stays set, or the lease expires into a takeover, so the next take does the takeover again. Where another handler rewrote the lease before the rewrite that clears `owed`, the halt says this handler's entry stands and the handler that took the lease over journals a takeover of its own if it has not already, and no release is tried, so that halt is the one page. The one exception is the rewrite that clears `owed` finding the lease gone: the entry stands journaled, and the next take halts on the lease as absent where the journal holds a `sending`, and otherwise starts it anew. A list stored by a takeover that then failed, because it did not come whole or its entry was not journaled, is named by no entry, only by that halt's reason and its alarm.
+4. **Renew it at the fifth check.** Right before the broker call the lease is rewritten on this handler's own last tag, a period ahead. A rewrite the store refuses, because another handler took the lease over, because a write of this handler's own landed with its answer lost, because the lease is gone from its key, or because the store did not answer, fails the check, so the order is journaled `Abandoned` and nothing is sent. No thread renews the lease on a clock, because a send holds it for one order and each step before the call has a deadline of its own.
+5. **Journal the answer.** An order a takeover named late can never be journaled `Acknowledged`, because the fold refuses its `ack`. That holds for the older holder's own answer, for a lookup's match and for any other writer.
+6. **Release it.** A rewrite on this handler's own last tag clears the holder, whatever ended the send, and keeps `owed` as it found it. The two branches of step 3 where the rewrite that clears `owed` finds the lease gone or rewritten by another handler leave nothing to release, so none is tried. A lease another handler took over meanwhile is left alone.
 
 #### Finish, once per decision
 
@@ -1047,7 +1057,7 @@ A blob that cannot be read reads as unreadable, whatever the other two say, beca
 
 ##### How a firing is written
 
-1. Hold the firing in memory, with a fresh random id that its entry and its blob both carry. S3's tag is a hash of the bytes, so the id keeps two firings on one reading from sharing a tag. It is counted under the lock the submit marks its call under, and the submit compares the count its checks began with, so no firing of this process falls between the last check and the broker's call. A second process on the account waits on [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s lease.
+1. Hold the firing in memory, with a fresh random id that its entry and its blob both carry. S3's tag is a hash of the bytes, so the id keeps two firings on one reading from sharing a tag. It is counted under the lock the submit marks its call under, and the submit compares the count its checks began with, so no firing of this process falls between the last check and the broker's call. A firing of a second process takes no lease and lands in the journal, which the submit's checks read again, so a firing another process stores between this one's two checks stops its order, as `test_a_loss_stop_another_instance_fires_between_the_two_checks_stops_the_send` holds.
 2. Journal `stop_fired`, unless a firing stands already. That firing covers this reading, and nothing more is journaled for it.
 3. Create the blob. Any blob already at the key stands for it.
 4. Journal `stop_stored` with the blob's tag. A tag that a covered firing's `stop_stored` names belongs to a clear between its entry and its delete, so the new firing stays unstored until that blob is gone.
@@ -1081,7 +1091,7 @@ A worker's journal credential can still write a `stop_stored` and a `stop_cleare
 
 The send stage reads each strategy's loss twice: at the decision's own time, from its stored inputs, and then at the clock's time. A rerun after the close so fires on the decision's own loss, where the gate's check of the clock against the session's close would halt first.
 
-Where the send stage halts on another call's claim, the loss cannot be read and the journal holds no plan of the decision, the stop fires with no reading. The call that claimed the decision may have read the loss past its stop and died before its firing was stored, and only a plan proves the loss was read inside its bound. The price is a stop a person clears after a rerun whose first call halted before its loss and could not store that halt, and after a second process on the account until [#148](https://github.com/l3a0/ithildin-runtime/issues/148)'s lease.
+Where the send stage halts on another call's claim, the loss cannot be read and the journal holds no plan of the decision, the stop fires with no reading. The call that claimed the decision may have read the loss past its stop and died before its firing was stored, and only a plan proves the loss was read inside its bound. The price is a stop a person clears after a rerun whose first call halted before its loss and could not store that halt, and after a second process on the account until [#211](https://github.com/l3a0/ithildin-runtime/issues/211) lets a second call take a send stage over, since the account's lease is held only around a submit and stops no call from meeting the claim.
 
 #### Which orders a stop refuses
 
@@ -1349,7 +1359,7 @@ A lookup that finds nothing, or a whole order list that does not show the order,
 
 ### What halts as unmatched
 
-An open order or a fill on an order the journal holds as `Lost` or `Abandoned` is journaled as received as unmatched and halts. So is a late order under an older lease.
+An open order or a fill on an order the journal holds as `Lost` or `Abandoned` is journaled as received as unmatched and halts. A late order under an older lease halts too, named as late, at the sync's read of the broker: its stored read is journaled and no unmatched entry is, as `test_4_the_brokers_read_that_lists_a_late_order_halts_naming_it` holds.
 
 ### What becomes of an order after its cancel
 

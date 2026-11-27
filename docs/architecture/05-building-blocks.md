@@ -928,6 +928,10 @@ classDiagram
         +datetime taken
         +datetime expires
         +str status
+        +int count
+        +bool owed
+        +str owed_from
+        +datetime owed_expired
     }
     class Plan {
         +int format
@@ -2151,7 +2155,7 @@ The supervisor writes the same record for a worker that failed, naming its resta
 
 - `Plan` holds the run's decisions, each with its time and the strategies deciding at it. One function in `core` builds it from the schedules and the trading calendar.
 - `JournalEntry` is the one numbered record of what the platform did, chained to the entry before it.
-- `Lease` names its holder down to the handler, and when it expires, and leaves those `null` while the lease is free. It carries `status` only on a plan's lease, where it holds the run's status, so an account's lease leaves it `null`.
+- `Lease` names its holder down to the handler, and when it expires, and leaves those `null` while the lease is free. It carries `status` only on a plan's lease, where it holds the run's status, so an account's lease leaves it `null`. `count` rises by one on every rewrite, so no two writes hold the same bytes and S3's tag never repeats. `owed` is set only on an account's lease, from a take of an expired lease or a person's clear until the takeover's entry is journaled, so a release in between leaves the takeover owed. `owed_from` and `owed_expired` name the holder the takeover is owed from and when its lease ran out, kept across that release and through a later taker that holds the lease with the takeover still owed, and are `null` after a person's clear.
 
 ##### How the storage port rewrites a blob
 
@@ -2161,9 +2165,11 @@ The supervisor writes the same record for a worker that failed, naming its resta
 
 | The rewrite | The tag it names |
 | --- | --- |
+| A first use's create | None. It is create-only, on a journal with no `sending` |
 | A take | The one it read |
 | A clear | The one it read |
 | A renewal | The one its holder's own last write returned |
+| The rewrite that clears `owed` after a takeover's entry | The one its holder's own last write returned |
 | A release | The one its holder's own last write returned |
 
 No worker deletes through the port. [#11](https://github.com/l3a0/ithildin-runtime/issues/11) names how `ithildin`'s deletes of a switch or an off switch reach S3, and [#203](https://github.com/l3a0/ithildin-runtime/issues/203) how its delete of a fired loss stop does. `Journal` writes through `BlobStore` too, for the account the broker adapter names, so the `journal` package has no storage port of its own.

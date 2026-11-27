@@ -18,12 +18,15 @@ from ithildinruntime.core import (
     RECOVER_STAGE,
     VALUATION_OUTPUT,
     Halt,
+    Lease,
     OrderState,
     Stopped,
     StoreUnavailable,
     StrategyEnd,
+    account_lease_key,
     caps_key,
     claim_key,
+    encode,
     kill_switch_key,
     loss_stop_key,
     off_switch_key,
@@ -335,6 +338,36 @@ def test_a_first_leg_refused_at_its_send_abandons_the_second() -> None:
     result = made.send_attempt()
     assert result.halt is not None and made.submits() == []
     assert made.states() == {first: "Refused", second: "Abandoned"}
+
+
+def test_a_lease_another_handler_holds_abandons_the_plan_and_halts_naming_the_holder() -> None:
+    made = world()
+    made.ready(close_of(FULL), PAIR)
+    first, second = gates_names(made)
+    holder = "e" * 32 + "-0123456789abcdef"
+    now = made.clock.at
+    held = Lease(
+        format=1,
+        vm=None,
+        boot=None,
+        container=None,
+        restart_count=None,
+        handler=holder,
+        release=None,
+        run=None,
+        taken=now,
+        expires=now + timedelta(seconds=30),
+        status=None,
+        count=7,
+        owed=False,
+        owed_from=None,
+        owed_expired=None,
+    )
+    made.store.put(account_lease_key(ACCOUNT), encode(held))
+    result = made.send_attempt()
+    assert result.halt is not None and f"held by {holder}" in result.halt.reason
+    assert made.submits() == []
+    assert made.states() == {first: "Abandoned", second: "Abandoned"}
 
 
 def test_an_off_switch_before_the_first_leg_ends_in_partly_sent() -> None:

@@ -37,6 +37,7 @@ from ithildinruntime.core import (
     StoreUnavailable,
     TimeInForce,
     account_halts_prefix,
+    account_lease_key,
     caps_key,
     journal_entry_key,
     kill_switch_key,
@@ -47,6 +48,7 @@ from ithildinruntime.core import (
     sha256_of,
     strategy_halts_prefix,
 )
+from ithildinruntime.execution.lease import MARGIN, PERIOD
 from ithildinruntime.journal import (
     RAW_LIMIT,
     AbandonedEntry,
@@ -217,9 +219,15 @@ def every_call(world: World) -> list[tuple[str, str]]:
 
 EVERY = every_call(World())
 CALLS = len(EVERY)
-CREATES = [n for n, (op, _) in enumerate(EVERY, 1) if op == "create"]
-# The number of the last call before the broker's. A view and an append follow it.
-BEFORE_SUBMIT = CALLS - 2
+LEASE = account_lease_key(ACCOUNT)
+# The journal's creates. The lease's own create, its renewal and its release are not among them.
+CREATES = [n for n, (op, key) in enumerate(EVERY, 1) if op == "create" and key != LEASE]
+# The number of the last call before the broker's, the lease's renewal. A view, an append and
+# the lease's release follow it.
+BEFORE_SUBMIT = CALLS - 3
+assert EVERY[BEFORE_SUBMIT - 1] == ("replace", LEASE) == EVERY[-1]
+# How far a clock moves for a lease a dead holder left to have expired.
+LEASE_GONE = PERIOD + MARGIN + timedelta(seconds=1)
 # The numbers of the two reads of the hard caps, the second among the submit's checks.
 CAPS_READS = [n for n, (_, key) in enumerate(EVERY, 1) if key == caps_key(ACCOUNT)]
 
@@ -245,6 +253,10 @@ def test_2_the_calls_of_one_send_are_the_ones_the_steps_name() -> None:
         ("list", ACCOUNT),
         *(("get", f"{n:012d}.json") for n in (1, 2, 3)),
         ("head", "stop.json"),
+        # The take's view of the journal, then the lease, which a first use creates.
+        ("list", ACCOUNT),
+        ("head", f"{ACCOUNT}.json"),
+        ("create", f"{ACCOUNT}.json"),
         ("list", ACCOUNT),
         ("get", "caps.json"),
         ("create", "000000000004.json"),
@@ -261,10 +273,14 @@ def test_2_the_calls_of_one_send_are_the_ones_the_steps_name() -> None:
         *control,
         ("get", "stop.json"),
         *strategy,
+        # The renewal, right before the broker's call.
+        ("replace", f"{ACCOUNT}.json"),
         ("list", ACCOUNT),
         ("create", "000000000007.json"),
+        # The release.
+        ("replace", f"{ACCOUNT}.json"),
     ]
-    assert CALLS == len(names) and CREATES == [8, 23, 24, CALLS]
+    assert CALLS == len(names) and CREATES == [11, 26, 27, CALLS - 1]
 
 
 @pytest.mark.parametrize("after", [False, True], ids=["before", "after"])
@@ -285,9 +301,15 @@ def test_2_a_kill_at_a_store_call(at: int, after: bool) -> None:
     landed = sum(1 for n in CREATES if n < at or (after and n == at))
     assert world.kinds() == SENT[:landed]
     assert world.submits == (at > BEFORE_SUBMIT)
-    assert world.alarms.sent == []
+    # A kill once the renewal has landed cuts its answer short, so the release that follows names
+    # that write as another handler's, and pages. Nothing else pages.
+    renewed = after and at == BEFORE_SUBMIT
+    assert len(world.alarms.sent) == renewed
+    assert all("so its release was refused" in said for said in world.alarms.sent)
     world.store.before = world.store.after = lambda n, op, key: None
-    # A new process finds what is stored, and asks the broker nothing twice.
+    # A new process finds what is stored, and asks the broker nothing twice. It starts once a
+    # lease the kill left held has expired.
+    world.clock.at += LEASE_GONE
     account = world.account(OTHER_WRITER)
     match landed:
         case 0:
@@ -314,8 +336,9 @@ def test_2_a_store_that_refuses_one_call_is_asked_again(at: int) -> None:
     world.store.before = refuse_once
     assert world.send() is OrderState.ACKNOWLEDGED
     assert (world.kinds(), world.submits) == (SENT, 1)
-    # After the submit the first refusal alarms at once.
-    assert len(world.alarms.sent) == (at > BEFORE_SUBMIT)
+    # After the submit the first refusal of the answer's entry alarms at once, and the lease's
+    # release, the last call, alarms nothing.
+    assert len(world.alarms.sent) == (BEFORE_SUBMIT < at < CALLS)
 
 
 @pytest.mark.parametrize("at", CREATES)
@@ -349,6 +372,14 @@ def test_2_a_store_down_from_a_call_on(at: int, lost: bool) -> None:
             down(number, op, key)
 
     world.store.before, world.store.after = before, after
+    if at == CALLS:
+        # Only the lease's release meets the store down. The order went out and its answer is
+        # journaled, so nothing halts, and the lease is left to expire with a page that says so.
+        assert world.send(account=account) is OrderState.ACKNOWLEDGED
+        (said,) = world.alarms.sent
+        assert "release was not stored: StoreUnavailable AccessDenied" in said
+        assert "The owner's step: the broker's site" in said and world.submits == 1
+        return
     with pytest.raises(Halt) as raised:
         world.send(account=account)
     reason = raised.value.reason
@@ -377,6 +408,8 @@ def test_2_a_store_down_from_a_call_on(at: int, lost: bool) -> None:
     owed = account.unstored()
     assert bool(owed) == (at >= CREATES[2])
     world.store.before = world.store.after = lambda n, op, key: None
+    # A lease whose release the store refused expires before the next send.
+    world.clock.at += LEASE_GONE
     if at < CREATES[0] or (at == CREATES[0] and not lost):
         assert world.send(account=account) is OrderState.ACKNOWLEDGED
     elif at < CREATES[2]:
@@ -649,6 +682,7 @@ def test_2_an_order_that_went_further_returns_its_state(state: str) -> None:
     world = World()
     for record in route(state, world.orders[0]):
         world.record(_numbered(world, record))
+    world.plant_lease()
     assert world.send() is OrderState(state)
     assert world.submits == 0
 
@@ -1566,7 +1600,7 @@ def test_7_an_intent_that_loses_its_number_starts_over_five_times() -> None:
         world = World()
         stored = beside(
             world,
-            lambda n, op, key: op == "create",
+            lambda n, op, key: op == "create" and key != LEASE,
             times=times,
         )
         if ends:
@@ -1580,7 +1614,11 @@ def test_7_an_intent_that_loses_its_number_starts_over_five_times() -> None:
 
 def test_7_an_answer_that_loses_its_number_is_appended_until_it_lands() -> None:
     world = World()
-    beside(world, lambda n, op, key: op == "create" and int(key[-17:-5]) >= 7, times=20)
+    beside(
+        world,
+        lambda n, op, key: op == "create" and key != LEASE and int(key[-17:-5]) >= 7,
+        times=20,
+    )
     assert world.send() is OrderState.ACKNOWLEDGED
     assert world.submits == 1 and world.state() is OrderState.ACKNOWLEDGED
 
@@ -1588,7 +1626,11 @@ def test_7_an_answer_that_loses_its_number_is_appended_until_it_lands() -> None:
 def test_7_an_answer_that_loses_every_number_is_kept() -> None:
     world = World()
     account = world.account()
-    beside(world, lambda n, op, key: op == "create" and int(key[-17:-5]) >= 7, times=1000)
+    beside(
+        world,
+        lambda n, op, key: op == "create" and key != LEASE and int(key[-17:-5]) >= 7,
+        times=1000,
+    )
     with pytest.raises(Halt, match="other writers took 100 numbers in a row"):
         world.send(account=account)
     world.store.before = lambda n, op, key: None
@@ -1693,6 +1735,7 @@ def open_order(world: World) -> None:
     world.record(SendingEntry(name))
     world.record(ack(name, "b-early"))
     world.decide(world.orders)
+    world.plant_lease()
 
 
 @pytest.mark.parametrize("at", range(1, CALLS + 1))
@@ -2437,15 +2480,19 @@ def test_7_a_clock_that_fails_after_the_sending(error: BaseException, heals: boo
 def test_7_a_create_that_lands_late_doubles_nothing_and_unsays_nothing(
     create: int, calls: int
 ) -> None:
-    """The store does not answer for a create, and the create lands `calls` calls later."""
+    """The store does not answer for a journal's create, which lands `calls` calls later.
+
+    The lease's own create is left out: a take whose create lands after its tries
+    end leaves the lease to expire, which tests/test_order_lease.py holds.
+    """
     world = World()
     account = world.account()
     held: list[tuple[str, bytes, int]] = []
     plain = world.store.create
 
     def creating(key: str, data: bytes, sha256: str) -> str:
-        seen = len([c for c in world.store.calls if c[0] == "create"])
-        if seen == create and not held and not world.store.quiet:
+        seen = len([c for c in world.store.calls if c[0] == "create" and c[1] != LEASE])
+        if key != LEASE and seen == create and not held and not world.store.quiet:
             world.store.calls.append(("create", key))
             held.append((key, data, len(world.store.calls)))
             down(0, "create", key)
@@ -2786,7 +2833,7 @@ def test_2_a_store_call_that_ends_in_more_than_an_exception_is_left_to_replay(
     account = world.account()
 
     def before(number: int, op: str, key: str) -> None:
-        if number == (CALLS if answered else BEFORE_SUBMIT):
+        if number == (CREATES[-1] if answered else BEFORE_SUBMIT):
             world.store.before = lambda n, o, k: None
             raise error
 

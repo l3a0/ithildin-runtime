@@ -201,6 +201,8 @@ def fill_entry(
         reason = f"the {why}"
     else:
         return entry
+    shown = f"the fill {broker_id_shown(fill.fill_id)} lists the broker's order"
+    _unless_late(view, fill.client_order_id, f"{shown} {broker_id_shown(fill.broker_order_id)}")
     return UnmatchedFillEntry(fill, read, _unless_doubtful(view, reason))
 
 
@@ -220,7 +222,23 @@ def order_entry(view: View, order: BrokerOrder, read: int) -> UnmatchedOrderEntr
         f"the broker lists its order {name} open, {order.qty} of {instrument} under "
         f"{_client(order.client_order_id)}, which no ack mapped"
     )
+    _unless_late(view, order.client_order_id, f"the broker lists its order {name} open")
     return UnmatchedOrderEntry(order, read, _unless_doubtful(view, reason))
+
+
+def _unless_late(view: View, client_order_id: str | None, what: str) -> None:
+    """Halt where the broker's row names a late order under an older lease, before `Acknowledged`.
+
+    A takeover named the order sent with no answer and absent from the broker's
+    list it stored, so an older holder's request reached the broker after that.
+    """
+    took = view.late.get(client_order_id) if client_order_id is not None else None
+    if took is not None:
+        raise Halt(
+            f"{what} under {client_order_id}, a late order under an older lease: the takeover "
+            f"at entry {took} found it sent with no answer, and the broker's order list it "
+            "stored omits it. It may be working at the broker, so a person looks it up there"
+        )
 
 
 def _unless_doubtful(view: View, reason: str) -> str:
