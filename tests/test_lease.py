@@ -327,6 +327,28 @@ def test_a_take_whose_rewrite_landed_unanswered_holds_the_lease(store: object) -
     assert taken.held.lease.handler == B.handler and _stored(store) == taken.held.lease
 
 
+def test_a_write_whose_read_back_cannot_be_made_is_tried_again_and_then_lost(
+    store: object,
+) -> None:
+    clock = Clock()
+    lease = _lease(store, clock)
+    held = lease.take(A, _tries(clock), False, _absent).held
+    real_head = store.head  # type: ignore[attr-defined]
+
+    def lost(*args: object) -> str:
+        raise StoreUnavailable(KEY, "no answer")
+
+    def blind(key: str) -> object:
+        raise StoreUnavailable(key, "no answer")
+
+    store.replace_if_match = lost  # type: ignore[attr-defined]
+    store.head = blind  # type: ignore[attr-defined]
+    with pytest.raises(LeaseLost, match="renewal was not stored") as raised:
+        lease.renew(held, _tries(clock))
+    assert raised.value.unanswered
+    store.head = real_head  # type: ignore[attr-defined]
+
+
 def test_a_take_the_store_never_answers_raises_the_stores_refusal(store: object) -> None:
     clock = Clock()
     lease = _lease(store, clock)

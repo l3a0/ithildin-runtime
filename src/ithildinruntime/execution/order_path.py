@@ -1253,6 +1253,10 @@ class OrderPath:
         except LeaseLost as lost:
             if lost.unanswered:
                 raise self._outage(lost.reason) from None
+            if lost.gone:
+                # The entry stands journaled, so the takeover is owed no more, and the halt is the
+                # lease's absence, which the next take meets.
+                raise Halt(f"{lost.reason}{shared.alarm(lost.reason)}") from None
             raise self._failed("the rewrite after its entry was refused", lost.reason) from None
 
     def _stored_list(self, where: Where, read: TakeoverRead) -> BlobRef:

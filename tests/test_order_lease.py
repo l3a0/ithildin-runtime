@@ -370,6 +370,7 @@ def test_a_release_that_finds_the_lease_gone_says_what_the_next_take_does(sent: 
     assert f"the account's lease is gone from {KEY}, so its release was refused" in said
     assert "halts on it as absent where the journal holds a sending" in said
     assert "otherwise starts the lease anew" in said and "expires" not in said
+    assert "The owner's step" not in said, "a gone lease is not a store's outage"
     world.store.before = lambda *_: None
     world.store.drop(kill_switch_key(ACCOUNT))
     if sent:
@@ -415,8 +416,29 @@ def test_a_renewal_unanswered_that_finds_the_lease_gone_on_reading_back_sends_no
                 raise StoreUnavailable(key, "no answer")
 
     world.store.before = before
-    halted(world, "so its renewal was refused")
+    reason = halted(world, f"the account's lease is gone from {KEY}, so its renewal was refused")
+    assert "The owner's step" not in reason
     assert world.state() is OrderState.ABANDONED
+    # The renewal is sent once, as the read-back settles it, and the release once.
+    assert len(replaces) == 2
+
+
+def test_a_release_unanswered_that_finds_the_lease_gone_on_reading_back_pages_it_gone() -> None:
+    world = World()
+    replaces: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY):
+            replaces.append(number)
+            if len(replaces) == 2:
+                world.store.drop(KEY)
+                raise StoreUnavailable(key, "no answer")
+
+    world.store.before = before
+    assert world.send() is OrderState.ACKNOWLEDGED
+    (said,) = world.alarms.sent
+    assert f"the account's lease is gone from {KEY}, so its release was refused" in said
+    assert "The owner's step" not in said and len(replaces) == 2
 
 
 def test_a_release_whose_first_try_landed_unanswered_leaves_the_lease_free() -> None:
@@ -677,6 +699,33 @@ def test_a_take_whose_create_lands_after_its_tries_leaves_the_lease_to_expire() 
     assert world.send() is OrderState.ACKNOWLEDGED
     (entry,) = [r for r in world.entries() if isinstance(r, TakeoverEntry)]
     assert entry.late == ()
+
+
+@pytest.mark.parametrize("answered", [False, True], ids=["unanswered", "answered"])
+def test_a_takeover_whose_closing_rewrite_finds_the_lease_gone_names_the_absence(
+    answered: bool,
+) -> None:
+    world = _two()
+    _sent_by_another(world)
+    _plant(world, _held())
+    replaces: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY):
+            replaces.append(number)
+            if len(replaces) == 2:
+                world.store.drop(KEY)
+                if not answered:
+                    raise StoreUnavailable(key, "no answer")
+
+    world.store.before = before
+    reason = halted(world, "is gone from", lambda: world.send(2))
+    assert "rewrite after its takeover was refused" in reason
+    assert "until a takeover stores the list" not in reason
+    assert "The owner's step" not in reason
+    assert "takeover" in world.every_kind()
+    world.store.before = lambda *_: None
+    halted(world, "lease is absent", lambda: world.send(2))
 
 
 @pytest.mark.parametrize("answered", [False, True], ids=["unanswered", "refused"])
