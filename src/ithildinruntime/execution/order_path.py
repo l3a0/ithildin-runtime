@@ -710,15 +710,16 @@ class OrderPath:
         """
         self._one_account()
         self._shared.settle(self._report)
-        paged = False
         try:
             self._take(client_order_id)
             return self._sent(client_order_id)
-        except Outage:
-            paged = True
+        except Outage as outage:
+            kept = self._let_go(paged=True)
+            if kept:
+                raise Outage(f"{outage.reason}. {kept}") from None
             raise
         finally:
-            self._let_go(paged)
+            self._let_go()
 
     def _sent(self, client_order_id: str) -> OrderState:
         found = self._approve(client_order_id)
@@ -1254,7 +1255,13 @@ class OrderPath:
                 view = self._view()
             except StoreError as error:
                 what = f"the takeover of the list at {ref.key} was not journaled"
-                raise self._failed(what, code_of(error)) from None
+                raise self._failed(what, code_of(error), down=True) from None
+            except Outage as outage:
+                # It paged, and a second page would name the same outage.
+                raise Outage(
+                    f"the takeover of the account's lease failed: the takeover of the list at "
+                    f"{ref.key} was not journaled: {outage.reason}"
+                ) from None
             except Halt as halt:
                 what = f"the journal refused the takeover of the list at {ref.key}"
                 raise self._failed(what, halt.reason) from None
@@ -1323,23 +1330,29 @@ class OrderPath:
                 try:
                     stands = tries(lambda k=key: shared.store.head(k)).ref.sha256
                 except StoreError as error:
-                    raise self._failed(f"{key} could not be read", code_of(error)) from None
+                    raise self._failed(f"{key} could not be read", code_of(error), True) from None
                 if stands == sha:
                     return BlobRef(key, sha)
                 continue
             except StoreError as error:
                 raise self._failed(
-                    f"the order list was not stored at {key}", code_of(error)
+                    f"the order list was not stored at {key}", code_of(error), down=True
                 ) from None
             return BlobRef(key, sha)
         raise self._failed(f"{_LISTS} keys of the takeover's list at its time are each taken", "")
 
-    def _failed(self, what: str, why: str) -> Halt:
-        """A takeover that failed: new orders halt, and the lease owes it or expires into one."""
+    def _failed(self, what: str, why: str, down: bool = False) -> Halt:
+        """A takeover that failed: new orders halt, and the lease owes it or expires into one.
+
+        A store that did not answer is an `Outage`, which pages once with the
+        owner's step, and the send tries no other write of it.
+        """
         reason = (
             f"the takeover of the account's lease failed: {what}{': ' if why else ''}{why}. No new "
             "order goes out until a takeover stores the list and journals its entry"
         )
+        if down:
+            return self._shared.outage(reason)
         return Halt(f"{reason}{self._shared.alarm(reason)}")
 
     def _absent(self, view: View, tries: Tries) -> Halt:
@@ -1381,33 +1394,37 @@ class OrderPath:
                 raise self._outage(lost.reason) from None
             raise
 
-    def _let_go(self, paged: bool = False) -> None:
+    def _let_go(self, paged: bool = False) -> str:
         """Release the lease this send holds, paging a release that did not land.
 
-        Where the send is raising an `Outage`, which paged, a release the store did
-        not answer is the same outage, so it sends no second page. The lease then
-        expires on its own, and the next take reads it.
+        Where the send is raising an `Outage`, which paged, the release is still
+        tried, since the lease is its own key and a store that refused only another
+        frees the lease at once. A release the store does not answer follows an
+        outage that already paged, so it sends no second page and gives the words
+        the halt adds.
         """
         held, self._lease = self._lease, None
         if held is None:
-            return
+            return ""
         refused = self._shared.lease.release(held, self._shared.patience.tries(self._report))
         if refused is None:
-            return
+            return ""
         # The lease expires, and the next order of this process or any other halts on it as held
-        # until then, so the cause is paged here. An exception that cut short the answer to this
-        # handler's own last rewrite leaves that write unknown here, so the page can then name
-        # it as another handler's.
+        # until then, so the cause is paged here, or after an outage that paged, said in its
+        # halt. An exception that cut short the answer to this handler's own last rewrite leaves
+        # that write unknown here, so the page can then name it as another handler's.
         ends = held.lease.expires
         reason = refused.reason
         if ends is not None and not refused.gone:
             # A write of this handler's own that landed unanswered moved the expiry further on.
             reason = f"{reason}. It expires no earlier than {ends.isoformat()}"
+        if refused.unanswered and paged:
+            return f"{reason}. The next take after that takes it over and alarms"
         if refused.unanswered:
-            if not paged:
-                self._shared.outage(reason)
+            self._shared.outage(reason)
         else:
             self._shared.alarm(reason)
+        return ""
 
     # Steps 1 to 6
 

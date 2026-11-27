@@ -45,6 +45,7 @@ from ithildinruntime.core import (
     account_halt_key,
     account_halts_prefix,
     account_lease_key,
+    caps_key,
     decode,
     encode,
     kill_switch_key,
@@ -349,6 +350,73 @@ def test_a_release_another_handler_refused_pages_without_an_outage() -> None:
     assert "The owner's step" not in said
 
 
+def test_a_takeover_whose_journal_write_is_an_outage_that_paged_pages_no_more() -> None:
+    # The storage layer raises an `Outage` once a write passes its deadline, after its own page,
+    # so the failed takeover halts on that outage and sends no page of its own.
+    world = _two()
+    _sent_by_another(world)
+    _plant(world, _held())
+
+    def late(key: str) -> None:
+        world.alarms.sent.append(f"the store did not answer {key} by its deadline")
+        raise Outage(f"the store did not answer {key} by its deadline")
+
+    _journal_creates(world, lambda op, key: op == "create" and "/takeovers/" in key, 1, late)
+    with pytest.raises(Outage) as raised:
+        world.send(2)
+    assert "the takeover of the account's lease failed" in raised.value.reason
+    assert not any("the takeover of the account's lease failed" in a for a in world.alarms.sent)
+
+
+def test_an_outage_at_the_renewal_pages_once_and_its_halt_names_the_lease_left_held() -> None:
+    # The take creates the lease, the renewal is its first rewrite and the release its second.
+    # The store stops answering from the renewal on, so the release meets the same outage, sends
+    # no second page, and the halt says how long the lease stays held.
+    world = World()
+    down: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY) or down:
+            down.append(number)
+            raise StoreUnavailable(key, "SlowDown: the store's own text")
+
+    world.store.before = before
+    with pytest.raises(Outage) as raised:
+        world.send()
+    assert world.submits == 0
+    (said,) = world.alarms.sent
+    assert "The owner's step" in said and "release" not in said
+    reason = raised.value.reason
+    assert "the account's lease's release was not stored" in reason
+    assert f"It expires no earlier than {(NOW + PERIOD).isoformat()}" in reason
+    assert reason.endswith("The next take after that takes it over and alarms")
+
+
+def test_a_release_another_handler_refused_after_an_outage_still_pages() -> None:
+    # The second read of the hard caps meets a store that does not answer, which pages once.
+    # Another handler then holds the lease, so the release is refused, which is no outage and
+    # pages on its own.
+    world = World()
+    caps: list[int] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("get", caps_key(ACCOUNT)):
+            caps.append(number)
+            if len(caps) > 1:
+                raise StoreUnavailable(key, "SlowDown: the store's own text")
+        elif (op, key) == ("replace", KEY) and len(caps) > 1:
+            _plant(world, _held("e" * 32 + "-1", expires=timedelta(seconds=30)))
+
+    world.store.before = before
+    with pytest.raises(Outage) as raised:
+        world.send()
+    assert world.submits == 0
+    outage, refused = world.alarms.sent
+    assert "The owner's step" in outage
+    assert "so its release was refused" in refused and "The owner's step" not in refused
+    assert "release" not in raised.value.reason.split(". An alarm")[0].split("The owner's step")[0]
+
+
 @pytest.mark.parametrize("sent", [False, True], ids=["a first use", "a journal that sent"])
 def test_a_release_that_finds_the_lease_gone_says_what_the_next_take_does(sent: bool) -> None:
     orders = (order(1, 2), order(2, 1, gates.USO))
@@ -633,6 +701,10 @@ def test_a_failed_takeover_halts_new_orders_and_the_next_take_owes_it(fails: str
         # The list stood stored, and the reason names it, since no entry does.
         assert f"the list at {takeover_key(DEPLOYMENT, RUN, NOW)}" in reason
     assert any(reason.split(". An alarm")[0] in said for said in world.alarms.sent)
+    # One page for the failed takeover, and a store that did not take a write gives its owner's
+    # step, as every outage does.
+    (page,) = [a for a in world.alarms.sent if "the takeover of the account's lease failed" in a]
+    assert ("The owner's step" in page) == (fails in ("the store", "the journal"))
     assert world.every_kind() == before
     lease = _lease(world)
     assert lease.handler is None and lease.owed
