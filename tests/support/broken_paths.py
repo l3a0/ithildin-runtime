@@ -14,7 +14,15 @@ from ithildinruntime.core import OrderRecord, OrderState
 from ithildinruntime.execution.order_path import OrderPath
 from tests.support.fake_broker import FakeBroker
 
-__all__ = ["BrokenPath", "DoubledPath", "FlippedPath", "TwicePath", "UnapprovedPath", "UnsentPath"]
+__all__ = [
+    "BrokenPath",
+    "DoubledPath",
+    "DownAfterCallPath",
+    "FlippedPath",
+    "TwicePath",
+    "UnapprovedPath",
+    "UnsentPath",
+]
 
 
 class BrokenPath(OrderPath):
@@ -49,6 +57,14 @@ class TwicePath(BrokenPath):
     def _read(self, answer):
         self._broker.submit(answer.order)
         return super()._read(answer)
+
+
+class DownAfterCallPath(BrokenPath):
+    """It meets a store that stops answering once the broker has been called."""
+
+    def _submit(self, ack):
+        super()._submit(ack)
+        raise self._outage("a store stopped answering after the call")
 
 
 class _ResizedPath(BrokenPath):

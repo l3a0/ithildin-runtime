@@ -28,6 +28,7 @@ from ithildinruntime.core import (
     OrderIntent,
     OrderState,
     OrderType,
+    Outage,
     Outcome,
     Retry,
     Snapshot,
@@ -69,6 +70,7 @@ from tests.support import fake_broker, gates
 from tests.support.broken_paths import (
     BrokenPath,
     DoubledPath,
+    DownAfterCallPath,
     FlippedPath,
     HandedPath,
     TwicePath,
@@ -396,8 +398,13 @@ def test_2_a_store_down_from_a_call_on(at: int, lost: bool) -> None:
     if sent:
         assert f"the ack of {ID}, {WENT}" in world.alarms.sent[0]
     if at >= CREATES[2] and not sent:
-        assert any("which was not sent" in a for a in named)
-        assert "It is kept and tried again" in reason
+        # One page, and the `abandoned` is kept for the next settle. Where the path met the
+        # outage among its checks, it paged and the entry is not tried (#211). Where the
+        # `sending` or a read inside the journal's own append failed, the entry's page is the one.
+        assert len(world.alarms.sent) == 1, world.alarms.sent
+        held = f"The abandoned of {ID} is kept and tried again before the next send" in reason
+        assert held or any("which was not sent" in a for a in named)
+        assert held or "It is kept and tried again" in reason
     owed = account.unstored()
     assert bool(owed) == (at >= CREATES[2])
     world.store.before = world.store.after = lambda n, op, key: None
@@ -1872,8 +1879,9 @@ def test_8_an_order_for_the_day_is_not_tried_past_its_sessions_close() -> None:
     world.clock.at, world.clock.moves = gates.CLOSE - timedelta(seconds=30), True
     world.store.refuse(("create", journal_entry_key(ACCOUNT, 6)))
     halted(world, "the sending of")
-    # The `sending` for the 30 seconds left, and its `abandoned` for the deadline.
-    assert sum(world.clock.waits) == 630.0
+    # The `sending` for the 30 seconds left. Its outage paged, so its `abandoned` is tried once
+    # and kept for the next settle, and nothing waits for it (#211).
+    assert sum(world.clock.waits) == 30.0
 
 
 @pytest.mark.parametrize(
@@ -2144,8 +2152,73 @@ def test_7_caps_that_cannot_be_read_again_stop_the_order(fault: str) -> None:
         "malformed": "the hard caps read again are not whole: the caps blob's format",
         "unreadable": "the hard caps could not be read again: StoreUnavailable",
     }
-    halted(world, said[fault])
+    account = world.account()
+    reason = halted(world, said[fault], lambda: world.send(account=account))
+    if fault != "unreadable":
+        assert world.state() is OrderState.ABANDONED
+        return
+    # The store did not answer the caps, so the outage pages once, and the journal, which
+    # answers, takes the `abandoned` at its one try (#211).
+    assert len(world.alarms.sent) == 1, world.alarms.sent
     assert world.state() is OrderState.ABANDONED
+    assert account.unstored() == ()
+    assert f"The journal shows {ID} Abandoned" in reason and "is kept" not in reason
+
+
+def test_7_a_refused_abandoned_after_an_outage_is_named_in_the_halt(monkeypatch) -> None:
+    """The one try's halt, as where the journal refuses the entry and its `in_doubt`, is said."""
+    from ithildinruntime.execution.order_path import Unstored
+
+    world = World()
+    account = world.account()
+
+    def before(number: int, op: str, k: str) -> None:
+        if number >= CAPS_READS[1] and k == caps_key(ACCOUNT):
+            down(number, op, k)
+
+    def refused(self, kept, report, once=False):
+        raise Halt("the fold refuses it")
+
+    world.store.before = before
+    monkeypatch.setattr(Unstored, "_store", refused)
+    with pytest.raises(Halt, match="could not be read again") as raised:
+        world.send(account=account)
+    reason = raised.value.reason
+    # The journal answered, so the send stage reads it rather than calling the order unsent.
+    assert not isinstance(raised.value, Outage) and world.submits == 0
+    assert f"The journal did not take the abandoned of {ID}: the fold refuses it" in reason
+    assert len(account.unstored()) == 1 and len(world.alarms.sent) == 1
+
+
+def test_7_an_abandoned_the_journal_turns_in_doubt_is_a_plain_halt() -> None:
+    """Another writer's `in_doubt` stands, so the fold refuses the `abandoned` and keeps nothing."""
+    from ithildinruntime.journal import Journal
+
+    world = World()
+    account = world.account()
+    done: list[int] = []
+
+    def before(number: int, op: str, k: str) -> None:
+        if number >= CAPS_READS[1] and k == caps_key(ACCOUNT):
+            if not done:
+                done.append(number)
+                world.store.before = lambda *a: None
+                other = Journal(world.store, ACCOUNT, "b" * 32)
+                lost = InDoubtEntry(ID, "another writer lost the broker's answer", None, False, NOW)
+                other.record(other.view(), lost, NOW)
+                world.store.before = before
+            down(number, op, k)
+
+    world.store.before = before
+    with pytest.raises(Halt) as raised:
+        world.send(account=account)
+    assert not isinstance(raised.value, Outage) and world.submits == 0
+    assert f"The journal refused the abandoned of {ID} and shows it InDoubt" in raised.value.reason
+    assert world.state() is OrderState.IN_DOUBT
+    # Nothing waits for the next settle: the order stands in doubt for recover to look up.
+    assert account.unstored() == ()
+    # The outage's page, and the one `Unstored` sends for the order left in doubt.
+    assert len(world.alarms.sent) == 2 and "in doubt" in world.alarms.sent[1]
 
 
 @pytest.mark.parametrize("at", range(CREATES[2] + 1, BEFORE_SUBMIT + 1))
@@ -2353,7 +2426,21 @@ def test_7_a_sending_whose_answer_was_lost_is_never_left_sending(then: str) -> N
     assert account.unstored() == () and world.submits == 0
     assert [e.built_at for e in world.reader().read()][-1] == NOW
     if then in ("store", "channel"):
-        assert any("which was not sent" in alarm for alarm in world.alarms.sent)
+        # The outage pages once, naming the `sending`, and nothing pages the kept `abandoned`.
+        (page,) = world.alarms.sent
+        assert "the sending of" in page and "was not stored" in page
+
+
+def test_7_an_outage_after_the_brokers_call_leaves_the_order_in_doubt() -> None:
+    """Only an outage before the call means nothing left, so one after it is never called unsent."""
+    world = World()
+    account = world.account()
+    path = DownAfterCallPath(account._shared, world.broker, world.report)
+    # It is returned in doubt, for the send stage to end its plan on.
+    assert path.send(world.orders[0].client_order_id) is OrderState.IN_DOUBT
+    assert world.submits == 1
+    assert world.state() is OrderState.IN_DOUBT
+    assert "abandoned" not in world.kinds()
 
 
 @pytest.mark.parametrize("heals", [False, True])

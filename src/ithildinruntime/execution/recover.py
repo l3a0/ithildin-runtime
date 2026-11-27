@@ -254,7 +254,7 @@ class RecoverStage:
                     f"nothing more is settled of the decisions at {when}, whose orders are {names}"
                 )
                 step = "Look each up on the broker's site"
-                page = f"the journal stopped answering, so {left}. {step}"
+                page = f"a store stopped answering, so {left}. {step}"
                 added = self._alarm(page, report) or added
                 said = [*failed, outage.reason, left[0].upper() + left[1:]]
                 raise Halt(f"account {self._account.alias}: {'. '.join(said)}{added}") from None

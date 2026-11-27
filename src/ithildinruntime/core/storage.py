@@ -26,7 +26,7 @@ from enum import StrEnum
 from functools import cache
 
 from .codec import CodecError, decode, encode
-from .halt import Halt
+from .halt import Halt, Outage
 from .ports import Alerts, BlobStore, Timer
 from .records import BlobHeader, BlobRef, DecisionResult, HaltRecord, RestartRecord, _Record
 
@@ -746,16 +746,17 @@ class Storage:
         listed = "; ".join(f"{ref.key} with SHA-256 {ref.sha256}" for ref in held)
         return Halt(f"{reason}. Captures not yet stored: {listed}")
 
-    def _outage(self, what: str, late: _Deadline) -> Halt:
+    def _outage(self, what: str, late: _Deadline) -> Outage:
+        """The halt on S3 not answering, alarmed here, as the order path's `Outage` for one."""
         listed = "; ".join(f"{r.key} with SHA-256 {r.sha256}" for r in self.unstored()) or "none"
-        halt = Halt(
+        halt = Outage(
             f"{what} by the deadline: {late.answer}. Captures not yet stored: {listed}. "
             f"The owner's step: {self._owner_step}"
         )
         try:
             self._alerts.alarm(halt.reason)
         except BaseException as error:
-            return Halt(
+            return Outage(
                 f"{halt.reason}. The alarm could not be sent: {type(error).__name__}: {error}"
             )
         return halt
