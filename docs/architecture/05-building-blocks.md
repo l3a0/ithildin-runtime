@@ -2200,6 +2200,7 @@ An arrow means "may import". The diagram draws four rules.
      - the halts of workers that failed;
      - a halt of the run, with a halt for every decision left in the plan;
      - after a stop that left no clean-shutdown record, a halt in each strategy's halts folder and one `pause` journal entry, as `runtime/supervisor/hold.py` says;
+     - where the run's halt cannot be stored, a halt in each strategy's halts folder that stands in for it, from which a later start of the same run stores the run's halt;
      - the run's stop.
 
      The one exception is its report to the session-ready check in CloudWatch, which goes through `adapters`.

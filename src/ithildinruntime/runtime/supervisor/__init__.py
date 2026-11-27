@@ -34,7 +34,11 @@ One start runs in this order.
    and, outside a backtest, the close has passed by `STOP_AFTER_CLOSE`. #151
    adds a third condition, that the run has read the day's fills. Outside a
    backtest it first reads the run's halt, and stores the stop only where the
-   store answers that there is none.
+   store answers that there is none. Where the run's halt could not be stored, a
+   halt of each strategy stands in for it. Outside a backtest a start first looks
+   for one naming its run, and stores the run's halt from it and ends with 3, and
+   halts the run where those halts cannot be read. The stop reads them again,
+   and stores no stop and ends with 1 where it cannot.
 9. At `STALL_AFTER_CLOSE` past the close, a result still missing alarms and the
    start ends with no stop.
 
@@ -405,9 +409,13 @@ class Supervisor:
         if self._trading:
             try:
                 owed = self._owed_run_halt(plan.run)
-            except Exception:
-                # The stop reads them again, and fails closed there.
-                owed = None
+            except Exception as error:
+                # A halt still owed cannot be ruled out, so the run halts, as it does on a
+                # journal it cannot read.
+                owed = (
+                    "the halts that may stand in for the run's halt cannot be read, so a halt "
+                    f"still owed cannot be ruled out: {_said(error)}"
+                )
             if owed is not None:
                 return self._halt_run(plan, stages, decisions, [owed])
         while True:
@@ -425,7 +433,8 @@ class Supervisor:
                     f"{self._deployment}: {plan.run} has no result for {said} an hour after the "
                     "close, so the supervisor ends with no stop. The next session's start holds "
                     "every strategy, unless the missing result lands and a person starts the "
-                    "supervisor's unit again before then, which stores the stop"
+                    "supervisor's unit again before then, which stores the stop, or the run's "
+                    "halt where one is owed"
                 )
                 return Outcome(EXIT_STALLED, f"{plan.run} stalled with results missing: {said}")
             if self._wait(self._tick):
@@ -513,12 +522,24 @@ class Supervisor:
             said = f"a halt holds {', '.join(held)}" if held else "no halt holds any strategy"
             if unheld:
                 said += f", and no halt of {', '.join(unheld)} could be stored, so it is not held"
+            if held:
+                after = (
+                    "The host restarts the supervisor, which tries the halt again once the store "
+                    "answers. A restart that ends with 5 or 6 does not, so start the supervisor's "
+                    "unit by hand once the store answers"
+                )
+            else:
+                # Nothing records the halt, so a restart judges the run afresh.
+                after = (
+                    "Nothing records the halt, so the next session's start holds nothing for "
+                    "it. The host restarts the supervisor, which halts the run again only while "
+                    "an order is still late or the journal still cannot be read, and otherwise "
+                    "stores the run's stop"
+                )
             self._alerts.alarm(
                 f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
-                f"{_said(error)}. In its place {said}. "
-                "Pull the account's kill switch now. The host restarts the supervisor, which "
-                "tries the halt again once the store answers. A restart that ends with 5 or 6 "
-                "does not, so start the supervisor's unit by hand once the store answers"
+                f"{_said(error)}. In its place {said}. Pull the account's kill switch now. "
+                f"{after}"
             )
             return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
         halt = Halt(f"the supervisor halted the run: {reason}")
@@ -560,7 +581,10 @@ class Supervisor:
                 blob = self._storage.find_blob(key)
                 if blob is None:
                     continue
-                halt = decode(blob, StrategyHalt)
+                try:
+                    halt = decode(blob, StrategyHalt)
+                except Exception as error:
+                    raise Halt(f"the halt at {key} cannot be read: {_said(error)}") from error
                 if halt.run == run:
                     return halt.reason.removeprefix(OWED)
         return None

@@ -278,6 +278,7 @@ def test_a_result_missing_an_hour_after_the_close_ends_the_run_with_no_stop(
     assert hour <= world.timer.at - CLOSE < hour + timedelta(seconds=TICK)
     (alarm,) = world.alarms()
     assert "execution/send at 2026-10-02T19:40Z" in alarm and "an hour after the close" in alarm
+    assert "which stores the stop, or the run's halt where one is owed" in alarm
 
 
 def test_a_halted_run_stores_no_stop_and_a_restart_after_its_halt_stores_none(
@@ -1271,17 +1272,39 @@ def test_a_result_missing_at_the_second_decision_stores_no_stop(world: World) ->
     assert f"at {second:%Y-%m-%dT%H:%M}Z" in alarm and f"{first:%H:%M}Z" not in alarm
 
 
-def test_halts_that_cannot_be_listed_are_named_and_the_stop_waits_for_them(world: World) -> None:
+def test_halts_that_cannot_be_listed_are_named_and_halt_the_run(world: World) -> None:
     world.opened()
     world.ran()
     world.results()
     folder = strategy_halts_prefix(ACCOUNT, CHAN)
     _refusing(world, lambda call, key: call == "list" and key == folder)
-    # The run goes on, and its stop waits, since a halt there may stand in for the run's own.
+    # A halt there may stand in for the run's own, so the run halts, and stores no stop.
     outcome = world.supervisor().run(TODAY)
-    assert outcome.code == EXIT_FAILED and _stop_of(world) is None
+    assert outcome.code == EXIT_HALTED and _stop_of(world) is None
     (alarm,) = [a for a in world.alarms() if "still held" in a]
     assert f"{CHAN} (whose halts could not be read:" in alarm
+    stored = decode(world.blob(run_halt_key(DEPLOYMENT, TODAY.isoformat())), RunHalt)
+    assert "a halt still owed cannot be ruled out" in stored.reason
+
+
+def test_halts_that_cannot_be_listed_at_the_stop_store_no_stop(world: World) -> None:
+    world.opened()
+    world.ran()
+    world.results()
+    folder = strategy_halts_prefix(ACCOUNT, CHAN)
+    lists = 0
+
+    def refused(call: str, key: str) -> bool:
+        # The hold's read and the watch's read are answered, and the stop's read is refused.
+        nonlocal lists
+        if call == "list" and key == folder:
+            lists += 1
+            return lists > 2
+        return False
+
+    _refusing(world, refused)
+    outcome = world.supervisor().run(TODAY)
+    assert outcome.code == EXIT_FAILED and _stop_of(world) is None
     assert any("or a halt of a strategy standing in for it" in a for a in world.alarms())
     _refusing(world, lambda call, key: False)
     assert world.supervisor().run(TODAY).code == EXIT_STOPPED
@@ -1391,6 +1414,7 @@ def test_a_runs_halt_that_cannot_be_stored_says_to_pull_the_kill_switch(world: W
     assert any(
         "which tries the halt again once the store answers" in a
         and "A restart that ends with 5 or 6 does not" in a
+        and "Nothing records the halt" not in a
         for a in world.alarms()
     )
     assert _stop_of(world) is None
@@ -1619,7 +1643,77 @@ def test_a_runs_halt_and_strategy_halts_that_cannot_be_stored_name_what_is_not_h
     (alarm,) = [a for a in world.alarms() if "could not be stored" in a and "In its place" in a]
     assert "no halt holds any strategy" in alarm and "Pull the account's kill switch" in alarm
     assert f"no halt of {CHAN}" in alarm and "so it is not held" in alarm
+    assert "Nothing records the halt" in alarm and "tries the halt again" not in alarm
     assert not world.held()
+
+
+def _stand_in_owed(world: World) -> str:
+    """A first start whose run's halt is refused, so a halt of each strategy stands in for it."""
+    world.opened()
+    world.ran()
+    world.results()
+    halt = run_halt_key(DEPLOYMENT, TODAY.isoformat())
+    starts = world.root / starts_prefix(DEPLOYMENT, TODAY.isoformat())
+
+    def refused(call: str, key: str) -> bool:
+        armed = starts.exists() and any(starts.rglob("*.json"))
+        return (call == "list" and key.startswith("journal/") and armed) or (
+            call == "create" and key == halt
+        )
+
+    _refusing(world, refused)
+    world.timer.at = OPEN
+    assert world.supervisor().run(TODAY).code == EXIT_FAILED
+    assert world.held()
+    return halt
+
+
+def test_a_restart_in_the_session_stores_the_halt_owed_at_once(world: World) -> None:
+    halt = _stand_in_owed(world)
+    _refusing(world, lambda call, key: False)
+    world.timer.at = OPEN + timedelta(minutes=30)
+    ticks = world.ticks
+    assert world.supervisor().run(TODAY).code == EXIT_HALTED and _stop_of(world) is None
+    # Stored before the first tick, not at the stop after the close.
+    assert world.ticks == ticks
+    assert decode(world.blob(halt), RunHalt).halted_at == OPEN + timedelta(minutes=30)
+
+
+def test_a_stand_in_written_while_the_run_is_watched_halts_it_at_the_stop(world: World) -> None:
+    from ithildinruntime.runtime.supervisor import OWED, RUN_HALT_CAUSE
+
+    world.opened()
+    world.ran()
+    world.results()
+    world.timer.at = CLOSE
+    stand_in = StrategyHalt(
+        RUN_RECORD_FORMAT, ACCOUNT, CHAN, RUN_HALT_CAUSE, f"{OWED}late", TODAY.isoformat(), CLOSE
+    )
+    key = strategy_halt_key(ACCOUNT, CHAN, COMPONENT, RUN_HALT_CAUSE, CLOSE, 1)
+
+    def write_once(world: World) -> None:
+        if world.blob(key) is None:
+            world.put(key, encode(stand_in))
+
+    # It lands after the watch's first read, so only the stop's read finds it.
+    world.on_tick = write_once
+    assert world.supervisor().run(TODAY).code == EXIT_HALTED and _stop_of(world) is None
+    stored = decode(world.blob(run_halt_key(DEPLOYMENT, TODAY.isoformat())), RunHalt)
+    assert stored.reason == "late"
+
+
+def test_a_stand_in_that_cannot_be_read_halts_the_run_naming_its_key(world: World) -> None:
+    from ithildinruntime.runtime.supervisor import RUN_HALT_CAUSE
+
+    world.opened()
+    world.ran()
+    world.results()
+    key = strategy_halt_key(ACCOUNT, CHAN, COMPONENT, RUN_HALT_CAUSE, OPEN, 1)
+    world.put(key, b"not json")
+    assert world.supervisor().run(TODAY).code == EXIT_HALTED
+    assert _stop_of(world) is None
+    stored = decode(world.blob(run_halt_key(DEPLOYMENT, TODAY.isoformat())), RunHalt)
+    assert f"the halt at {key} cannot be read" in stored.reason
 
 
 def test_a_stand_in_for_an_earlier_runs_halt_leaves_todays_stop_alone(world: World) -> None:
