@@ -404,6 +404,27 @@ def test_1_late_whose_quote_has_a_fault_is_missed() -> None:
     assert made.log.account_now.delayed == ()
 
 
+def test_1_late_whose_snapshot_holds_no_quote_of_it_is_missed() -> None:
+    made = world(Faults({name(): Late(1)}))
+    (intent,) = made.decide(AT, (market(1, 4),))
+    assert past_the_gate(made, intent, quotes={}) is OrderState.IN_DOUBT
+    broker = made.broker()
+    assert broker.fills(LONG_AGO).fills == ()
+    assert broker.orders(LONG_AGO).orders == ()
+    assert made.log.account_now.delayed == ()
+
+
+def test_1_a_read_of_the_orders_misses_a_late_market_order_of_another_decision() -> None:
+    """It reads no price to do so, and an order of another decision is never placed."""
+    made = world(Faults({name(): Late(1)}))
+    (intent,) = made.decide(AT, (market(1, 4),))
+    assert made.send(intent) is OrderState.IN_DOUBT
+    made.decide(AT + timedelta(minutes=5), recover=False)
+    assert made.log.account_now.delayed != ()
+    assert made.broker().open_orders().orders == ()
+    assert made.log.account_now.delayed == ()
+
+
 @pytest.mark.parametrize("read", ["open_orders", "orders", "lookup"])
 def test_1_a_read_of_the_orders_reads_no_price_and_leaves_a_late_market_order_on_its_way(
     read: str,

@@ -281,10 +281,11 @@ never shares the paper account's lease.
    rejection that names why, cut short where it would be long, so the answer
    stays inside the journal's raw limit. Under the faults `reject_later` and `fill_none` it
    rests instead, and one still working at its close expires unfilled. One on
-   its way fills as it arrives, and only under its own decision's prices, so
-   one that arrives under another decision's, or whose quote is missing or has a
-   fault, is not taken. A read of the orders leaves it on its way, as item 9 says. Any other
-   order is rejected.
+   its way is judged as it arrives. It is not taken when it arrives past its
+   close, under another decision's prices, or with a quote that is missing or
+   has a fault, and otherwise it fills. A read of the orders reads no price, so
+   it leaves one of its own decision that arrives before its close on its way,
+   as item 9 says. Any other order is rejected.
 6. **A client order id of an order it took, or has or had on its way, is refused** with
    an answer that says so, which the order path reads as in doubt.
 7. **It moves only forward.** A call whose clock reads before the log's newest

@@ -15,10 +15,11 @@ fill rule by order type and no branch on a mode or a test.
   the instrument and a quote with a fault are each a rejection naming why, and
   never an exception. Before the close the gate's mark halts on both first.
   Under `reject_later` or `fill_none` it rests instead, and it never fills at a
-  close. One on its way fills as it arrives, and only under its own decision's
-  prices, so one that arrives under another decision's, or whose quote is
-  missing or has a fault, is missed. A read of the orders leaves it on its way, as the last item
-  says.
+  close. One on its way is judged as it arrives. It is missed when it arrives
+  past its close, under another decision's prices, or with a quote that is
+  missing or has a fault, and otherwise it fills. A read of the orders reads no
+  price, so it leaves one of its own decision that arrives before its close on
+  its way, as the last item says.
 - **Any other order is rejected.**
 - **It moves only forward.** A call whose clock reads before the log's newest
   call, or before the decision its prices are of, halts.
