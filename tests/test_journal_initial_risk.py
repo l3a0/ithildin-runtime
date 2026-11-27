@@ -6,7 +6,7 @@ is written entry by entry through `Journal.record`, so the fold checked every
 entry. Each verdict carries a worst loss worked out by hand in the gate's own
 way: for each leg, the share count furthest from zero that the leg could reach
 with the order and every working order counted, times its mark, times the stress
-move of 0.2. Two tests say where they choose a figure the gate would not give,
+move of 0.2. Three tests say where they choose a figure the gate would not give,
 to tell one order from another. No figure is pinned from output.
 """
 
@@ -66,8 +66,7 @@ from tests.support.journals import (
 )
 
 D = Decimal
-# Each decision a minute after the last, so every one falls before the session's close at 20:00.
-MINUTE = timedelta(minutes=1)
+HOUR = timedelta(hours=1)
 
 
 @dataclass(frozen=True)
@@ -100,7 +99,7 @@ class Written:
     def decide(self, *legs: Leg, strategy: str = CHAN) -> list[OrderIntent]:
         """A read, a decision planning `legs` in order, and each one's intent and verdict."""
         self.decisions += 1
-        at = AT + self.decisions * MINUTE
+        at = AT + self.decisions * HOUR
         reading = self.put(read(at))
         orders = [
             closing(planned(place, leg.qty, leg.instrument, strategy, at), leg.closing)
@@ -255,21 +254,21 @@ def test_each_order_with_a_sending_counts_and_none_without() -> None:
     written.send(gld)
     written.fill(gld, 10, "200")
     # 15*200*0.2, 20*200*0.2 and 25*200*0.2, each counting the adds planned before it.
-    (early, late, lost) = written.decide(
+    (early, late, dropped) = written.decide(
         Leg(GLD, 5, "600"), Leg(GLD, 5, "800"), Leg(GLD, 5, "1000")
     )
     written.put(SendingEntry(early.client_order_id))
     written.put(rejected(early.client_order_id))
     written.send(late)
     written.put(rejected(late.client_order_id))
-    written.put(SendingEntry(lost.client_order_id))
-    written.put(abandoned(lost.client_order_id))
+    written.put(SendingEntry(dropped.client_order_id))
+    written.put(abandoned(dropped.client_order_id))
     # Figures chosen above every other, so either one counted would show.
     (refused, held) = written.decide(Leg(GLD, 5, "5000", approved=False), Leg(GLD, 5, "6000"))
     written.put(abandoned(held.client_order_id))
     (position,) = positions(written.journal)
     names = [one.client_order_id for one in position.counted]
-    assert names == [o.client_order_id for o in (gld, early, late, lost)]
+    assert names == [o.client_order_id for o in (gld, early, late, dropped)]
     assert refused.client_order_id not in names
     assert position.initial_risk == D("1000")
 
@@ -471,14 +470,16 @@ def test_a_journal_held_after_every_position_closed_halts_the_read(kind: str) ->
 
 
 def test_an_order_given_up_as_lost_counts_and_then_keeps_no_position_open() -> None:
-    """It was sent, so it counts, and once it ends the strategy can be flat again."""
+    """It was held in doubt from its sending, so it counts, and once it ends the strategy can be
+    flat again."""
     written = Written()
     (gld,) = written.decide(Leg(GLD, 10, "400"))
     written.send(gld)
     written.fill(gld, 10, "200")
-    (more,) = written.decide(Leg(GLD, 5, "600", closing=True))
+    (more,) = written.decide(Leg(GLD, 5, "600", closing=True))  # 15*200*0.2
     written.put(SendingEntry(more.client_order_id))
     written.put(in_doubt(more.client_order_id))
+    # Chosen below the gate's 15*200*0.2, so only the Lost add gives the largest figure.
     (sell,) = written.decide(Leg(GLD, -10, "400", False))
     written.send(sell)
     written.fill(sell, -10, "200")
