@@ -314,6 +314,7 @@ def test_3_a_window_of_adjusted_bars_alone_checks_no_pair() -> None:
 
 
 # 7. The bounds, one cent from each edge, and SPY's largest dividend from 2006 on, 0.806 percent
+# across 82 ex-dates in Massive's published dividends, exploratory, as the plan on #189 measured.
 
 
 @pytest.mark.parametrize(
@@ -326,6 +327,11 @@ def test_7_the_residual_halts_outside_its_bounds(stated: str, halts: bool) -> No
     if halts:
         (reason,) = found
         assert "outside 0.99 to 1.01" in reason and stated not in reason and "100" not in reason
+
+
+@pytest.mark.parametrize(("stated", "halts"), [("989.99", True), ("990.00", False)])
+def test_7_the_residual_bound_holds_to_a_cent_on_a_close_of_1000(stated: str, halts: bool) -> None:
+    assert bool(check_splits(snap(flat(close="1000.00"), quoted=stated), TABLE)) is halts
 
 
 @pytest.mark.parametrize(

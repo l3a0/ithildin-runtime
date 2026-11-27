@@ -42,15 +42,14 @@ import json
 import re
 import sys
 import tempfile
-import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import NoReturn, TextIO
 
-from ithildinruntime.adapters import FolderBucket, WallClock
+from ithildinruntime.adapters import FolderBucket, SystemTimer, WallClock
 from ithildinruntime.core import (
     DAILY,
     STRATEGIES,
@@ -90,19 +89,6 @@ from ithildinruntime.data.reference import PriceKinds, load_master
 from ithildinruntime.data.splits import SplitRecord, load_splits, pairs
 
 __all__ = ["main", "measure"]
-
-
-class _SystemTimer:
-    """`core.Timer` on the machine's own clocks."""
-
-    def now(self) -> datetime:
-        return datetime.now(UTC)
-
-    def monotonic(self) -> float:
-        return time.monotonic()
-
-    def after(self, seconds: float) -> object:
-        raise NotImplementedError
 
 
 def measure(
@@ -441,7 +427,7 @@ def main(
     err: TextIO | None = None,
     splits: SplitRecord | None = None,
 ) -> int:
-    timer = _SystemTimer()
+    timer = SystemTimer()
     hidden = {_CHECKOUT: "<checkout>"}
     try:
         given = _arguments(argv)

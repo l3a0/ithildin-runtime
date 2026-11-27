@@ -1,4 +1,4 @@
-"""The receive loop every worker and the supervisor run, in every mode.
+"""The receive loop every worker runs, in every mode.
 
 docs/design.md's `### How a component learns of a change` holds the rules this
 module follows, in its list under "One receive loop hands work to a pool of
@@ -27,10 +27,10 @@ How the loop runs, in order.
    a restart. An event whose check met a store that did not answer is left
    unanswered, so SQS hands it out again once its visibility runs out, and on
    a named pipe it is gone. A full check that met such a store runs again
-   from the ticker until one completes. A
-   heard control blob's event, such as the run's stop, names no decision, so
-   today it wakes a check and is deleted. #10 and #11 add the handlers that
-   act on those events, and until then no component may rely on hearing one.
+   from the ticker until one completes. A heard control blob's event names
+   no decision, so it wakes a check and is deleted. The run's stop is the one
+   the loop acts on, as item 12 says, and no component may rely on hearing
+   any other.
 4. **A stage that keeps the plan's order starts decision N only once its own
    result for decision N−1 is stored**, a halt included, and one that follows
    other stages only once each of theirs is. Every other stage starts any
@@ -111,6 +111,15 @@ How the loop runs, in order.
     stop was asked has a bug, so its decision halts and alarms as item 6 says
     of any error a handler did not handle. Releasing it instead would start
     the decision again at once, for ever, while the worker beat as healthy.
+12. **The run's stop ends the loop.** Given `stop_key`, the loop reads that
+    key before its first check and every `extend_every` on the ticker, and an
+    event for the key only brings the read forward, because a named pipe
+    drops an event whose reader is down. Once the stop is stored the loop
+    ends as `stop` ends it, and `run` returns. A loop that finds the stop
+    before its first check runs no handler. A store that does not answer
+    reads as no stop yet, so an outage never ends a run early. Another run's
+    stop names another key, so it ends nothing. A loop already stopping once
+    its first check is done starts no receiver.
 
 Every limit is measured on the timer's monotonic reading.
 """
@@ -264,6 +273,7 @@ class ReceiveLoop:
         tick: float = 1.0,
         stop_timeout: float = 30.0,
         deaf_after: float = 60.0,
+        stop_key: str | None = None,
     ) -> None:
         stages = table.stages_of(component)
         if not stages:
@@ -332,6 +342,10 @@ class ReceiveLoop:
         # What each halt dropped from the hold said, for LoopFailed.
         self._dropped: list[str] = []
         self._sending: list[asyncio.Future] = []
+        # The run's stop, which ends the loop once a read finds it stored.
+        self._stop_key = stop_key
+        self._reading_stop = False
+        self._read_stop_at = float("-inf")
 
     # Running and stopping
 
@@ -362,6 +376,11 @@ class ReceiveLoop:
             if self._dropped:
                 reason += ". Halts not stored: " + "; ".join(self._dropped)
             raise LoopFailed(reason) from self._failure
+
+    @property
+    def storage(self) -> Storage:
+        """The `Storage` the loop holds unstored blobs through, and keeps the process alive on."""
+        return self._storage
 
     def stop(self) -> None:
         """Stop receiving and drain the pool. Safe to call from any thread, at any time."""
@@ -415,11 +434,16 @@ class ReceiveLoop:
         receiver: asyncio.Task | None = None
         try:
             try:
-                await self._check(full=True)
-                await self._in_io(self._announce_newest)
+                if self._stop_key is not None and await self._in_io(self._stop_is_stored):
+                    # A loop started after its run's stop runs no handler.
+                    self._stopping = True
+                else:
+                    await self._check(full=True)
+                    await self._in_io(self._announce_newest)
             finally:
                 self._ready.set()
-            receiver = asyncio.create_task(self._receiver())
+            if not self._stopping:
+                receiver = asyncio.create_task(self._receiver())
             while not self._stopping and self._failure is None:
                 kind, value = await self._inbox.get()
                 if kind == "events":
@@ -732,6 +756,9 @@ class ReceiveLoop:
 
     async def _on_events(self, events: Sequence[Event]) -> None:
         for event in events:
+            if self._stop_key is not None and event.key == self._stop_key and self._wanted(event):
+                # An event is only a reason to read sooner. The read decides.
+                self._spawn(self._read_stop())
             items = self._items_for(event) if self._wanted(event) else []
             attached = False
             unplaced = False
@@ -1124,6 +1151,8 @@ class ReceiveLoop:
                     running.extended = now
                     running.extending = True
                     self._spawn(self._extend(running))
+            if self._stop_key is not None and now - self._read_stop_at >= self._extend_every:
+                self._spawn(self._read_stop())
             if not self._retrying and now - self._retried >= self._extend_every:
                 self._retried = now
                 self._spawn(self._retry_held())
@@ -1131,6 +1160,27 @@ class ReceiveLoop:
                     self._recheck = False
                     self._inbox.put_nowait(("recheck", None))
             await asyncio.sleep(self._tick)
+
+    def _stop_is_stored(self) -> bool:
+        """Whether the run's stop is stored. A store that does not answer says not yet."""
+        if self._stop_key is None:
+            return False
+        try:
+            return self._storage.exists(self._stop_key)
+        except Halt:
+            return False
+
+    async def _read_stop(self) -> None:
+        """Read the run's stop, and stop the loop once it is stored."""
+        if self._reading_stop or self._stopping:
+            return
+        self._reading_stop = True
+        self._read_stop_at = self._timer.monotonic()
+        try:
+            if await self._in_io(self._stop_is_stored) and not self._stopping:
+                self._request_stop()
+        finally:
+            self._reading_stop = False
 
     def _spawn(self, work) -> None:
         # Each piece of work runs beside the beat, and a reference is kept so

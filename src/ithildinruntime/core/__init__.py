@@ -21,7 +21,7 @@ from .codec import (
 )
 from .exact import *  # noqa: F403
 from .exact import __all__ as _exact
-from .halt import Halt, Stopped
+from .halt import Halt, Outage, Stopped
 from .keys import *  # noqa: F403
 from .keys import __all__ as _keys
 from .limits import *  # noqa: F403
@@ -63,6 +63,8 @@ from .reconcile import *  # noqa: F403
 from .reconcile import __all__ as _reconcile
 from .records import *  # noqa: F403
 from .records import __all__ as _records
+from .runs import *  # noqa: F403
+from .runs import __all__ as _runs
 from .sessions import (
     BeforeClose,
     ExchangeTime,
@@ -108,6 +110,7 @@ __all__ = [
     "CodecError",
     "ExchangeTime",
     "Halt",
+    "Outage",
     "Places",
     "ScheduleTime",
     "Session",
@@ -147,6 +150,7 @@ __all__ = [
     *_quotes,
     *_reconcile,
     *_records,
+    *_runs,
     *_storage,
     *_stress,
     *_valuing,

@@ -1,4 +1,4 @@
-"""The portfolio worker's entry point: its row in the stage table and its handler.
+"""The portfolio worker's row in the stage table and its handler, which `runtime.entry` starts.
 
 One portfolio stage serves every strategy of the deployment. It reads data's,
 execution's recover, risk's and each strategy's alpha and cost results. It

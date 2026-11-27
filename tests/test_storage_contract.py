@@ -354,6 +354,21 @@ def test_a_lost_reply_on_a_write_that_landed_is_done(spec: StoreSpec) -> None:
     assert storage.put(StageKind.DETERMINISTIC, out, b"forecasts").ref.key == out
 
 
+@pytest.mark.parametrize("alarm", ["sent", "raises"])
+def test_a_store_that_does_not_answer_raises_an_outage_whether_or_not_it_alarmed(
+    spec: StoreSpec, alarm: str
+) -> None:
+    """The order path stops its later writes on an `Outage`, whatever became of its alarm."""
+    flaky = Flaky(spec.open())
+    storage, _, alarms = _storage(flaky)
+    if alarm == "raises":
+        alarms.alarm = lambda reason: (_ for _ in ()).throw(ConnectionError("down"))
+    flaky.down = True
+    with pytest.raises(core.Outage) as raised:
+        storage.put(StageKind.CAPTURING, _snapshot_key(), b"snapshot", attempt=_attempt())
+    assert ("The alarm could not be sent" in raised.value.reason) == (alarm == "raises")
+
+
 def test_a_halt_over_an_outage_names_each_capture_and_stores_them_once_s3_answers(
     spec: StoreSpec,
 ) -> None:
