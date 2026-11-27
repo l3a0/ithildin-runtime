@@ -149,7 +149,7 @@ from ithildinruntime.journal import (
 from .controls import Controls, Stopping, Where
 from .inputs import Inputs, read_inputs
 from .latch import Latch
-from .lease import AccountLease, Held, Holder, Taken, TakeoverRead
+from .lease import AccountLease, Held, Holder, LeaseLost, Taken, TakeoverRead
 from .patience import Patience, Tries, code_of
 
 __all__ = [
@@ -1144,9 +1144,16 @@ class OrderPath:
         tries = shared.patience.tries(self._report)
         view = self._view(tries=tries)
         holder = replace(shared.holder, handler=f"{shared.holder.handler}-{secrets.token_hex(8)}")
-        taken = shared.lease.take(
-            holder, tries, view.sent_at is not None, lambda: self._absent(view, tries)
-        )
+        try:
+            taken = shared.lease.take(
+                holder, tries, view.sent_at is not None, lambda: self._absent(view, tries)
+            )
+        except StoreError as error:
+            raise self._outage(
+                f"the account's lease could not be read or taken: {code_of(error)}. Whether a "
+                "take landed is unknown, so this handler does not act, and a take that landed "
+                "expires into a takeover"
+            ) from None
         self._lease = taken.held
         if taken.took is not None:
             self._takeover(name, taken)
@@ -1197,7 +1204,7 @@ class OrderPath:
             raise self._failed(f"the takeover lost its number {_STARTS_OVER + 1} times", "")
         held = self._lease
         assert held is not None
-        self._lease = shared.lease.settled(held)
+        self._lease = shared.lease.settled(held, shared.patience.tries(self._report))
         late_said = f", and finds {', '.join(late)} late" if late else ""
         reason = (
             f"the account's lease was taken over from {took.handler or 'a person clearing it'}, "
@@ -1260,17 +1267,21 @@ class OrderPath:
             reason = f"{reason}. Its halt was not stored at {key}: {code_of(error)}"
         return Halt(f"{reason}{shared.alarm(reason)}")
 
-    def _renew(self) -> None:
+    def _renew(self, tries: Tries) -> None:
         held = self._lease
         if held is None:
             raise Halt("no order goes out without the account's lease")
-        self._lease = self._shared.lease.renew(held)
+        try:
+            self._lease = self._shared.lease.renew(held, tries)
+        except LeaseLost as lost:
+            if lost.unanswered:
+                raise self._outage(lost.reason) from None
+            raise
 
     def _let_go(self) -> None:
         held, self._lease = self._lease, None
         if held is not None:
-            self._shared.lease.release(held)
-            self._report()
+            self._shared.lease.release(held, self._shared.patience.tries(self._report))
 
     # Steps 1 to 6
 
@@ -1517,11 +1528,13 @@ class OrderPath:
             stopping = shared.controls.stopping(planned.where, tries, with_stop=True)
             if stopping is not None:
                 raise _stopped(stopping)
-            # The fifth check: the account's lease still carries this path's own tag, which
-            # the renewal proves by rewriting it on that tag, a period ahead.
-            self._renew()
             if not tries.waited and shared.clock.monotonic() - began <= _PASS:
-                return order, self._before(name, cleared.last), fired
+                # The fifth check, on a pass that counts so far: the account's lease still
+                # carries this path's own tag, which the renewal proves by rewriting it on that
+                # tag. A renewal that waited leaves the pass behind as a read that waited does.
+                self._renew(tries)
+                if not tries.waited and shared.clock.monotonic() - began <= _PASS:
+                    return order, self._before(name, cleared.last), fired
             if tries.over:
                 raise Halt(
                     f"the checks of {name} were not all read in one pass by the deadline: in every "

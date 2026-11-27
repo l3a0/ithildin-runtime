@@ -10,9 +10,9 @@ who takes over a lease` give the rules. In short:
    change and S3's tag never repeats.
 2. **A take** reads the lease and rewrites it naming the taker. A lease that is
    free, or whose holder's expiry is more than `MARGIN` past, can be taken. A
-   412 means another handler won, a 409 means nothing landed, so the take reads
-   again, and a 404 means the lease is absent. A take whose reply is lost is not
-   recovered, so the lease expires into a takeover.
+   412 means another handler won, a 409 means nothing landed, so the take writes
+   again, and a 404 means the lease is absent. Every write's bytes are its own,
+   so a write whose reply is lost is settled by reading the lease back.
 3. **A takeover** is a take of an expired lease, or of a free one with `owed`
    set. The take writes `owed`, and the order path then stores the broker's
    order list and journals a `takeover` entry before it acts, and clears `owed`
@@ -41,13 +41,13 @@ from ithildinruntime.core import (
     BlobStore,
     Clock,
     CodecError,
-    Conflict,
     Halt,
     KeyExists,
     Lease,
     OrdersRead,
     StaleTag,
     StoreError,
+    StoreUnavailable,
     account_lease_key,
     decode,
     encode,
@@ -86,7 +86,14 @@ class LeaseHeld(Halt):
 
 
 class LeaseLost(Halt):
-    """A renewal the store refused, so this handler no longer holds the lease."""
+    """A rewrite the store refused, or did not answer, so this handler no longer holds the lease.
+
+    `unanswered` says the store gave no answer, so whether the rewrite landed is unknown.
+    """
+
+    def __init__(self, reason: str, *, unanswered: bool = False) -> None:
+        super().__init__(reason)
+        self.unanswered = unanswered
 
 
 @dataclass(frozen=True)
@@ -194,7 +201,8 @@ class AccountLease:
 
         `sent` says whether the journal, read before this call, holds a `sending`
         entry, and `absent` raises the absent lease's halt where it does. A lease
-        another handler holds raises `LeaseHeld`.
+        another handler holds raises `LeaseHeld`. A store that never answers
+        raises its last refusal, for the caller to halt on.
         """
         for _ in range(_READS):
             found = self.read(tries)
@@ -203,13 +211,11 @@ class AccountLease:
                 if sent:
                     raise absent()
                 lease = self._holding(free_lease(0, False), holder, now, owed=False)
-                made = encode(lease)
                 try:
-                    tag = tries(lambda m=made: self._store.create(self.key, m, sha256_of(m)))
+                    tag = self._write(None, lease, tries)
                 except KeyExists:
+                    # Another handler's first use landed first, so read what it wrote.
                     continue
-                except StoreError as error:
-                    raise self._unknown("its first create", error) from None
                 return Taken(Held(tag, lease), None, None)
             tag, lease = found
             expired = lease.expires is not None and lease.expires + MARGIN < now
@@ -222,11 +228,8 @@ class AccountLease:
                 )
             owes = lease.owed or lease.handler is not None
             mine = self._holding(lease, holder, now, owed=owes)
-            data = encode(mine)
             try:
-                new = self._store.replace_if_match(self.key, data, sha256_of(data), tag)
-            except Conflict:
-                continue
+                new = self._write(tag, mine, tries)
             except StaleTag:
                 # Another handler wrote it after this one read it, and won.
                 raise LeaseHeld(
@@ -235,53 +238,86 @@ class AccountLease:
                 ) from None
             except BlobMissing:
                 raise absent() from None
-            except StoreError as error:
-                raise self._unknown("a take", error) from None
             took = lease if owes else None
             return Taken(Held(new, mine), took, tag if owes else None)
         raise Halt(f"{self.key} could not be taken: {_READS} reads in a row met another write")
 
-    def renew(self, held: Held) -> Held:
+    def renew(self, held: Held, tries: Tries) -> Held:
         """Prove the lease still carries this handler's tag, and move its expiry a period on.
 
-        It is tried once, since a resend whose first try landed meets its own
-        new tag and reads as lost. Any refusal raises `LeaseLost`.
+        Any refusal raises `LeaseLost`.
         """
         now = self._clock.now()
         lease = replace(held.lease, expires=now + PERIOD, count=held.lease.count + 1)
-        return self._rewrite(held, lease, "renewal")
+        return self._rewrite(held, lease, "renewal", tries)
 
-    def settled(self, held: Held) -> Held:
+    def settled(self, held: Held, tries: Tries) -> Held:
         """Clear `owed` once the takeover's entry is journaled, on this handler's own tag."""
         lease = replace(held.lease, owed=False, count=held.lease.count + 1)
-        return self._rewrite(held, lease, "rewrite after its takeover")
+        return self._rewrite(held, lease, "rewrite after its takeover", tries)
 
-    def release(self, held: Held) -> str | None:
+    def release(self, held: Held, tries: Tries) -> str | None:
         """Clear the holder on this handler's own tag, and say why not where it could not.
 
-        A lease another handler took over, or a store that does not answer, is
-        left as it is: it expires, and the next take is a takeover.
+        A lease another handler took over, or a store that stays down, is left
+        as it is: it expires, and the next take is a takeover.
         """
         lease = free_lease(held.lease.count + 1, held.lease.owed)
         try:
-            self._rewrite(held, lease, "release")
+            self._rewrite(held, lease, "release", tries)
         except LeaseLost as lost:
             return lost.reason
         return None
 
-    def _rewrite(self, held: Held, lease: Lease, what: str) -> Held:
-        data = encode(lease)
+    def _rewrite(self, held: Held, lease: Lease, what: str, tries: Tries) -> Held:
         try:
-            tag = self._store.replace_if_match(self.key, data, sha256_of(data), held.tag)
-        except StaleTag:
+            tag = self._write(held.tag, lease, tries)
+        except (StaleTag, BlobMissing):
             raise LeaseLost(
                 f"the account's lease was rewritten by another handler, so its {what} was refused"
             ) from None
         except StoreError as error:
             raise LeaseLost(
-                f"the account's lease's {what} was not stored: {code_of(error)}"
+                f"the account's lease's {what} was not stored: {code_of(error)}", unanswered=True
             ) from None
         return Held(tag, lease)
+
+    def _write(self, tag: str | None, lease: Lease, tries: Tries) -> str:
+        """Write `lease` where the blob carries `tag`, or create it where `tag` is `None`.
+
+        Every write's bytes are its own, since each take names a handler of its
+        own and `count` rises on every write. So a write whose answer was lost is
+        settled by reading the lease back: these bytes standing mean it landed,
+        and the old tag standing means it did not, and it is sent again while
+        `tries` lasts. Anything else standing means another handler wrote it,
+        which raises `StaleTag`, or `KeyExists` for a create.
+        """
+        data = encode(lease)
+        sha = sha256_of(data)
+
+        def once() -> str:
+            try:
+                if tag is None:
+                    return self._store.create(self.key, data, sha)
+                return self._store.replace_if_match(self.key, data, sha, tag)
+            except (KeyExists, StaleTag, StoreUnavailable) as error:
+                try:
+                    stands = self._store.head(self.key)
+                except BlobMissing:
+                    if tag is None and isinstance(error, StoreUnavailable):
+                        raise error from None
+                    raise BlobMissing(self.key, "no blob at the key to rewrite") from None
+                except StoreError:
+                    raise error from None
+                if stands.ref.sha256 == sha:
+                    return stands.etag
+                if isinstance(error, StoreUnavailable) and stands.etag == tag:
+                    raise
+                if tag is None:
+                    raise KeyExists(self.key, "another handler created the lease") from None
+                raise StaleTag(self.key, "another handler rewrote the lease") from None
+
+        return tries(once)
 
     def _holding(self, lease: Lease, holder: Holder, now: datetime, *, owed: bool) -> Lease:
         return Lease(
@@ -298,10 +334,4 @@ class AccountLease:
             status=None,
             count=lease.count + 1,
             owed=owed,
-        )
-
-    def _unknown(self, what: str, error: StoreError) -> Halt:
-        return Halt(
-            f"the account's lease's {what} was not answered: {code_of(error)}. Whether it landed "
-            "is unknown, so this handler does not act and the lease expires"
         )

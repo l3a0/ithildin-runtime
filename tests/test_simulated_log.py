@@ -1266,12 +1266,14 @@ def test_4_two_orders_sent_at_once_take_two_numbers() -> None:
     early: list[bool] = []
 
     def other() -> None:
-        # A second path over the same log, so nothing but the log's lock keeps them apart.
+        # A second broker over the same log, so nothing but the log's lock keeps them apart.
+        # It calls the broker itself, since the account's lease keeps two order paths of one
+        # account from sending at once.
         two = SimWorld(made.closes, sim_store=made.sim, opened=False)
         two.store.blobs, two.store._keys = one.store.blobs, one.store._keys
         two.store.quiet = True
         two.log, two.run, two.at, two.clock.at = one.log, one.run, one.at, at
-        two.send(second)
+        two.broker().submit(second)
         done.set()
 
     def hook(count: int, op: str, found: str) -> None:

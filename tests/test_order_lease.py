@@ -288,20 +288,43 @@ def test_a_release_the_store_does_not_answer_leaves_the_lease_to_expire() -> Non
     def before(number: int, op: str, key: str) -> None:
         if (op, key) == ("replace", KEY):
             replaced.append(number)
-            if len(replaced) == 2:
+            if len(replaced) >= 2:
                 raise StoreUnavailable(key, "SlowDown: the store's own text")
 
     world.store.before = before
     assert world.send() is OrderState.ACKNOWLEDGED
+    assert len(replaced) > 2, "a release the store does not answer is asked again"
     lease = _lease(world)
     assert lease.handler is not None and lease.expires == NOW + PERIOD
+
+
+def test_a_release_whose_first_try_landed_unanswered_leaves_the_lease_free() -> None:
+    world = World()
+    replaced: list[int] = []
+
+    def after(number: int, op: str, key: str) -> None:
+        if (op, key) == ("replace", KEY):
+            replaced.append(number)
+            if len(replaced) == 2:
+                raise StoreUnavailable(key, "no answer")
+
+    world.store.after = after
+    assert world.send() is OrderState.ACKNOWLEDGED
+    assert _lease(world) == free_lease(3, False)
 
 
 # An absent lease
 
 
-def test_an_absent_lease_with_a_sending_in_the_journal_halts_new_orders_and_pages() -> None:
+def _lost() -> World:
+    """A journal with an earlier session's `sending`, and no lease where one stood."""
     world = World(position=Decimal(3))
+    world.store.drop(KEY)
+    return world
+
+
+def test_an_absent_lease_with_a_sending_in_the_journal_halts_new_orders_and_pages() -> None:
+    world = _lost()
     before = world.every_kind()
     reason = halted(world, "lease is absent")
     assert world.every_kind() == before
@@ -316,14 +339,14 @@ def test_an_absent_lease_with_a_sending_in_the_journal_halts_new_orders_and_page
 
 
 def test_two_handlers_that_find_the_lease_absent_raise_one_halt() -> None:
-    world = World(position=Decimal(3))
+    world = _lost()
     halted(world, "lease is absent")
     halted(world, "lease is absent", lambda: world.send(account=world.account(OTHER_WRITER)))
     assert len(_halts(world)) == 1
 
 
 def test_a_lease_lost_again_later_raises_a_halt_of_its_own() -> None:
-    world = World(position=Decimal(3))
+    world = _lost()
     halted(world, "lease is absent")
     # Another sending lands after the first halt, so the journal's head has moved.
     _sent_by_another(world)
@@ -434,11 +457,39 @@ def test_a_rerun_after_a_kill_before_the_takes_rewrite_takes_the_lease_as_the_fi
             raise StoreUnavailable(key, "no answer, and nothing landed")
 
     world.store.before = before
-    halted(world, "Whether it landed is unknown", lambda: world.send(2))
+    halted(world, "could not be read or taken", lambda: world.send(2))
     assert _lease(world) == _held()
     world.store.before = lambda *_: None
     assert world.send(2) is OrderState.ACKNOWLEDGED
     assert world.every_kind().count("takeover") == 1
+
+
+def test_a_take_whose_create_lands_after_its_tries_leaves_the_lease_to_expire() -> None:
+    world = World()
+    held: list[tuple[bytes, str]] = []
+
+    def before(number: int, op: str, key: str) -> None:
+        if (op, key) == ("create", KEY):
+            raise StoreUnavailable(key, "no answer")
+
+    real = world.store.create
+
+    def creating(key: str, data: bytes, sha256: str) -> str:
+        if key == KEY and not held:
+            held.append((data, sha256))
+        return real(key, data, sha256)
+
+    world.store.create = creating  # type: ignore[method-assign]
+    world.store.before = before
+    halted(world, "could not be read or taken")
+    # The first try lands after the take gave up, naming a handler nobody runs.
+    world.store.before = lambda *_: None
+    world.store.put(KEY, held[0][0])
+    halted(world, "held by")
+    world.clock.at += PERIOD + MARGIN + timedelta(seconds=1)
+    assert world.send() is OrderState.ACKNOWLEDGED
+    (entry,) = [r for r in world.entries() if isinstance(r, TakeoverEntry)]
+    assert entry.late == ()
 
 
 # Guard 4: a late order under an older lease halts before `Acknowledged`

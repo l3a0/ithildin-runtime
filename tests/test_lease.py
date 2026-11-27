@@ -131,14 +131,14 @@ def test_a_release_clears_the_holder_and_keeps_what_is_owed(store: object) -> No
     clock = Clock()
     lease = _lease(store, clock)
     held = lease.take(A, _tries(clock), False, _absent).held
-    assert lease.release(held) is None
+    assert lease.release(held, _tries(clock)) is None
     assert _stored(store) == free_lease(2, False)
     held = lease.take(A, _tries(clock), True, _absent).held
     clock.at += PERIOD + MARGIN + timedelta(seconds=1)
     # B takes over and fails before its takeover settles, so its release leaves it owed.
     owing = lease.take(B, _tries(clock), True, _absent)
     assert owing.took is not None and owing.held.lease.owed
-    lease.release(owing.held)
+    lease.release(owing.held, _tries(clock))
     assert _stored(store) == free_lease(5, True)
     assert lease.take(A, _tries(clock), True, _absent).took == free_lease(5, True)
 
@@ -150,9 +150,9 @@ def test_a_free_lease_with_a_takeover_owed_is_taken_as_a_takeover(store: object)
     taken = lease.take(A, _tries(clock), True, _absent)
     assert taken.took == free_lease(7, True) and taken.tag is not None
     assert taken.held.lease.owed and taken.held.lease.count == 8
-    settled = lease.settled(taken.held)
+    settled = lease.settled(taken.held, _tries(clock))
     assert not settled.lease.owed and _stored(store) == settled.lease
-    lease.release(settled)
+    lease.release(settled, _tries(clock))
     assert _stored(store) == free_lease(10, False)
 
 
@@ -164,12 +164,12 @@ def test_every_write_holds_new_bytes_and_a_new_tag(store: object) -> None:
     seen.append((held.tag, store.get(KEY)))  # type: ignore[attr-defined]
     for _ in range(3):
         # The clock does not move, so only the count tells the renewals apart.
-        held = lease.renew(held)
+        held = lease.renew(held, _tries(clock))
         seen.append((held.tag, store.get(KEY)))  # type: ignore[attr-defined]
-    lease.release(held)
+    lease.release(held, _tries(clock))
     held = lease.take(A, _tries(clock), False, _absent).held
     seen.append((held.tag, store.get(KEY)))  # type: ignore[attr-defined]
-    lease.release(held)
+    lease.release(held, _tries(clock))
     seen.append(("", store.get(KEY)))  # type: ignore[attr-defined]
     assert len({data for _, data in seen}) == len(seen)
     assert len({tag for tag, _ in seen[:-1]}) == len(seen) - 1
@@ -183,7 +183,7 @@ def test_a_renewal_moves_the_expiry_a_period_on_from_the_clock(store: object) ->
     lease = _lease(store, clock)
     held = lease.take(A, _tries(clock), False, _absent).held
     clock.at += timedelta(seconds=20)
-    renewed = lease.renew(held)
+    renewed = lease.renew(held, _tries(clock))
     assert renewed.lease.expires == clock.at + PERIOD and _stored(store) == renewed.lease
 
 
@@ -194,27 +194,53 @@ def test_a_holder_whose_lease_was_taken_over_cannot_renew_or_release_it(store: o
     clock.at += PERIOD + MARGIN + timedelta(seconds=1)
     new = lease.take(B, _tries(clock), True, _absent).held
     with pytest.raises(LeaseLost, match="rewritten by another handler"):
-        lease.renew(frozen)
-    assert "refused" in (lease.release(frozen) or "")
+        lease.renew(frozen, _tries(clock))
+    assert "refused" in (lease.release(frozen, _tries(clock)) or "")
     assert _stored(store) == new.lease
 
 
-def test_a_renewal_is_tried_once_and_one_unanswered_is_lost(store: object) -> None:
+def test_a_renewal_the_store_never_answers_is_lost_and_says_so(store: object) -> None:
     clock = Clock()
     lease = _lease(store, clock)
     held = lease.take(A, _tries(clock), False, _absent).held
-    calls = []
     real = store.replace_if_match  # type: ignore[attr-defined]
 
     def down(*args: object) -> str:
-        calls.append(args)
         raise StoreUnavailable(KEY, "SlowDown: the store's own text")
 
     store.replace_if_match = down  # type: ignore[attr-defined]
-    with pytest.raises(LeaseLost, match="renewal was not stored: StoreUnavailable SlowDown"):
-        lease.renew(held)
-    assert len(calls) == 1
+    with pytest.raises(
+        LeaseLost, match="renewal was not stored: StoreUnavailable SlowDown"
+    ) as lost:
+        lease.renew(held, _tries(clock))
+    assert lost.value.unanswered
     store.replace_if_match = real  # type: ignore[attr-defined]
+    assert _stored(store) == held.lease
+
+
+@pytest.mark.parametrize("landed", [False, True], ids=["refused", "landed unanswered"])
+def test_a_write_whose_answer_was_lost_is_settled_by_reading_the_lease_back(
+    store: object, landed: bool
+) -> None:
+    clock = Clock()
+    lease = _lease(store, clock)
+    held = lease.take(A, _tries(clock), False, _absent).held
+    real, calls = store.replace_if_match, []  # type: ignore[attr-defined]
+
+    def once_lost(*args: object) -> str:
+        calls.append(args)
+        if len(calls) == 1:
+            if landed:
+                real(*args)
+            raise StoreUnavailable(KEY, "no answer")
+        return real(*args)
+
+    store.replace_if_match = once_lost  # type: ignore[attr-defined]
+    renewed = lease.renew(held, _tries(clock))
+    assert _stored(store) == renewed.lease
+    assert len(calls) == (1 if landed else 2)
+    store.replace_if_match = real  # type: ignore[attr-defined]
+    assert lease.release(renewed, _tries(clock)) is None
 
 
 # What a take's rewrite answers
@@ -223,7 +249,7 @@ def test_a_renewal_is_tried_once_and_one_unanswered_is_lost(store: object) -> No
 def test_a_409_reads_again_and_a_412_means_another_handler_won(store: object) -> None:
     clock = Clock()
     lease = _lease(store, clock)
-    lease.release(lease.take(A, _tries(clock), False, _absent).held)
+    lease.release(lease.take(A, _tries(clock), False, _absent).held, _tries(clock))
     real, answers = store.replace_if_match, [Conflict(KEY, "409 ConditionalRequestConflict")]  # type: ignore[attr-defined]
 
     def racing(*args: object) -> str:
@@ -242,7 +268,7 @@ def test_a_409_reads_again_and_a_412_means_another_handler_won(store: object) ->
 def test_a_take_whose_rewrite_meets_no_blob_reads_as_absent(store: object) -> None:
     clock = Clock()
     lease = _lease(store, clock)
-    lease.release(lease.take(A, _tries(clock), False, _absent).held)
+    lease.release(lease.take(A, _tries(clock), False, _absent).held, _tries(clock))
 
     def gone(*args: object) -> str:
         raise BlobMissing(KEY, "NoSuchKey")
@@ -252,22 +278,32 @@ def test_a_take_whose_rewrite_meets_no_blob_reads_as_absent(store: object) -> No
         lease.take(B, _tries(clock), True, _absent)
 
 
-def test_a_take_whose_rewrite_is_not_answered_is_not_recovered(store: object) -> None:
+def test_a_take_whose_rewrite_landed_unanswered_holds_the_lease(store: object) -> None:
     clock = Clock()
     lease = _lease(store, clock)
-    lease.release(lease.take(A, _tries(clock), False, _absent).held)
+    lease.release(lease.take(A, _tries(clock), False, _absent).held, _tries(clock))
     real = store.replace_if_match  # type: ignore[attr-defined]
 
     def landed_unanswered(*args: object) -> str:
+        store.replace_if_match = real  # type: ignore[attr-defined]
         real(*args)
         raise StoreUnavailable(KEY, "no answer")
 
     store.replace_if_match = landed_unanswered  # type: ignore[attr-defined]
-    with pytest.raises(Halt, match="Whether it landed is unknown"):
-        lease.take(B, _tries(clock), True, _absent)
-    store.replace_if_match = real  # type: ignore[attr-defined]
-    # The take landed, so the lease names B until it expires, and nobody acts on it until then.
-    with pytest.raises(LeaseHeld, match=f"held by {B.handler}"):
+    taken = lease.take(B, _tries(clock), True, _absent)
+    assert taken.held.lease.handler == B.handler and _stored(store) == taken.held.lease
+
+
+def test_a_take_the_store_never_answers_raises_the_stores_refusal(store: object) -> None:
+    clock = Clock()
+    lease = _lease(store, clock)
+    lease.release(lease.take(A, _tries(clock), False, _absent).held, _tries(clock))
+
+    def down(*args: object) -> str:
+        raise StoreUnavailable(KEY, "no answer")
+
+    store.replace_if_match = down  # type: ignore[attr-defined]
+    with pytest.raises(StoreUnavailable):
         lease.take(B, _tries(clock), True, _absent)
 
 

@@ -74,5 +74,6 @@ class HandedPath(BrokenPath):
         self._submit(ack)
 
     def sending(self, client_order_id: str):
-        """Go as far as a stored `sending`, and return its acknowledgement."""
+        """Take the account's lease and go as far as a stored `sending`, and return its ack."""
+        self._take(client_order_id)
         return self._sending(client_order_id, self._approve(client_order_id))
