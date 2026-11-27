@@ -10,6 +10,7 @@ This page is for the owner and the operator. It is reference and how-to: the one
   - [From an alarm to a command](#from-an-alarm-to-a-command)
   - [Steps the owner takes once per account](#steps-the-owner-takes-once-per-account)
   - [Measure a stress move](#measure-a-stress-move)
+  - [Write a row of the record of splits](#write-a-row-of-the-record-of-splits)
   - [Count how often quotes would be refused](#count-how-often-quotes-would-be-refused)
   - [Measure the capture lag](#measure-the-capture-lag)
   - [Set up the test environment](#set-up-the-test-environment)
@@ -429,7 +430,7 @@ uv run python -m ithildinruntime.runtime.stress_move --lake <folder> --strategy 
 
 1. Append what the command printed to `src/ithildinruntime/core/stress_moves.toml`. Never change or remove a record that is there, apart from [withdrawing one](#withdraw-a-record).
 2. Fill in each flag's empty `what`, which says what the flagged price was. The reader refuses a record with one empty.
-3. Where the record's `series` hold captured bars, stop the commit and take it to the owner until a record of splits covers them, which [#46](https://github.com/l3a0/ithildin-runtime/issues/46) item 8 builds. A split there reads as a move, so one missed can make m larger, or smaller where it offsets a real move. A captured series has the `basis` `raw`, and the move rule misses some splits in one. While it stops, the older record's age keeps running.
+3. Where the record's `series` hold captured bars, check that its `splits` names the SHA-256 of `src/ithildinruntime/data/splits.csv` at the commit you merge into, and that its `split_rows` are that file's split rows for its instruments. The command refuses a pair of captured bars that no covered row holds, so a record over them needs [a covered row](#write-a-row-of-the-record-of-splits) reaching its `through` first. While none does, the older record's age keeps running.
 4. Read each move under `left_out`, which m does not count. Where a source holds both its sides, compare it with m.
 5. A move at step 4 that is at or above m, or that no source measures, stops the commit and goes to the owner.
 6. Pin the record in `tests/test_stress.py`'s `PINNED`, by hand.
@@ -445,6 +446,39 @@ A larger record binds as soon as the release that carries it runs, whatever the 
 #### Withdraw a record
 
 A withdrawal ends what the record held, so the net cap can grow with nothing halted, and caps that name the record halt every order once the release runs. So before the change merges, the owner writes `stress_move` to what should stand, and moves the caps to another record the running release already carries where they name this one. Where there is no other, a release that carries a new measurement runs first, and the withdrawal comes in a later one. The change adds `withdrawn` with the reason, does the same in `PINNED`, and says which `stress_move`, `stress_vintage` and `stress_through` the owner's caps hold. A record of the same strategy and vintage is refused even beside a withdrawn one, so a right one is measured through another session.
+
+### Write a row of the record of splits
+
+`src/ithildinruntime/data/splits.csv` records every split of every instrument the platform reads, and the spans of sessions over which it holds every split. Every decision halts on a split it does not hold, and on a pair of sessions no covered row and no quote covers, so a person writes a row before a split's first session and when the covered rows fall behind. The design doc's rule that [a split reads as neither a gain nor a loss](design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails) says why. Rows are only ever added, by a pull request the owner merges, and `tests/test_data_files.py` pins each by hand.
+
+#### Fetch what a row is read from
+
+1. Fetch each source the row cites and save its bytes as fetched under `~/.config/ithildin-runtime/splits/<date>/`, never in the repository, with a `README.md` there that gives each file's address and the UTC time it was fetched.
+2. Write the SHA-256 of each file into the row's `read_from`, beside its address and fetch time. `read_from` holds no comma, because the loader splits the row on commas.
+
+#### Write a split row
+
+1. Read the issuer's filing on SEC EDGAR that announces the split, and its index page, which gives the time EDGAR accepted it.
+2. Read Alpha Vantage's `SPLITS` and Massive's `GET /stocks/v1/splits` for the ticker on the same day.
+3. Write the row only where all three agree on the ratio and the first session on the new scale. Where they disagree, write nothing and take the question to the owner.
+4. Write `new_shares` and `old_shares` as whole numbers, such as 1 and 8 for a one-for-eight reverse split, and `known_at` as the UTC instant the filing became public. Where EDGAR accepted it before a session's open, write that open, as USO's row does for 2020-04-22.
+5. Merge it before the split's first session. From `known_at` the gate refuses an order that adds on the instrument, and from the first session every decision on it halts until [#190](https://github.com/l3a0/ithildin-runtime/issues/190) and [#191](https://github.com/l3a0/ithildin-runtime/issues/191) land.
+
+#### Write a covered row
+
+1. Read both vendor lists for the instrument on one day.
+2. Where neither lists a split in the span other than the record's own rows, write a covered row from the span's first session to a last session at least 5 sessions before that day. A list that cannot be read stops the row.
+3. Start it no earlier than the instrument's first raw bar, or the last session of Schwab's import before it, because a list shows no split only inside the span it reaches.
+
+A halt that says the record of splits does not reach a pair of sessions is released by a covered row reaching the later one. A halt on a step of 30 percent down or 42.9 percent up is released by a split row, or by a covered row once both lists show the move was real.
+
+#### Withdraw or correct a row
+
+1. A wrong ratio is a new `split` row on the same instrument and first session, added on a later date.
+2. A wrong date is a `withdrawn` row on the old key and a `split` row on the new one.
+3. A false split is a `withdrawn` row, added on a later date than the split row it ends, whose `read_from` says why the row was wrong.
+
+A release that changes the file while a Paper sample is open keeps the sample open only once a replay that reads the new file shows the strategy's orders unchanged.
 
 ### Count how often quotes would be refused
 

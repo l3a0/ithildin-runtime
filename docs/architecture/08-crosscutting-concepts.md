@@ -222,7 +222,7 @@ The entities live in eight stores, one of them kept by marketlake, and each keep
 5. [Decision reports](#decision-reports) hold `RUN` and `REPORT`.
 6. [The simulated broker's account](#the-simulated-brokers-account) holds the simulator's orders and positions.
 7. [Account controls](#account-controls), the account's own blobs, hold `LEASE`, `OVERRIDE`, `RELEASE_BLOB`, `HALT_FILE`, the kill switch, the strategies' off switches, a fired loss stop and the hard caps.
-8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts, whose place is not yet written.
+8. [Split records and saved broker statements](#split-records-and-saved-broker-statements) are recorded facts. Split records are a tracked file, and the place for saved broker statements is not yet written.
 
 #### marketlake holds `VINTAGE` and `BAR`
 
@@ -418,7 +418,7 @@ The bucket's lifecycle expires heartbeats and the noncurrent versions a lease's 
 
 #### Split records and saved broker statements
 
-Split records and saved broker statements are recorded facts. Wherever they sit, nothing may overwrite or silently drop one, every read verifies its checksum, and a copy leaves the machine from the first session. Where that is, is not yet written. [#46](https://github.com/l3a0/ithildin-runtime/issues/46) starts the one place for split records from marketlake's ledger and asks [#5](https://github.com/l3a0/ithildin-runtime/issues/5) to close the ways that ledger can lose a record, or say why it cannot be the place. One way [#46](https://github.com/l3a0/ithildin-runtime/issues/46) does not list is the `actions` lifecycle rule in marketlake's `infra/live/bucket.tf`, which expires a replaced version of the ledger after 30 days. No issue holds the place for saved broker statements yet.
+Split records and saved broker statements are recorded facts. Wherever they sit, nothing may overwrite or silently drop one, every read verifies its checksum, and a copy leaves the machine from the first session. Split records are `src/ithildinruntime/data/splits.csv`, whose rows are only ever added and which `tests/test_data_files.py` pins row by row. Git keeps every version of it, so no resync or lifecycle rule can lose a row, every decision's snapshot names the SHA-256 of the bytes it read, and the file leaves the machine with every push. marketlake's `actions/` ledger is not the place, for the reasons [#189](https://github.com/l3a0/ithildin-runtime/issues/189) records, among them a lifecycle rule in its `infra/live/bucket.tf` that expires a replaced version of the ledger after 30 days. No issue holds the place for saved broker statements yet.
 
 ### How recorded blobs are checked
 
