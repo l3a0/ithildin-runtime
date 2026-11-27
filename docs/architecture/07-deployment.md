@@ -295,7 +295,7 @@ The release writes every blob with one single-part upload, never a multipart one
 
 #### Which units systemd runs
 
-Each supervisor instance and each worker instance, two of each per deployment on slice 1's one VM and three across the cluster, has a unit of its own, the instances of each from one template unit, all part of one `ithildin.target`. Until [#210](https://github.com/l3a0/ithildin-runtime/issues/210) builds the plan's lease, each deployment runs one supervisor instance, from a unit that is not templated per instance, as [the 2026-11-27 decisions](../design.md#2026-11-27) record. This supervisor is safe as one because each write it makes is create-only.
+Each worker instance, two of each component per deployment on slice 1's one VM and three across the cluster, has a unit of its own, the instances of each from one template unit, all part of one `ithildin.target`. So does each supervisor instance. A deployment runs one supervisor instance until [#210](https://github.com/l3a0/ithildin-runtime/issues/210) builds the plan's lease, and as many as each component after it, as [the 2026-11-27 decisions](../design.md#2026-11-27) record. One is safe because each write it makes is create-only.
 
 The local release file the supervisor writes holds three lines: the release, the run and the boot, as `runtime.supervisor.read_release_file` reads them. A unit reads the first with `head -n1`, never through `EnvironmentFile=`, and a worker starts only once all three name its plan's release, its run and its boot.
 
@@ -659,7 +659,7 @@ adapter stays SQS, as it already is on the VM.
 
 #### How slice 1 runs on one VM
 
-Slice 1 runs each environment's one VM in an Auto Scaling group of one, which replaces a lost VM without a person. That VM runs every instance of its deployment, two of each component and of the supervisor, with one supervisor until [#210](https://github.com/l3a0/ithildin-runtime/issues/210) builds the plan's lease, under the units of [Systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), which give each supervisor instance and each worker instance a systemd unit of its own that restarts it, most of them up to a limit. Scaling out raises the group to three, one VM a zone, each running one supervisor instance and one instance of each component, so each component then runs three instances.
+Slice 1 runs each environment's one VM in an Auto Scaling group of one, which replaces a lost VM without a person. That VM runs every instance of its deployment, two of each component, and one supervisor until [#210](https://github.com/l3a0/ithildin-runtime/issues/210) builds the plan's lease and two after it, under the units of [Systemd keeps every process running, up to a limit](#rule-7-systemd-keeps-every-process-running-up-to-a-limit), which give each supervisor instance and each worker instance a systemd unit of its own that restarts it, most of them up to a limit. Scaling out raises the group to three, one VM a zone, each running one supervisor instance and one instance of each component, so each component then runs three instances.
 
 #### Which items hold for slice 1's one VM
 
