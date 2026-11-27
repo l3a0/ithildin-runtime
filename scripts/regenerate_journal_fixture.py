@@ -20,7 +20,8 @@ A merge where both sides appended an entry takes five steps.
    `--write` replaces.
 3. Run the script, and read each line.
 4. Run it with `--write`.
-5. Move `replay.json` by hand, then mark both files and the folder resolved.
+5. Move `replay.json` by hand, then mark `tests/test_journal_entries.py`,
+   `replay.json` and the folder resolved.
 
     git fetch origin
     git merge origin/main
@@ -84,7 +85,7 @@ FOLDER = ORDERS / "journal" / FIXED
 REPLAY = ORDERS / "replay.json"
 
 # Reads the committed folder at a ref, by file name, or gives `None` when the
-# ref cannot be read or holds no file there.
+# ref cannot be listed or holds no file there.
 type ReadRef = Callable[[Path, str], Mapping[str, bytes] | None]
 
 
@@ -129,7 +130,7 @@ def compare(
 def git_ref(root: Path, ref: str) -> dict[str, bytes] | None:
     """The committed folder's files at `ref`, read with `git ls-tree` and `git show`.
 
-    It gives `None` where git cannot start or read the ref, and where the ref
+    It gives `None` where git cannot start or list the ref, and where the ref
     holds no file in the folder, such as a ref older than the fixture.
     """
     try:

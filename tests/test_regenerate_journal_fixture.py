@@ -9,7 +9,8 @@ history. Most hand the ref's files in. The cases that read a ref through git
 commit the copy into a repository of their own under `tmp_path`, so a
 regenerated fixture not yet committed in the real checkout fails none of them.
 The case that runs the script as a command copies nothing, and points git at
-an empty folder under `tmp_path`, so it reads nothing of the checkout either.
+an empty folder under `tmp_path`, so git reads none of the checkout's history
+either.
 """
 
 from __future__ import annotations
@@ -283,7 +284,7 @@ def test_write_builds_a_committed_folder_that_is_missing(
 
 
 @pytest.mark.parametrize("files", [None, {}], ids=["unread", "empty"])
-def test_a_ref_that_cannot_be_read_or_holds_no_entry_ends_with_2_and_writes_nothing(
+def test_a_ref_that_cannot_be_listed_or_holds_no_entry_ends_with_2_and_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], files: Mapping[str, bytes] | None
 ) -> None:
     folder = _copy(tmp_path)
