@@ -8,12 +8,15 @@ there, so no case moves the real fixture or reads the real checkout's git
 history. Most hand the ref's files in. The cases that read a ref through git
 commit the copy into a repository of their own under `tmp_path`, so a
 regenerated fixture not yet committed in the real checkout fails none of them.
+The case that runs the script as a command copies nothing, and points git at
+an empty folder under `tmp_path`, so it reads nothing of the checkout either.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -289,7 +292,7 @@ def test_a_ref_that_cannot_be_read_or_holds_no_entry_ends_with_2_and_writes_noth
 
     assert script.main(["--write"], root=tmp_path, read_ref=_Ref(files)) == 2
 
-    assert "could not be read, or holds no file in" in capsys.readouterr().out
+    assert "could not be listed, or holds no file in" in capsys.readouterr().out
     assert _files(folder) == before
 
 
@@ -310,13 +313,14 @@ def test_git_ref_reads_the_folder_at_a_commit_and_gives_none_where_it_holds_noth
     assert script.git_ref(tmp_path / "no-such-folder", "HEAD") is None
 
 
-def test_run_as_a_command_it_ends_with_the_code_main_returns() -> None:
+def test_run_as_a_command_it_ends_with_the_code_main_returns(tmp_path: Path) -> None:
     run = subprocess.run(
         [sys.executable, str(SCRIPT), "--against", "no-such-ref-of-this-repository"],
+        env={**os.environ, "GIT_DIR": str(tmp_path)},
         capture_output=True,
         text=True,
         check=False,
     )
 
     assert run.returncode == 2, run.stderr
-    assert "could not be read, or holds no file in" in run.stdout
+    assert "could not be listed, or holds no file in" in run.stdout

@@ -20,13 +20,13 @@ A merge where both sides appended an entry takes five steps.
    `--write` replaces.
 3. Run the script, and read each line.
 4. Run it with `--write`.
-5. Mark the folder resolved, and move `replay.json` by hand.
+5. Move `replay.json` by hand, then mark both files and the folder resolved.
 
     git fetch origin
     git merge origin/main
     uv run python scripts/regenerate_journal_fixture.py
     uv run python scripts/regenerate_journal_fixture.py --write
-    git add tests/fixtures/orders
+    git add tests/test_journal_entries.py tests/fixtures/orders
 
 Each column reads `same`, `differs`, `new` where only this run writes the
 entry, `gone` where only that side holds it, or `-` where neither does.
@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT, read_ref: ReadRef = g
     at_ref = read_ref(root, args.against)
     if not at_ref:
         print(
-            f"{args.against} could not be read, or holds no file in {FOLDER.as_posix()}, "
+            f"{args.against} could not be listed, or holds no file in {FOLDER.as_posix()}, "
             "so nothing is compared or written."
         )
         return 2
