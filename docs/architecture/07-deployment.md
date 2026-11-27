@@ -399,7 +399,7 @@ The grant and the mirror cover every file marketlake's `is_reader_file` names, i
 | --- | --- |
 | A partition not yet in the bucket | It is "data not ready", which halts. For a quotes partition of the decision's day, the snapshot is stored first |
 | No segment of an instrument, no row captured by the cut 15 seconds before the decision, or no capture every instrument has | The snapshot is stored and the decision halts, naming each prefix or partition and what it held |
-| A quotes partition of the decision's day listed beside an instrument's that is not, or one with no row of the session's equity close | The snapshot is stored and the decision halts, naming the partition |
+| A quotes partition of the decision's day listed beside an instrument's that is not, or one with no row of the session's equity close, neither a data row nor a gap row tagged `spot_close` | The snapshot is stored and the decision halts, naming the partition |
 | A partition that fails the check against the manifest's checksum | The decision halts. For a quotes partition of the decision's day, the snapshot is stored first |
 | A capture segment whose bytes do not hash to the SHA-256 the bucket stored, on a second download too | The snapshot is stored with what else was read, and the decision halts |
 | An absent or unreadable file that `is_reader_file` names | The decision stops |
@@ -610,6 +610,32 @@ prices.
    a seal may differ from the sealed rows, with no halt.
 3. The price of waiting for a deploy is a run that stays red until it is known, so
    a higher version that arrives meanwhile shows only in the run's text.
+
+The run does not watch how marketlake writes a gap row tagged `spot_close`,
+which the sealed read's close check relies on, as
+[Which decisions read the sealed day](03-context-and-scope.md#which-decisions-read-the-sealed-day)
+says. marketlake's README does not state that rule, so a check in the run would
+test marketlake's internals, which no check here does. The run prints the step
+below wherever it says to raise the pin or to wait for a deploy before raising
+it, and checks none of it. The runtime relies on the rule all the same until
+[l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050) puts it
+in marketlake's contract. The price is that the guard against a day sealed while
+still open rests on how marketlake writes that row, as
+[`### 2026-11-26` in design.md's decisions](../design.md#2026-11-26) records. At marketlake `8565362`, its
+`main` on 2026-11-26, two writers write such a row, and both write it at or
+after the equity close.
+
+1. The capture cycle of the equity close's own minute.
+2. The close+5 guard, which runs five minutes after the option close.
+
+Until [l3a0/marketlake#1050](https://github.com/l3a0/marketlake/issues/1050)
+publishes the rule, the pull request that raises the pin re-reads, at the new
+commit, which writers write such a row and when, checks that none writes it
+before the equity close, and names the commit it read. This has two prices.
+
+1. The re-read is a step a person can skip, and no check catches a skipped one.
+2. A change to those writers that marketlake deploys before any raise goes
+   unseen until the next raise.
 
 #### How the image reaches each environment
 

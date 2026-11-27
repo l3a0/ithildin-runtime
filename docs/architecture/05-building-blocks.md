@@ -167,7 +167,7 @@ moment, not against a blob.
 
 | Mode | Data source | Clock | Broker, and when it fills | Blob store and journal | Alerts and heartbeat |
 | --- | --- | --- | --- | --- | --- |
-| Backtest | A folder holding marketlake's lake and the folder of segments beside it, the bars and quotes a test names | History clock | Simulated, by order type: a market-on-close order at its session's official close, and the day's market order, a buy at the decision's ask and a sale at its bid, rejected until [#155](https://github.com/l3a0/ithildin-runtime/issues/155) | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
+| Backtest | A folder holding marketlake's lake and the folder of segments beside it, the bars and quotes a test names | History clock | Simulated, by order type: a market-on-close order at its session's official close, and the day's market order at once, a buy at the decision's ask and a sale at its bid | A memory-backed folder, holding the backtest's own journal, gone when it ends, in the test environment or on a developer's machine | Recorded, not sent |
 | Shadow | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Simulated, by order type, the same rule as the backtest. A market-on-close order stays open until a decision's stored snapshot holds the official close, which the data source holds from the 18:30 sweep, so the run's read of the day's fills finds it open, which counts as read, and the fill lands at the next recover stage. A close missing at the next recover stage halts under hard limit 3, that missing input means stop, not flatten: at the stale lag of 0 a strategy's file writes, data reads the instrument as stale and its result holds the halt. The order keeps working | The shadow environment's bucket, with the shadow journal | Sent |
 | Paper | marketlake's S3 bucket, captured bars and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Paper broker, at its own simulated fill, which for a market-on-close order is the quote near the close rather than the auction price | The paper environment's bucket, with the paper journal | Sent |
 | Live | marketlake's S3 bucket, captured bars, once [a split record covers them](../team-charter.md#5-release), and the day's quotes, plus the imported download until capture covers the lookback | Wall clock | Live broker, at its own fill | The live environment's bucket, with the live journal | Sent |
@@ -264,11 +264,28 @@ never shares the paper account's lease.
    gave the price. Its `basis` is `signal_close` where the decision that sent it
    had read a close of that session, and `official_close` otherwise. So a result
    that fills at a close its signal read is told by its own fills. The price
-   itself is the settling snapshot's, which a revision can have moved.
+   itself is the settling snapshot's, which a revision can have moved. A market
+   order's fill, under item 5, has the `basis` `quote`.
 4. **Cash and shares move exactly**, as the journal's book moves them, with no
    rounding. A sale can open a short.
-5. **Any other order is rejected.** The day's market order gets its fill with
-   [#155](https://github.com/l3a0/ithildin-runtime/issues/155).
+5. **A market order for the day fills whole at once**, in the call that takes
+   it, a buy at the ask and a sale at the bid of the quote in the snapshot of
+   the decision that sent it. `core.quote_faults` judges that quote at the
+   decision's time, so a backtest's fills do not move with its clock. Before the
+   close the gate has already judged it at its own time. At the close itself a
+   decision reads no quote and the gate marks at the day's bar, so the broker's
+   rejection is what stops the order. Its `at` and `received_at` are the
+   clock's, its `basis` is `quote`, and the log names the decision's stored
+   snapshot, which holds the quote's stamps and the row as received. A snapshot
+   with no quote of the instrument, and a quote with a fault, are each a
+   rejection that names why, cut short where it would be long, so the answer
+   stays inside the journal's raw limit. Under the faults `reject_later` and `fill_none` it
+   rests instead, and one still working at its close expires unfilled. One on
+   its way is judged as it arrives. It is not taken when it arrives past its
+   close, under another decision's prices, or with a quote that is missing or
+   has a fault, and otherwise it fills. A read of the orders reads no price, so
+   it leaves one of its own decision that arrives before its close on its way,
+   as item 9 says. Any other order is rejected.
 6. **A client order id of an order it took, or has or had on its way, is refused** with
    an answer that says so, which the order path reads as in doubt.
 7. **It moves only forward.** A call whose clock reads before the log's newest
@@ -278,7 +295,8 @@ never shares the paper account's lease.
    9. An order past its close needs one, and so does an order it takes. A result
    or a snapshot that is missing, stale or of another decision gives none.
 9. **No clock and no price stops a cancel, or a read of the orders.** Neither reads
-   a price, and both leave a close that needs one to the next call that reads one.
+   a price, and both leave a close that needs one, and a market order on its way
+   that needs its quote, to the next call that reads one.
    A cancel is judged by the clock it reads, or by the log's newest call where the
    clock gives no UTC time. `open_orders`, `orders`, `lookup` and `find_order`,
    which say what there is to cancel, give the log as it stands where the clock
@@ -295,7 +313,7 @@ A result that quotes one of these fills as evidence names what it leaves out, as
 [A backtest names what it could not have traded](../design.md#a-backtest-names-what-it-could-not-have-traded-and-each-model-states-how-it-fails)
 asks.
 
-1. **The scale.** A fill is at the bar's close on the bar's own scale, which
+1. **The scale.** A fill at a close is at the bar's close on the bar's own scale, which
    `basis` does not state. The USO prices imported from Yahoo, 2012-04-10 to
    2020-04-28, are eight times those that traded
    ([A lookback that crosses a change of series](../design.md#a-lookback-that-crosses-a-change-of-series)).
@@ -309,6 +327,26 @@ asks.
 5. **Terms it does not book.** Commission, borrow, interest, distributions, credit
    on a short's proceeds and buying power read as unknown, never as zero. A split
    is [#191](https://github.com/l3a0/ithildin-runtime/issues/191)'s, and a forced close or a buy-in [#152](https://github.com/l3a0/ithildin-runtime/issues/152)'s.
+6. **The time a market order lands.** A market order fills at the decision's
+   quote whatever the time of the call, so its cost from the decision's midpoint
+   is half the spread by construction and never shows the market moving in
+   between. `OrderPath` abandons a send past the moment its quote stops being
+   readable, which bounds how late a fill can come, apart from an order a test's
+   `Late` fault holds on its way.
+7. **An order on its way across decisions.** A market order on its way that
+   arrives under another decision's prices is not taken, where a real broker
+   fills an order whenever it lands. So a test of an order in doubt on this
+   simulator never meets one that fills in a later decision after a lookup found
+   nothing, which is the case where sending it again would double it. Within one
+   decision a read of the orders can find nothing while a market order waits on
+   its way, and the next call that reads a price takes it or misses it, as item 5
+   of `#### What fills, and when` says.
+8. **The quote's kind.** The bid and the ask are what the quote-kind contract in
+   `data/quote_kinds.csv` says of them. On shadow and paper they read as the best
+   bid and ask, though the source types each answer as NBBO, the national best bid
+   and offer across every US exchange, or NFL, which it calls a non-fee-liable
+   quote, and marketlake's columns do not say which, as `## Decisions` of
+   [2026-11-26](../design.md#2026-11-26) records.
 
 The figure below is a C4 dynamic diagram.
 

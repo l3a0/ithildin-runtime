@@ -533,7 +533,7 @@ The stage is `execution/recover.py`, and its reads of the broker and what the jo
     2. Each fill the journal does not hold. A fill of an order the platform sent is a `fill`, and a repeat whose content differs from the fill held under its id is a `disputed_fill`. Any other fill is an `unmatched_fill`: one of no order the platform acknowledged, one on an order that has ended, one past its order's quantity or on its other side, one for zero shares or at no price, and one carrying a correction's id, which no rule reads yet.
     3. Each open order under a broker's id no `ack` mapped, which is an `unmatched_order`.
 
-    An unmatched entry moves nothing and is kept as it came. The book halts while one stands, so it holds the account until a person releases it, which [#150](https://github.com/l3a0/ithildin-runtime/issues/150)'s release test builds. Nothing is kept as unmatched while an order is `Sending` or `InDoubt`, because that order could own it, so the read halts instead. A record or a fill whose own id the journal refuses halts and is kept only in the capture.
+    An unmatched entry moves nothing and is kept as it came. The book halts while one stands, so it holds the account until a person releases it, which [#151](https://github.com/l3a0/ithildin-runtime/issues/151) builds on [#150](https://github.com/l3a0/ithildin-runtime/issues/150)'s release test. Nothing is kept as unmatched while an order is `Sending` or `InDoubt`, because that order could own it, so the read halts instead. A record or a fill whose own id the journal refuses halts and is kept only in the capture.
 7. It looks up, by the broker's id, each order the broker no longer lists and whose fills do not explain it. An order that `expired` or was `rejected` is journaled so. Any other answer halts.
 8. It takes a second reading of the journal and compares it with the capture through `core.reconcile`. Any difference halts, with every one of them in the reason.
 9. It reads the owner's hard caps.
@@ -680,7 +680,7 @@ The steps run in this order.
 
 #### What the first slice builds of these steps
 
-`execution/send.py` builds steps 1 to 5 and step 7 for market-on-close orders alone, in the plan's order. Five parts wait on later issues.
+`execution/send.py` builds steps 1 to 5 and step 7 for market-on-close orders and market orders for the day, in the plan's order. Five parts wait on later issues.
 
 1. Cancels and replacements, and so an open order under a target that wants a change, which halts until [#149](https://github.com/l3a0/ithildin-runtime/issues/149) builds them.
 2. The clock's check against the broker, which is [#153](https://github.com/l3a0/ithildin-runtime/issues/153)'s and [#165](https://github.com/l3a0/ithildin-runtime/issues/165)'s.
