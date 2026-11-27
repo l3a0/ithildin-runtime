@@ -1,17 +1,21 @@
 """The script that writes the committed journal of every kind again.
 
-scripts/regenerate_journal_fixture.py replays `_committed()` from
+scripts/regenerate_journal_fixture.py writes `_committed()` from
 tests/test_journal_entries.py and compares each entry with the committed
-folder and with the folder at a git ref. Most cases copy the committed
-fixture under `tmp_path`, change one thing, and run the script's `main`
-there with the ref's files handed in, so no case moves the real fixture. The
-first case reads the real tree and `HEAD` through git.
+folder and with the folder at a git ref. Each case copies the committed
+fixture under `tmp_path`, changes one thing, and runs the script's `main`
+there, so no case moves the real fixture or reads the real checkout's git
+history. Most hand the ref's files in. The cases that read a ref through git
+commit the copy into a repository of their own under `tmp_path`, so a
+regenerated fixture not yet committed in the real checkout fails none of them.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
+import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -42,12 +46,33 @@ def _files(folder: Path) -> dict[str, bytes]:
 
 MAIN = _files(FOLDER)
 LAST = max(MAIN)
+LAST_NUMBER = int(Path(LAST).stem)
+THROUGH = json.loads((REPO / script.REPLAY).read_text())["afterwards"]["through"]
+DRY_AND_WRITE = pytest.mark.parametrize("argv", [[], ["--write"]], ids=["dry", "write"])
 
 
 def _copy(tmp_path: Path) -> Path:
     """A root holding a copy of the committed orders fixture, and its folder of entries."""
     shutil.copytree(REPO / script.ORDERS, tmp_path / script.ORDERS)
     return tmp_path / script.FOLDER
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _committed_copy(tmp_path: Path) -> Path:
+    """A repository under `tmp_path` whose one commit holds a copy of the orders fixture."""
+    _copy(tmp_path)
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "fixture")
+    return tmp_path
 
 
 class _Ref:
@@ -62,14 +87,19 @@ class _Ref:
         return self.files
 
 
-def _lines(out: str) -> dict[str, tuple[str, str]]:
-    """Each entry line of the output, by file name, as its two columns."""
-    rows = {}
+def _rows(out: str) -> list[tuple[str, str, str]]:
+    """Each entry line of the output, in the order printed, as its name and two columns."""
+    rows = []
     for line in out.splitlines():
         parts = line.split()
         if len(parts) == 3 and parts[0].endswith(".json"):
-            rows[parts[0]] = (parts[1], parts[2])
+            rows.append((parts[0], parts[1], parts[2]))
     return rows
+
+
+def _lines(out: str) -> dict[str, tuple[str, str]]:
+    """Each entry line of the output, by file name, as its two columns."""
+    return {name: (here, there) for name, here, there in _rows(out)}
 
 
 def _flip(data: bytes) -> bytes:
@@ -78,14 +108,21 @@ def _flip(data: bytes) -> bytes:
     return data[:at] + bytes([data[at] ^ 1]) + data[at + 1 :]
 
 
-def test_on_this_tree_every_entry_is_the_same_here_and_at_head(
-    capsys: pytest.CaptureFixture[str],
+def test_on_a_tree_like_this_one_every_entry_is_the_same_here_and_at_head(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert script.main(["--against", "HEAD"]) == 0
+    root = _committed_copy(tmp_path)
+
+    assert script.main(["--against", "HEAD"], root=root) == 0
+
     out = capsys.readouterr().out
-    assert _lines(out) == {name: ("same", "same") for name in MAIN}
+    assert _rows(out) == [(name, "same", "same") for name in sorted(MAIN)]
+    assert (
+        f"The last entry is {LAST_NUMBER}, and replay.json's afterwards.through is {THROUGH}."
+        in out
+    )
+    assert "Move replay.json" not in out
     assert "--write" not in out
-    assert f"The last entry is {int(Path(LAST).stem)}, " in out
 
 
 def test_a_changed_byte_in_a_committed_entry_reads_differs_and_nothing_is_written(
@@ -108,8 +145,24 @@ def test_a_changed_byte_in_a_committed_entry_reads_differs_and_nothing_is_writte
     assert _files(folder) == before
 
 
-def test_an_entry_the_ref_holds_that_this_run_would_change_ends_with_1_and_writes_nothing(
+def test_a_branch_whose_new_entry_is_not_yet_committed_is_told_to_run_with_write(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = _copy(tmp_path)
+    (folder / LAST).unlink()
+    before = _files(folder)
+
+    assert script.main([], root=tmp_path, read_ref=_Ref(MAIN)) == 0
+
+    out = capsys.readouterr().out
+    assert _lines(out)[LAST] == ("new", "same")
+    assert "Run again with --write" in out
+    assert _files(folder) == before
+
+
+@DRY_AND_WRITE
+def test_an_entry_the_ref_holds_that_this_run_would_change_ends_with_1_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
     folder = _copy(tmp_path)
     (folder / "000000000099.json").write_bytes(b"stale")
@@ -117,16 +170,19 @@ def test_an_entry_the_ref_holds_that_this_run_would_change_ends_with_1_and_write
     theirs = dict(MAIN)
     theirs["000000000040.json"] = _flip(theirs["000000000040.json"])
 
-    assert script.main(["--write"], root=tmp_path, read_ref=_Ref(theirs)) == 1
+    assert script.main(argv, root=tmp_path, read_ref=_Ref(theirs)) == 1
 
     out = capsys.readouterr().out
     assert _lines(out)["000000000040.json"] == ("same", "differs")
-    assert "would change or remove: 000000000040.json." in out
+    assert "would change or remove: 000000000040.json. Either this branch has not merged" in out
+    assert "or _committed() lost the ref's order" in out
+    assert "or this branch changed how those entries are written" in out
     assert _files(folder) == before
 
 
+@DRY_AND_WRITE
 def test_an_entry_only_the_ref_holds_ends_with_1_and_writes_nothing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
     folder = _copy(tmp_path)
     (folder / "000000000005.json").write_bytes(b"changed")
@@ -134,10 +190,10 @@ def test_an_entry_only_the_ref_holds_ends_with_1_and_writes_nothing(
     theirs = dict(MAIN)
     theirs["000000000099.json"] = b"main's entry"
 
-    assert script.main(["--write"], root=tmp_path, read_ref=_Ref(theirs)) == 1
+    assert script.main(argv, root=tmp_path, read_ref=_Ref(theirs)) == 1
 
     out = capsys.readouterr().out
-    assert _lines(out)["000000000099.json"] == ("new", "gone")
+    assert _lines(out)["000000000099.json"] == ("-", "gone")
     assert "would change or remove: 000000000099.json." in out
     assert _files(folder) == before
 
@@ -157,27 +213,71 @@ def test_write_replaces_the_folder_and_removes_a_stale_file_once_the_ref_only_ga
 
     assert script.main(["--write", "--against", "main"], root=tmp_path, read_ref=read) == 0
 
-    rows = _lines(capsys.readouterr().out)
+    out = capsys.readouterr().out
+    rows = _lines(out)
     assert rows[LAST] == ("same", "new")
-    assert rows["000000000099.json"] == ("gone", "new")
+    assert rows["000000000099.json"] == ("gone", "-")
+    assert "Removing 000000000099.json, which this run does not write." in out
+    assert f"The last entry is {LAST_NUMBER}, " in out
     assert read.asked == ["main"]
     assert _files(folder) == MAIN
     assert replay.read_bytes() == replay_before
 
 
-def test_a_ref_that_cannot_be_read_ends_with_2_and_writes_nothing(
+def test_a_replay_json_behind_the_entries_is_named_and_left_alone(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _copy(tmp_path)
+    replay = tmp_path / script.REPLAY
+    expected = json.loads(replay.read_text())
+    expected["afterwards"]["through"] = THROUGH - 1
+    replay.write_text(json.dumps(expected))
+    replay_before = replay.read_bytes()
+
+    assert script.main(["--write"], root=tmp_path, read_ref=_Ref(MAIN)) == 0
+
+    out = capsys.readouterr().out
+    assert f"afterwards.through is {THROUGH - 1}." in out
+    assert "Move replay.json's afterwards by hand" in out
+    assert replay.read_bytes() == replay_before
+
+
+def test_a_replay_json_that_does_not_parse_is_named_and_the_entries_are_still_compared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _copy(tmp_path)
+    replay = tmp_path / script.REPLAY
+    replay.write_text("<<<<<<< ours\n{}\n=======\n{}\n>>>>>>> theirs\n")
+
+    assert script.main([], root=tmp_path, read_ref=_Ref(MAIN)) == 0
+
+    out = capsys.readouterr().out
+    assert set(_lines(out).values()) == {("same", "same")}
+    assert "afterwards.through is unreadable (JSONDecodeError)" in out
+
+
+@pytest.mark.parametrize("files", [None, {}], ids=["unread", "empty"])
+def test_a_ref_that_cannot_be_read_or_holds_no_entry_ends_with_2_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], files: Mapping[str, bytes] | None
 ) -> None:
     folder = _copy(tmp_path)
     (folder / "000000000099.json").write_bytes(b"stale")
     before = _files(folder)
 
-    assert script.main(["--write"], root=tmp_path, read_ref=_Ref(None)) == 2
+    assert script.main(["--write"], root=tmp_path, read_ref=_Ref(files)) == 2
 
-    assert "could not be read" in capsys.readouterr().out
+    assert "could not be read, or holds no file in" in capsys.readouterr().out
     assert _files(folder) == before
 
 
-def test_git_ref_reads_the_folder_at_head_and_gives_none_for_a_ref_git_cannot_read() -> None:
-    assert script.git_ref(REPO, "HEAD") == MAIN
-    assert script.git_ref(REPO, "no-such-ref-of-this-repository") is None
+def test_git_ref_reads_the_folder_at_a_commit_and_gives_none_where_it_holds_nothing(
+    tmp_path: Path,
+) -> None:
+    root = _committed_copy(tmp_path)
+    shutil.rmtree(root / script.FOLDER)
+    _git(root, "commit", "-qam", "no fixture")
+
+    assert script.git_ref(root, "HEAD~1") == MAIN
+    assert script.git_ref(root, "HEAD") is None
+    assert script.git_ref(root, "no-such-ref-of-this-repository") is None
+    assert script.git_ref(tmp_path / "no-such-folder", "HEAD") is None
