@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import hashlib
+import math
 import re
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -118,14 +120,15 @@ def test_1_the_largest_two_session_move_rounds_up(name: str) -> None:
     assert f"{largest_move(legs(gld, uso), 2).move.size:f}" == size
 
 
-# The floors that the caps of a strategy with a SPY or QQQ leg hold, from the index closes of
-# October 1987 that design.md's `**Why SPY's and QQQ's caps reach back to 1987.**` quotes, by the
-# rounding every measured move takes. The session table starts in 1993, so the closes stand on
-# three of its sessions, and only their order matters.
+# The floors that the caps of a strategy with a fund on the S&P 500 or the Nasdaq-100 hold, from
+# the index closes of October 1987 that design.md's paragraph on why those caps reach back to 1987
+# quotes, by the rounding every measured move takes. The session table starts in 1993, so the
+# closes stand on three of its sessions, and only their order matters.
 FLOORS = {
     "the-s-and-p-500": (("298.08", "282.70", "224.84"), "0.20466927", "0.24570586"),
     "the-nasdaq-100": (("183.285", "155.65", "143.96"), "0.15077612", "0.21455657"),
 }
+INDEX = {"the-s-and-p-500": "S&P 500", "the-nasdaq-100": "Nasdaq-100"}
 
 
 @pytest.mark.parametrize("name", FLOORS)
@@ -134,6 +137,13 @@ def test_1_the_1987_floors_are_the_index_falls_rounded_up(name: str) -> None:
     bars = {GLD: leg(GLD, *closes)}
     assert f"{largest_move(bars, 1).move.size:f}" == one
     assert f"{largest_move(bars, 2).move.size:f}" == two
+
+
+def _floor(closes: Sequence[str], multiple: int) -> str:
+    """The fall of a fund holding `multiple` times the index's daily return, rounded up at eight."""
+    first, second, third = (Fraction(c) for c in closes)
+    held = (1 + multiple * (second / first - 1)) * (1 + multiple * (third / second - 1))
+    return f"{math.ceil((1 - held) * 10**8) / Fraction(10**8):.8f}"
 
 
 DOCS = Path(__file__).parents[1] / "docs"
@@ -149,42 +159,51 @@ def _section(text: str, opening: str) -> str:
 
 
 def test_1_the_docs_quote_the_closes_and_floors_this_file_pins() -> None:
-    # The owner types each floor into the hard caps by hand from what-a-person-runs.md's steps, so
-    # the step that names the floors is held: each with its fund, and SPY's where a strategy holds
-    # both. The other steps are not checked here.
+    # The owner types each floor into the hard caps by hand from what-a-person-runs.md's table of
+    # floors, so that table is held row by row to the floors worked out here from the closes.
     design = (DOCS / "design.md").read_text(encoding="utf-8")
-    why = _section(design, "**Why SPY's and QQQ's caps reach back to 1987.**")
-    steps = _section(
-        (DOCS / "what-a-person-runs.md").read_text(encoding="utf-8"),
-        "1. Take the strategy's floor:",
+    why = _section(
+        design, "**Why the caps of funds on the S&P 500 and the Nasdaq-100 reach back to 1987.**"
     )
-    spx, ndx = FLOORS["the-s-and-p-500"], FLOORS["the-nasdaq-100"]
-    spy, qqq = spx[2], ndx[2]
+    runs = (DOCS / "what-a-person-runs.md").read_text(encoding="utf-8")
+    table = _section(runs, "| Index | Multiple | Funds such as | Floor |")
+    steps = _section(runs, "1. Find each leg's floor in the table.")
+    floors = {
+        (INDEX[name], multiple): _floor(closes, multiple)
+        for name, (closes, _, _) in FLOORS.items()
+        for multiple in (1, 2, 3)
+    }
+    spy, qqq = floors["S&P 500", 1], floors["Nasdaq-100", 1]
+    assert (spy, qqq) == (FLOORS["the-s-and-p-500"][2], FLOORS["the-nasdaq-100"][2])
+    rows = re.findall(
+        r"^\| (S&P 500|Nasdaq-100) \| (\d) \| [^|]+ \| ([\d.]+) \|$", table, re.MULTILINE
+    )
+    assert {(index, int(multiple)): floor for index, multiple, floor in rows} == floors
+    assert len(rows) == len(floors)
+    assert f"So a strategy with SPY and QQQ legs takes SPY's, {spy}." in steps
     # Every figure with a decimal point the paragraph holds, and how many times, so a typo in one
     # of two copies fails. The percentages are the falls and the records' moves it compares them
     # with. Its dates and whole percentages are not held here.
+    spx, ndx = FLOORS["the-s-and-p-500"], FLOORS["the-nasdaq-100"]
     assert Counter(re.findall(r"\d+\.\d+", why)) == Counter(
         {**dict.fromkeys((*spx[0], *ndx[0]), 1), "224.84": 2, spy: 2, qqq: 2}
         | {"20.47": 1, "24.57": 1, "15.08": 1, "21.46": 1, "14.52": 1, "17.09": 2}
+        | {floors["S&P 500", 2]: 1, floors["Nasdaq-100", 3]: 1}
     )
     for fund, floor in (("SPY", spy), ("QQQ", qqq)):
         leg = f"{fund} leg write a `stress_move` of at least {floor} and a `stress_low` of {floor}"
         assert leg in why, fund
     assert "and a strategy with both legs writes the larger, SPY's" in why
-    assert f"{spy} where a leg is SPY, and otherwise {qqq} where a leg is QQQ" in steps
-    table = (DOCS / "architecture" / "08-crosscutting-concepts.md").read_text(encoding="utf-8")
-    alone = "a QQQ leg and no SPY leg"
-    assert (
-        f"{spy} for a strategy with a SPY leg, and at or above {qqq} for one with {alone}" in table
-    )
-    assert f"SPY leg hold it at or above {spy}, and of one with {alone} at or above {qqq}" in design
-    # A number on any page that has eight places or more from 0.2, or that starts as a floor does
-    # to its sixth place, is a floor whole. So a floor mistyped in an early place, or cut short,
-    # fails.
+    assert f"SSO, twice the S&P 500, takes {floors['S&P 500', 2]}" in why
+    assert f"TQQQ, three times the Nasdaq-100, takes {floors['Nasdaq-100', 3]}" in why
+    # A number on any page that starts as a floor does to its sixth place is that floor whole, so
+    # a floor mistyped past that place, or cut short, fails. A number of eight places or more from
+    # 0.2 to 0.3 is a floor, so one mistyped in an early place fails too.
+    starts = "|".join(re.escape(f[:8]) for f in floors.values())
     for page in sorted(DOCS.rglob("*.md")):
         text = page.read_text(encoding="utf-8")
-        for named in re.findall(r"\b0\.2\d{7,}\b|\b0\.(?:245705|214556)\d*", text):
-            assert named in (spy, qqq), f"{page.name} names {named}"
+        for named in re.findall(rf"\b0\.2\d{{7,}}\b|\b(?:{starts})\d*", text):
+            assert named in floors.values(), f"{page.name} names {named}"
 
 
 def test_1_a_tie_goes_to_the_earliest_date_then_to_the_first_leg_by_name() -> None:
