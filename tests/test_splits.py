@@ -359,7 +359,7 @@ def test_5_the_decisions_own_quote_is_checked_under_a_covered_row_too() -> None:
     covers = tuple(cover(USO, p, s, covered=row) for p, s in zip(days, days[1:], strict=False))
     found = snap(flat(), covers=covers, quoted="50.0", quote_covered=row)
     (reason,) = check_splits(found, TABLE)
-    assert "its own quote of" in reason and "0.5000 times" in reason
+    assert "USO's own quote of" in reason and "0.5000 times" in reason
 
 
 def test_5_two_values_of_the_close_on_a_sealed_day_halt() -> None:
@@ -659,11 +659,16 @@ def test_10_a_split_before_the_first_covered_session_refuses_nothing_on_its_own_
     assert world.at(snapshot=replace(world.snapshot, bars=bars, splits=known)).check().approved
 
 
-@pytest.mark.parametrize("bid", [None, Decimal("NaN"), Decimal("Infinity"), Decimal(0)])
-def test_6_a_quote_with_an_unusable_side_meets_no_step_and_raises_nothing(bid: object) -> None:
+@pytest.mark.parametrize("side", ["bid", "ask"])
+@pytest.mark.parametrize(
+    "price", [None, Decimal("NaN"), Decimal("Infinity"), Decimal(0), Decimal(-1)]
+)
+def test_6_a_quote_with_an_unusable_side_meets_no_step_and_raises_nothing(
+    side: str, price: object
+) -> None:
     """Its own check halts on such a side, as `core.quote_faults` does."""
     found = snap(flat(), quoted="100.0")
-    found = replace(found, quotes={USO: replace(found.quotes[USO], bid=bid)})
+    found = replace(found, quotes={USO: replace(found.quotes[USO], **{side: price})})
     assert not any("midpoint" in r for r in check_splits(found, TABLE))
 
 
@@ -671,6 +676,24 @@ def test_6_a_halt_on_the_decisions_own_pair_names_no_covered_row_as_its_release(
     """No covered row can reach the decision's own session, which ends 5 sessions before it."""
     found = snap(flat(), quoted="50.0")
     found = replace(found, quotes={USO: quote(USO, Decimal("49.99"), Decimal("50.01"), AT)})
-    for reason in check_splits(found, TABLE):
+    no_price = snap(flat(), quoted="abc")
+    days = list(flat())
+    covers = tuple(cover(USO, p, s, "100.0") for p, s in zip(days, days[1:], strict=False))
+    stated_none = snap(flat(), covers=covers, quoted="100.0")
+    stated_none = replace(
+        stated_none,
+        splits=replace(
+            stated_none.splits,
+            pairs=(*covers, replace(stated_none.splits.pairs[-1], close_prices=(), source=None)),
+        ),
+    )
+    reasons = [
+        *check_splits(found, TABLE),
+        *check_splits(no_price, TABLE),
+        *check_splits(stated_none, TABLE),
+    ]
+    # The residual and the midpoint step, a close that is no price, and no close stated.
+    assert len(reasons) == 4
+    for reason in reasons:
         assert "stays halted for this session" in reason
-        assert "covered row reaching it" not in reason
+        assert "covered row reaching" not in reason

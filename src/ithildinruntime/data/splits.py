@@ -120,11 +120,20 @@ _RAW = "raw"
 # How many sessions before the day both vendor lists were read a covered row ends, at least.
 _LATE = 5
 _FILE = "data/splits.csv"
-# What releases a halt on the decision's own pair, which no covered row can yet reach.
-_OWN_SESSION = (
-    "and a real move stays halted for this session. From the next session the pair meets the "
-    "sealed day's checks, which a covered row releases once one can reach it"
+# What follows a halt on the decision's own pair, which no covered row known by a live
+# decision can reach, since a row ends 5 sessions before the day it was added.
+_NEXT_SESSION = (
+    "From the next session the pair meets the sealed day's checks, which a covered row "
+    "releases once one can reach it"
 )
+_OWN_SESSION = f"and a real move stays halted for this session. {_NEXT_SESSION}"
+
+
+def _reached(pair: Pair, usual: str) -> str:
+    """What releases a halt on a pair whose release is a covered row, `usual` unless it is own."""
+    return f"It stays halted for this session. {_NEXT_SESSION}" if pair.quoted else usual
+
+
 _RELEASED_BY_A_ROW = (
     "#190 and #191 build trading through a split, and a withdrawn row ends a false one"
 )
@@ -502,8 +511,8 @@ def _short(instrument: InstrumentId, short: Sequence[Pair]) -> str:
     return (
         f"the record of splits does not reach {instrument} on {named}: no covered row holds "
         "them, and no quote of a later session states the close of the one before under a "
-        f"kind data/quote_kinds.csv states. A covered row reaching {last.later.isoformat()} "
-        "releases it"
+        "kind data/quote_kinds.csv states. "
+        + _reached(last, f"A covered row reaching {last.later.isoformat()} releases it")
     )
 
 
@@ -511,7 +520,7 @@ def _residuals(
     instrument: InstrumentId, pair: Pair, cover: PairCover, closes: Mapping[date, Decimal]
 ) -> Iterator[str]:
     where = (
-        "its own quote"
+        "own quote"
         if cover.source == QUOTE
         else f"the sealed day {cover.partition} at SHA-256 {cover.partition_sha256}"
     )
@@ -519,7 +528,8 @@ def _residuals(
         yield (
             f"{instrument}'s {where} states {len(cover.close_prices)} values of the close of "
             f"{pair.earlier.isoformat()}, so no one value checks the pair to "
-            f"{pair.later.isoformat()}. A covered row reaching {pair.later.isoformat()} releases it"
+            f"{pair.later.isoformat()}. "
+            + _reached(pair, f"A covered row reaching {pair.later.isoformat()} releases it")
         )
         return
     close = closes.get(pair.earlier)
@@ -530,7 +540,8 @@ def _residuals(
         if ratio is None:
             yield (
                 f"{instrument}'s {where} states a close of {pair.earlier.isoformat()} that is no "
-                f"price. A covered row reaching {pair.later.isoformat()} releases it"
+                "price. "
+                + _reached(pair, f"A covered row reaching {pair.later.isoformat()} releases it")
             )
             continue
         residual = _CONTEXT.divide(ratio, close)
@@ -577,7 +588,7 @@ def _quoted_step(
     bid = quote.bid if quote is not None else None
     ask = quote.ask if quote is not None else None
     # A side that is missing, not finite or at or below zero halts on the quote's own check.
-    if bid is None or ask is None or not _usable(bid) or not _usable(ask):
+    if not _usable(bid) or not _usable(ask):
         return
     if before is None or before <= 0:
         return
@@ -591,8 +602,8 @@ def _quoted_step(
         )
 
 
-def _usable(price: Decimal) -> bool:
-    return price.is_finite() and price > 0
+def _usable(price: object) -> bool:
+    return isinstance(price, Decimal) and price.is_finite() and price > 0
 
 
 def _ratio(said: str) -> Decimal | None:
