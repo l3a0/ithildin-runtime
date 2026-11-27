@@ -1365,11 +1365,11 @@ class OrderPath:
         key = account_halt_key(
             shared.account, "execution", "lease_absent", view.sent_at, view.through.seq
         )
-        reason = (
+        lost = (
             f"the account's lease is absent at {shared.lease.key}, and the journal holds a sending "
-            f"through entry {view.through.seq}, so the lease was lost. New orders halt, and the "
-            f"halt stands at {key} until a person releases it"
+            f"through entry {view.through.seq}, so the lease was lost"
         )
+        reason = f"{lost}. New orders halt, and the halt stands at {key} until a person releases it"
         held = AbsentHalt(
             FORMAT,
             shared.account,
@@ -1384,15 +1384,11 @@ class OrderPath:
             pass
         except StoreError as error:
             # A store that did not take the halt is an outage, paged once with the owner's step.
-            # No halt stands, so the page names the step that ends the halts rather than a release.
-            lost = (
-                f"the account's lease is absent at {shared.lease.key}, and the journal holds a "
-                f"sending through entry {view.through.seq}, so the lease was lost. Its halt was "
-                f"not stored at {key}: {code_of(error)}. No halt stands, so each new order halts "
-                "on the absent lease until a person looks the account up on the broker's site "
-                "and clears the lease"
+            # No halt stands yet, so the page says what the next order does rather than a release.
+            return shared.outage(
+                f"{lost}. Its halt was not stored at {key}: {code_of(error)}. No halt stands yet, "
+                "so each new order halts on the absent lease and tries to store the halt again"
             )
-            return shared.outage(lost)
         return Halt(f"{reason}{shared.alarm(reason)}")
 
     def _renew(self, tries: Tries) -> None:

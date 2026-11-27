@@ -601,8 +601,9 @@ def test_an_absent_lease_whose_halt_the_store_refuses_pages_once_as_an_outage() 
     # A store that did not take the halt is an outage, which pages once with the owner's step.
     (said,) = world.alarms.sent
     assert "Its halt was not stored" in said and "The owner's step" in said
-    # No halt stands, so the page says what ends the halts rather than naming a release.
-    assert "until a person releases it" not in reason and "clears the lease" in reason
+    # No halt stands yet, so the page says what the next order does rather than naming a release.
+    assert "until a person releases it" not in reason
+    assert reason.endswith("tries to store the halt again. The owner's step: the broker's site")
     assert not _halts(world)
 
 
