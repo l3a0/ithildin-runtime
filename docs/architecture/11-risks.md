@@ -115,4 +115,5 @@ Every choice that carries a cost names it where the choice is made, as a sentenc
 - [2026-11-25](../design.md#2026-11-25)
 - [2026-11-26](../design.md#2026-11-26)
 - [2026-11-27](../design.md#2026-11-27)
+- [2026-11-28](../design.md#2026-11-28)
 - [Considered and rejected](../design.md#considered-and-rejected)
