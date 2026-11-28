@@ -42,7 +42,7 @@ from pathlib import Path
 
 from ithildinruntime.core import is_name
 
-from .deployment import Environment, environment
+from .deployment import ENVIRONMENTS, Environment, environment
 
 __all__ = [
     "BOOT_ID",
@@ -182,11 +182,18 @@ def read_forwarder_settings(variables: Mapping[str, str] | None = None) -> Forwa
     5. `heartbeat`, the file the forwarder touches while it runs, which the host's watchdog
        reads. Optional, and nothing is touched without it.
 
-    An error names the key, never what it holds, since a person may write the address
-    itself where the file's path belongs.
+    An error about a key's value names the key, never what it holds, since a person may
+    write the address itself where a path belongs. A key no reader knows is named, so the
+    address written as a key's name is named too, in the forwarder's own journal alone.
     """
     values = _values(variables, _FORWARDER_REQUIRED, _FORWARDER_OPTIONAL)
-    place = _environment(values["environment"])
+    try:
+        place = environment(values["environment"])
+    except KeyError:
+        raise SettingError(
+            f"the key environment names no environment the release knows, only "
+            f"{', '.join(sorted(ENVIRONMENTS))}"
+        ) from None
     try:
         address = Path(values["push_topic"]).read_text().strip()
     except (OSError, UnicodeDecodeError) as error:
@@ -197,7 +204,7 @@ def read_forwarder_settings(variables: Mapping[str, str] | None = None) -> Forwa
         raise SettingError("the file the key push_topic names holds no one https address")
     state = Path(values["state"])
     if not state.is_dir():
-        raise SettingError(f"the forwarder's state directory {state} is not a directory")
+        raise SettingError("the directory the key state names is not a directory")
     journal = Path(values["journal"]) if "journal" in values else None
     heartbeat = Path(values["heartbeat"]) if "heartbeat" in values else None
     return ForwarderSettings(place, address, state, journal, heartbeat)

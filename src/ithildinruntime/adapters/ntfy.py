@@ -6,11 +6,12 @@ no page and no error text here. The host's provisioning step writes it to
 memory-backed storage, and only the forwarder on the host and monitoring read
 it, as `adapters/alerts.py` says.
 
-**One page per cause.** A `Pager` keys each alarm by its component and its
-`cause`, and holds, in memory, when that cause began, when it was last seen and
-when it last paged. The component leaves out the instance, so one fault on
-every instance of a component pages once, and the same kind of fault in two
-components pages twice.
+**One page per cause.** A `Pager` keys each alarm by its `cause`, and holds,
+in memory, when that cause began, when it was last seen and when it last paged.
+One forwarder serves every container of a host, so one fault that every
+component meets, such as a store that does not answer, pages once. A kind whose
+faults in two components must page apart scopes its cause by the component, as
+the receive loop's kinds do.
 
 1. An alarm of a cause not seen for `Repeats.ends_after` pages at once.
 2. One of a cause still going pages again once `Repeats.first` has passed
@@ -231,7 +232,7 @@ class Pager:
 
     def offer(self, component: str, alarm: Alarm, at: datetime) -> Sent:
         """Page `alarm` now, or hold it as a repeat of a cause that paged within its interval."""
-        key = f"{component}:{alarm.cause}"
+        key = alarm.cause
         cause = self._causes.get(key)
         if cause is None or at - cause.seen >= self._repeats.ends_after:
             self._forget(at)

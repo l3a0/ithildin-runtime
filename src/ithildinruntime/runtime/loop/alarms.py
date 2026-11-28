@@ -1,10 +1,11 @@
 """Each kind of alarm the receive loop raises.
 
 `core.alarms` says what a `Kind` carries, and `tests/test_alarms.py` checks
-each row it names. A cause leaves out the worker, because the pager keys a page
-by the component and the cause, so one fault on every instance of a component
-pages once. A cause scopes by the item where two items' faults must page apart.
-A kind that goes with a halt or a held capture says who clears by the mode.
+each row it names. The loop scopes each cause by its component and leaves out
+the instance, so one fault on every instance of a component pages once, and a
+queue that two components each lose pages twice. A cause scopes by the item too
+where two items' faults must page apart. A kind that goes with a halt or a held
+capture says who clears by the mode.
 """
 
 from __future__ import annotations
@@ -30,13 +31,7 @@ UNHANDLED = Kind(
     EXPLAIN,
     Clears.BY_MODE,
 )
-COULD_NOT_FINISH = Kind(
-    "loop.could-not-finish",
-    _OPERATIONS,
-    "A worker could not finish an item",
-    EXPLAIN,
-    Clears.BY_MODE,
-)
+COULD_NOT_FINISH = Kind("loop.could-not-finish", _OPERATIONS, "A worker could not finish an item")
 LOOP_STOPPED = Kind("loop.stopped", _OPERATIONS, "A worker stopped receiving")
 QUEUE_SILENT = Kind("loop.queue-silent", _OPERATIONS, "A worker stopped receiving")
 HOLDING = Kind(

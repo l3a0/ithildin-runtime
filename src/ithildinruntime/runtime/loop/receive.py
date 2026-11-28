@@ -256,6 +256,20 @@ class _Fatal(Exception):
     pass
 
 
+class _ScopedAlerts:
+    """`Alerts` whose every alarm's cause is scoped to the loop's component, not its instance."""
+
+    def __init__(self, alerts: Alerts, component: str) -> None:
+        self._alerts = alerts
+        self._component = component
+
+    def alarm(self, alarm: Alarm) -> None:
+        self._alerts.alarm(alarm.within(self._component))
+
+    def heartbeat(self) -> None:
+        self._alerts.heartbeat()
+
+
 class ReceiveLoop:
     """One worker's receive loop over its queue, for the stages of one component.
 
@@ -305,7 +319,7 @@ class ReceiveLoop:
         self._storage = storage
         self._bucket = bucket
         self._handlers = dict(handlers)
-        self._alerts = alerts
+        self._alerts = _ScopedAlerts(alerts, component)
         self._timer = timer
         self._beat = beat
         self._pool_size = pool_size

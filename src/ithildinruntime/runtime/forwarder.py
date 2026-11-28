@@ -28,26 +28,30 @@ forwarder that reads it ship together. #202 builds its unit.
    alarm tries again at its interval.
 6. **Its count of pages a day** is kept beside the cursor too, so a restart of
    its unit does not start the day's count again.
-7. **It beats while it runs.** It touches its heartbeat file every
-   `BEAT_EVERY` seconds, as each worker does, so the host's watchdog, which
-   #202 points at it, sees a forwarder that stopped. A forwarder that runs and
-   hears nothing is not told apart from a quiet host, and #260's drills fire a
-   line through it.
+7. **It beats while it makes progress.** It touches its heartbeat file every
+   `BEAT_EVERY` seconds, and skips the beat once one entry has been in hand for
+   `STUCK_AFTER` seconds, as a worker's loop does with a hung handler. So a
+   forwarder stuck in a push, or one that ended, stops beating, and the host's
+   watchdog, which #202 points at it, kills it, its unit restarts it from its
+   cursor, and its `OnFailure` handler pages where the restarts run out. It
+   first beats after one interval, so a forwarder that dies at once in a loop
+   never beats. A forwarder that waits on a quiet journal is not told apart from
+   a quiet host, and #260's drills fire a line through it.
 
 The marker of a refused push holds the latest refusal and is never removed:
 monitoring compares its time with that of its own last ping. Every file the
-forwarder writes replaces the old one whole, and a planted link in the state
-directory is refused rather than followed.
+forwarder writes replaces the old one whole, and is never written through a
+link planted in the state directory.
 
-The forwarder needs three things of #202, which `07-deployment.md`'s
+The forwarder needs four things of #202, which `07-deployment.md`'s
 `## Where it runs` states.
 
 1. Each runtime unit is named `ithildin-<component>[@<instance>].service`,
    which `RUNTIME_UNIT` reads.
-2. Each container's standard error reaches the journal under its own unit, as
-   a container run attached in its unit's process does, and not under the
-   Docker daemon's, as Docker's own journald log driver would write it.
-3. A journal it reads from a mounted directory is mounted read-only.
+2. Each container's standard error reaches the journal under its own unit.
+3. A journal it reads from a mounted directory is mounted read-only, and its
+   state directory is its own user's alone.
+4. The host's watchdog reads its heartbeat file as it reads each worker's.
 
 A journal that ends, or an entry it cannot read, ends the process with an
 error. Its unit restarts it from the last cursor, and its own `OnFailure`
@@ -61,6 +65,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -73,6 +78,7 @@ from .alarms import FORWARDER_UNREAD
 
 __all__ = [
     "BEAT_EVERY",
+    "STUCK_AFTER",
     "RUNTIME_UNIT",
     "Entry",
     "FileDayCount",
@@ -84,8 +90,10 @@ __all__ = [
     "runtime_component",
 ]
 
-# Seconds between the forwarder's touches of its heartbeat file.
+# Seconds between the forwarder's touches of its heartbeat file, and how long one entry may
+# be in hand before it stops beating: past two pushes' 10-second timeouts.
 BEAT_EVERY = 10.0
+STUCK_AFTER = 30.0
 
 # The runtime's units, one per component and an instance after an `@`. The forwarder's own,
 # `ithildin-forwarder.service`, is left out.
@@ -243,39 +251,46 @@ class Forwarder:
         state: ForwarderState,
         beat: Callable[[], None] = lambda: None,
         beat_every: float = BEAT_EVERY,
+        stuck_after: float = STUCK_AFTER,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._journal = journal
         self._pager = pager
         self._state = state
         self._beat = beat
         self._beat_every = beat_every
+        self._stuck_after = stuck_after
+        self._clock = clock
+        # When the entry in hand was taken, or None between entries.
+        self._since: float | None = None
 
     def run(self) -> None:
         """Handle each entry after the saved cursor, saving the cursor after each one.
 
-        It beats at once and then every `beat_every` seconds until the journal ends.
+        It beats every `beat_every` seconds until the journal ends, skipping each beat
+        while one entry has been in hand for `stuck_after` seconds or more.
         """
         stop = threading.Event()
 
-        def beat() -> None:
-            try:
-                self._beat()
-            except OSError:
-                # A heartbeat file that cannot be touched reads as stopped, which pages.
-                pass
-
         def beating() -> None:
             while not stop.wait(self._beat_every):
-                beat()
-
-        beat()
+                since = self._since
+                if since is not None and self._clock() - since >= self._stuck_after:
+                    continue
+                try:
+                    self._beat()
+                except OSError:
+                    # A heartbeat file that cannot be touched reads as stopped, which pages.
+                    pass
 
         beater = threading.Thread(target=beating, name="forwarder-beat", daemon=True)
         beater.start()
         try:
             for entry in self._journal(self._state.cursor()):
+                self._since = self._clock()
                 self.handle(entry)
                 self._state.save_cursor(entry.cursor)
+                self._since = None
         finally:
             stop.set()
 

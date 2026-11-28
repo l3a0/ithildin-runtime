@@ -95,6 +95,10 @@ class Alarm:
                 raise ValueError(f"an alarm's {name} is empty")
         object.__setattr__(self, "clears", Clears(self.clears))
 
+    def within(self, scope: str) -> Alarm:
+        """The same alarm with its cause scoped to `scope` as well."""
+        return replace(self, cause=f"{self.cause}:{scope}")
+
     def about(self, prefix: str, scope: str) -> Alarm:
         """The same alarm with `prefix: ` before its reason and its cause scoped to `scope`."""
         return replace(self, reason=f"{prefix}: {self.reason}", cause=f"{self.cause}:{scope}")

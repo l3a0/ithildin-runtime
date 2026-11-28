@@ -262,10 +262,10 @@ HALTS = [
     "execution.lease-absent",
     "storage.outage",
     "loop.unhandled",
-    "loop.could-not-finish",
     "loop.holding",
     "loop.halt-unstored",
     "loop.halt-dropped",
+    "supervisor.starts-unread",
     "supervisor.hold-unfinished",
     "supervisor.unclean-hold",
     "supervisor.halt-stands",
@@ -273,6 +273,7 @@ HALTS = [
     "supervisor.stop-asked",
     "supervisor.run-halted",
     "supervisor.run-halt-unstored",
+    "supervisor.run-halt-in-place",
     "supervisor.stop-asked-before-halt",
     "supervisor.run-halt-stored",
     "supervisor.run-halt-unread",
@@ -283,3 +284,33 @@ HALTS = [
 def test_a_kind_that_goes_with_a_halt_never_says_nobody_needs_to_clear_it(cause: str) -> None:
     (kind,) = [k for k in every_kind() if k.cause == cause]
     assert kind.clears is not Clears.NOBODY
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_the_supervisors_alarms_say_who_clears_by_its_mode(live: bool) -> None:
+    from ithildinruntime.runtime.supervisor.alarms import PLAN_UNSTORED, STALL, raised
+
+    stall = raised(STALL, "why", deployment="d", live=live)
+    assert stall.clears is (Clears.OWNER if live else Clears.OPERATOR)
+    assert stall.cause == "supervisor.stall:d"
+    assert raised(PLAN_UNSTORED, "why", deployment="d", live=live).clears is Clears.NOBODY
+
+
+def test_no_supervisor_alarm_says_who_clears_on_its_own() -> None:
+    """Every alarm the supervisor and its hold check raise goes through `raised`."""
+    import ast
+
+    root = Path(ithildinruntime.__file__).parent / "runtime" / "supervisor"
+    found = []
+    for path in (root / "__init__.py", root / "hold.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Call) and ast.unparse(node.func) in (
+                "self._alerts.alarm",
+                "alarm",
+            ):
+                (arg,) = node.args
+                if not (isinstance(arg, ast.Call) and ast.unparse(arg.func) == "raised"):
+                    found.append(f"{path.name}:{node.lineno}")
+                elif any(k.arg == "clears" for k in arg.keywords):
+                    found.append(f"{path.name}:{node.lineno}")
+    assert found == []

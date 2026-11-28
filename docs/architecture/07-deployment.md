@@ -98,11 +98,14 @@ flowchart TB
         person <-->|"reads status, clears halts, writes overrides,<br/>uses the kill switch"| bucket
 ```
 
-The figure draws slice 1, where the environment has one VM, separate from marketlake's. Each container runs as its own unit and its own user. Every container but monitoring writes its alarm as one line to the host's journal, and the forwarder, one per host and an entry point of the same image, pages each line a runtime unit wrote, as [Alarms of the alert channel](../halts-and-drills.md#alarms-of-the-alert-channel) says. So no worker holds the push topic's address. The forwarder trusts the unit the journal records for each line, so it needs three things of the units [#202](https://github.com/l3a0/ithildin-runtime/issues/202) builds.
+The figure draws slice 1, where the environment has one VM, separate from marketlake's. Each container runs as its own unit and its own user. Every container but monitoring writes its alarm as one line to the host's journal, and the forwarder, one per host and an entry point of the same image, pages each line a runtime unit wrote, as [Alarms of the alert channel](../halts-and-drills.md#alarms-of-the-alert-channel) says. So no worker holds the push topic's address. The forwarder trusts the unit the journal records for each line, so it needs four things of the units [#202](https://github.com/l3a0/ithildin-runtime/issues/202) builds.
 
 1. Each runtime unit is named `ithildin-<component>[@<instance>].service`. A line from a unit named otherwise pages nothing.
-2. Each container's standard error reaches the journal under its own unit, as a container run attached in its unit's process does. Docker's own journald log driver would record every line under the Docker daemon's unit instead.
-3. A journal directory the forwarder reads from a mount is mounted read-only, and its state directory is its own user's alone. Once the environment scales out, each of three VMs across availability zones runs these pieces, and three of each container and supervisor are spread across the three VMs, as [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) says.
+2. Each container's standard error reaches the journal under its own unit, which [#202](https://github.com/l3a0/ithildin-runtime/issues/202) arranges.
+3. A journal directory the forwarder reads from a mount is mounted read-only, and its state directory is its own user's alone.
+4. The host's watchdog reads the forwarder's heartbeat file as it reads each worker's.
+
+Once the environment scales out, each of three VMs across availability zones runs these pieces, and three of each container and supervisor are spread across the three VMs, as [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) says.
 
 Eleven rules hold the deployment to the premise and the hard limits.
 

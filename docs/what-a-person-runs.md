@@ -349,7 +349,7 @@ Each line of an alarm has one job.
 2. Its second line is the command to run first, almost always `ithildin halt explain` on the halt, or `ithildin status` for an alarm with no halt, such as one the heartbeat service raises, whose check's description carries that line.
 3. Its third line names the alarm's row in [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill) by its first words, with a link to its section, where each row says what to check and which writing command, if any, follows. The rows of the supervisor's, the commands' and the channel's own alarms came with [#257](https://github.com/l3a0/ithildin-runtime/issues/257), and [#258](https://github.com/l3a0/ithildin-runtime/issues/258) and [#259](https://github.com/l3a0/ithildin-runtime/issues/259) add the rows of the alarms they raise.
 
-A cause that lasts pages once, then again every 15 minutes for its first hour and every hour after that, and a repeat says how many alarms of the cause arrived since it began. A second cause pages at once. A page longer than ntfy's 4,096 bytes is cut in its first line, so the second and third stay whole.
+A cause that lasts pages once, then again every 15 minutes for its first hour and every hour after that, and a repeat says how many alarms of the cause arrived since it began. A second cause pages at once. A cause with no alarm for an hour has ended, and the first page after it names how many of its alarms were held and never paged. A page longer than ntfy's 4,096 bytes is cut in its first line, so the second and third stay whole.
 
 Monitoring's report after each decision ends with the same summary `ithildin status` prints.
 

@@ -88,6 +88,7 @@ from ithildinruntime.core import (
     BrokerState,
     BrokerUnavailable,
     CashRead,
+    Clears,
     Clock,
     FillsRead,
     FoundOrder,
@@ -1317,6 +1318,8 @@ class OrderPath:
                 f"the account's lease was taken over from {whose}, and the broker's order list "
                 f"is stored at {ref.key}{late_said}",
                 scope=ref.key,
+                # A late order may be working at the broker, so a person looks it up there.
+                clears=Clears.BY_MODE if late else None,
             )
         )
         held = self._lease

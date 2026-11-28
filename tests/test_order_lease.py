@@ -29,6 +29,7 @@ from ithildinruntime.core import (
     BrokerOrder,
     BrokerState,
     CashRead,
+    Clears,
     FillsRead,
     FoundOrder,
     Halt,
@@ -675,6 +676,10 @@ def test_a_take_of_an_expired_lease_stores_the_list_and_journals_the_takeover_fi
     ran_out = (NOW - timedelta(minutes=1)).isoformat()
     assert f"taken over from {FROZEN} of the run {RUN}, whose lease ran out at {ran_out}" in said
     assert f"the broker's order list is stored at {entry.orders.key}, and finds {late} late" in said
+    # Scoped to its stored list, so a second takeover pages apart, and late orders need a person.
+    (raised,) = [a for a in world.alarms.alarms if "taken over from" in a.reason]
+    assert raised.cause == f"execution.lease-taken:{entry.orders.key}:{ACCOUNT}"
+    assert raised.clears is Clears.BY_MODE
     # An ordinary takeover names no earlier taker that held the lease with the takeover owed.
     assert "with the takeover still owed" not in said
 

@@ -357,9 +357,9 @@ def test_the_journal_and_heartbeat_keys_reach_the_forwarder(tmp_path, settings_f
     assert (settings.journal, settings.heartbeat) == (Path("/var/log/journal"), beat)
     made = entry.forwarder_for(settings, post=Topic())
     assert "--directory=/var/log/journal" in made._journal.__self__.arguments(None)
-    made._journal = Journal()
-    made.run()
-    assert beat.exists(), "the forwarder touched its heartbeat as it started"
+    assert made._beat is not None
+    made._beat()
+    assert beat.exists(), "the forwarder's beat touches the file the key heartbeat names"
 
 
 def test_the_forwarder_beats_while_it_runs(settings_file) -> None:
@@ -419,3 +419,63 @@ def test_a_link_planted_at_a_part_file_is_not_followed(tmp_path) -> None:
     ForwarderState(tmp_path).save_cursor("c1")
     assert target.read_text() == "keep"
     assert (tmp_path / "cursor").read_text() == "c1"
+
+
+def test_a_forwarder_stuck_in_a_push_stops_beating(settings_file) -> None:
+    import threading
+    import time
+
+    beats: list[float] = []
+    release = threading.Event()
+
+    def hangs(address, body, headers) -> int:
+        release.wait(5)
+        return 200
+
+    journal = Journal()
+    journal.add("ithildin-data.service", line("data", "a stall"))
+    settings = read_forwarder_settings({"ITHILDIN_SETTINGS": str(settings_file)})
+    made = entry.forwarder_for(settings, post=hangs)
+    made = Forwarder(
+        journal=journal,
+        pager=made._pager,
+        state=made._state,
+        beat=lambda: beats.append(time.monotonic()),
+        beat_every=0.02,
+        stuck_after=0.1,
+    )
+    runner = threading.Thread(target=made.run)
+    runner.start()
+    time.sleep(0.6)
+    stuck = len(beats)
+    time.sleep(0.3)
+    assert len(beats) == stuck and stuck <= 6, "no beat while one line has been in hand too long"
+    release.set()
+    runner.join(5)
+
+
+def test_a_link_planted_between_the_unlink_and_the_open_is_refused(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "elsewhere"
+    target.write_text("keep")
+    real = Path.unlink
+
+    def plant(self, missing_ok=False):
+        real(self, missing_ok=missing_ok)
+        self.symlink_to(target)
+
+    monkeypatch.setattr(Path, "unlink", plant)
+    with pytest.raises(OSError):
+        ForwarderState(tmp_path).save_cursor("c1")
+    assert target.read_text() == "keep"
+
+
+@pytest.mark.parametrize("key", ["state", "environment"])
+def test_a_key_holding_the_address_is_named_and_not_printed(tmp_path, settings_file, key) -> None:
+    lines = [
+        f'{key} = "{ADDRESS}"' if line.startswith(f"{key} =") else line
+        for line in settings_file.read_text().splitlines()
+    ]
+    settings_file.write_text("\n".join(lines) + "\n")
+    with pytest.raises(SettingError, match=f"the key {key}|the directory the key {key}") as refused:
+        read_forwarder_settings({"ITHILDIN_SETTINGS": str(settings_file)})
+    assert "secret-topic-name" not in str(refused.value)

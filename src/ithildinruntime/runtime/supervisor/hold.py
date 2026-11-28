@@ -60,7 +60,6 @@ from datetime import date, datetime
 from ithildinruntime.core import (
     RUN_RECORD_FORMAT,
     Alarm,
-    Clears,
     CodecError,
     Halt,
     Mode,
@@ -79,7 +78,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.journal import DOUBTFUL, Journal, NumberTaken, PauseEntry, View
 
-from .alarms import HOLD_UNFINISHED, UNCLEAN_HOLD
+from .alarms import HOLD_UNFINISHED, UNCLEAN_HOLD, raised
 from .deadline import cancel_cutoff
 
 __all__ = [
@@ -198,26 +197,28 @@ def hold_after_unclean_stops(
                 else ""
             )
             alarm(
-                HOLD_UNFINISHED(
+                raised(
+                    HOLD_UNFINISHED,
                     f"{deployment}: the check for an unclean stop could not finish, so "
                     f"{', '.join(held)} stays held and {after}: {reason}.{unheld} The strategies "
                     "held stay held after a later start succeeds. Start the supervisor's unit "
                     "again once "
                     f"the cause is fixed. {who(mode)}",
-                    scope=deployment,
-                    clears=Clears.on(mode is Mode.LIVE),
+                    deployment=deployment,
+                    live=mode is Mode.LIVE,
                 )
             )
         else:
             alarm(
-                HOLD_UNFINISHED(
+                raised(
+                    HOLD_UNFINISHED,
                     f"{deployment}: the check for an unclean stop could not finish and stored no "
                     f"halt of its own, so it holds no strategy and {after}: {reason}. A halt "
                     "written earlier may still stand. Pull the kill switch of the account, then "
                     "start the supervisor's unit again once the cause is "
                     "fixed",
-                    scope=deployment,
-                    clears=Clears.on(mode is Mode.LIVE),
+                    deployment=deployment,
+                    live=mode is Mode.LIVE,
                 )
             )
         raise HoldFailed(reason) from error
@@ -268,10 +269,11 @@ def _hold(
     for unclean in reversed(found):
         view = _pause(journal, view, deployment, unclean, names, now)
         alarm(
-            UNCLEAN_HOLD(
+            raised(
+                UNCLEAN_HOLD,
                 _alarm(mode, deployment, unclean, names, view, today, sessions),
-                scope=deployment,
-                clears=Clears.on(mode is Mode.LIVE),
+                deployment=deployment,
+                live=mode is Mode.LIVE,
             )
         )
     return tuple(found)

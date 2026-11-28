@@ -1,15 +1,17 @@
 """Each kind of alarm the supervisor and its hold check raise, each scoped to its deployment.
 
 `core.alarms` says what a `Kind` carries, and `tests/test_alarms.py` checks
-each row it names. The supervisor knows its mode, so a caller passes who clears
-by it where an alarm goes with a halt or a hold. An attempt and its outcome,
+each row it names. The supervisor knows its mode, so every alarm it and its
+hold check raise goes through `raised`, which turns a kind's "by the mode" into
+the operator or the owner on paper and the owner alone on live. No call site
+says who clears on its own. An attempt and its outcome,
 such as a start record that could not be read and the start it then left
 unrecorded, are two kinds, so a pager never holds the outcome as a repeat.
 """
 
 from __future__ import annotations
 
-from ithildinruntime.core import EXPLAIN, STATUS, Clears, Kind
+from ithildinruntime.core import EXPLAIN, STATUS, Alarm, Clears, Kind
 
 __all__ = [
     "HALT_STANDS",
@@ -17,6 +19,7 @@ __all__ = [
     "PLAN_UNSTORED",
     "RELEASE_UNWRITTEN",
     "RUN_HALTED",
+    "RUN_HALT_IN_PLACE",
     "RUN_HALT_STORED",
     "RUN_HALT_UNREAD",
     "RUN_HALT_UNSTORED",
@@ -27,13 +30,15 @@ __all__ = [
     "STOP_ASKED",
     "STOP_ASKED_BEFORE_HALT",
     "UNCLEAN_HOLD",
+    "raised",
 ]
 
 _SUPERVISOR = "Alarms of the supervisor and the commands"
 _ORDER = "Alarms on the order path"
 _START = "A start that could not be recorded"
 
-STARTS_UNREAD = Kind("supervisor.starts-unread", _SUPERVISOR, _START)
+# The start records' read failing holds every strategy, which the hold's own alarm names.
+STARTS_UNREAD = Kind("supervisor.starts-unread", _SUPERVISOR, _START, clears=Clears.BY_MODE)
 START_UNWRITTEN = Kind("supervisor.start-unwritten", _SUPERVISOR, _START)
 START_UNRECORDED = Kind("supervisor.start-unrecorded", _SUPERVISOR, _START)
 HOLD_UNFINISHED = Kind(
@@ -77,6 +82,14 @@ RUN_HALT_UNSTORED = Kind(
     STATUS,
     Clears.BY_MODE,
 )
+# The outcome of a run's halt that could not be stored: halts in its place, and an exit.
+RUN_HALT_IN_PLACE = Kind(
+    "supervisor.run-halt-in-place",
+    _SUPERVISOR,
+    "A run's halt that could not be stored",
+    STATUS,
+    Clears.BY_MODE,
+)
 STOP_ASKED_BEFORE_HALT = Kind(
     "supervisor.stop-asked-before-halt",
     _SUPERVISOR,
@@ -97,3 +110,9 @@ RUN_HALT_UNREAD = Kind(
     "A run's halt that could not be read",
     clears=Clears.BY_MODE,
 )
+
+
+def raised(kind: Kind, reason: str, *, deployment: str, live: bool) -> Alarm:
+    """`kind`'s alarm, scoped to `deployment`, with who clears read from the mode where it can."""
+    clears = Clears.on(live) if kind.clears is Clears.BY_MODE else None
+    return kind(reason, scope=deployment, clears=clears)

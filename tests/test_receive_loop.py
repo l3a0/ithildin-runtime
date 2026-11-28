@@ -271,6 +271,8 @@ def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
     assert _key("alpha") in holding()[0]
     assert "because the halt for" in holding()[0] and "alpha-1 holds 1 blob " in holding()[0]
     assert "unless the host kills it first, which loses them" in holding()[0]
+    # Scoped to the component and not the instance, so every instance of alpha pages once.
+    assert "loop.holding:alpha" in [a.cause for a in alarms.alarms]
     if ends == "raises":
         # The handler's own error is sent even though its halt is not stored.
         assert any("did not handle: ValueError: broken" in r for r in alarms.reasons)

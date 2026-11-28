@@ -149,12 +149,16 @@ def test_a_second_cause_pages_at_once_while_the_first_is_held() -> None:
     assert len(topic.posts) == 3
 
 
-def test_one_kind_of_fault_in_two_components_pages_twice() -> None:
+def test_one_cause_pages_once_across_the_host_and_a_scoped_kind_pages_per_component() -> None:
     topic = Topic()
     paging = pager(topic)
+    # A store that does not answer is one fault on the host, whichever component meets it.
     assert paging.offer("data", OUTAGE("down"), START) is Sent.SENT
-    assert paging.offer("execution", OUTAGE("down"), START + timedelta(minutes=5)) is Sent.SENT
-    assert paging.offer("data", OUTAGE("down"), START + timedelta(minutes=6)) is Sent.HELD
+    assert paging.offer("execution", OUTAGE("down"), START + timedelta(minutes=5)) is Sent.HELD
+    # The receive loop scopes its kinds by component, so two components' queues page apart.
+    stopped = OTHER("stopped receiving")
+    assert paging.offer("data", stopped.within("data"), START) is Sent.SENT
+    assert paging.offer("risk", stopped.within("risk"), START + timedelta(minutes=1)) is Sent.SENT
 
 
 def test_an_attempt_and_its_outcome_are_two_causes_and_both_page() -> None:
@@ -167,7 +171,14 @@ def test_an_attempt_and_its_outcome_are_two_causes_and_both_page() -> None:
 
     topic = Topic()
     paging = pager(topic)
-    for kinds in ((PROCESS_ENDING, PROCESS_ENDS), (STARTS_UNREAD, START_UNRECORDED)):
+    from ithildinruntime.runtime.supervisor.alarms import RUN_HALT_IN_PLACE, RUN_HALT_UNSTORED
+
+    pairs = (
+        (PROCESS_ENDING, PROCESS_ENDS),
+        (STARTS_UNREAD, START_UNRECORDED),
+        (RUN_HALT_UNSTORED, RUN_HALT_IN_PLACE),
+    )
+    for kinds in pairs:
         for second, kind in enumerate(kinds):
             assert paging.offer("x", kind("x", scope="a"), START + timedelta(seconds=second)) is (
                 Sent.SENT
@@ -187,6 +198,17 @@ def test_the_first_page_after_a_cause_ended_names_the_alarms_held_before() -> No
         "shadow supervisor: again. Before this, 3 alarms of this cause from 2026-11-27T14:00Z "
         "to 2026-11-27T14:03Z were held and not paged\n"
     )
+
+
+def test_a_cause_ended_keeps_its_held_count_while_other_causes_come_and_go() -> None:
+    topic = Topic()
+    paging = pager(topic)
+    paging.offer("data", OUTAGE("first"), START)
+    paging.offer("data", OUTAGE("held"), START + timedelta(minutes=1))
+    # Another cause arrives between one and two hours later, which forgets nothing yet.
+    paging.offer("data", OTHER("x"), START + timedelta(minutes=1) + 1.5 * CAUSE_ENDS_AFTER)
+    paging.offer("data", OUTAGE("again"), START + timedelta(minutes=1) + 1.9 * CAUSE_ENDS_AFTER)
+    assert "Before this, 1 alarms of this cause" in topic.bodies[-1]
 
 
 def test_a_cause_ended_long_ago_is_forgotten() -> None:
