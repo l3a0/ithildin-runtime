@@ -1976,9 +1976,8 @@ def read_loss(
     """
     try:
         shared.settle(report)
-    except Outage:
-        raise
     except Halt as halt:
+        # A settle folds an outage into a plain halt, so nothing here tells the two apart.
         raise Unread(halt.reason) from None
     deployment, run, decision_at = where
     try:

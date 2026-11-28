@@ -15,8 +15,9 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    since the call that claimed it may have read the loss past its stop and
    died before its firing was stored, and so does a store that does not
    answer that reading, since the latch holds a firing whose writes fail. A
-   run that builds no broker for this stage writes no claim, since it sends
-   nothing.
+   journal that does not answer halts the claim as an outage, and a settle
+   that halts fires nothing. A run that builds no broker for this stage writes
+   no claim, since it sends nothing.
 2. Each input's result in the row's order, each halt passed on, and then the
    snapshot, the constraints, the targets, and recover's book, valuation and
    caps, all read before any file of this stage's is stored.
@@ -28,7 +29,8 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
 4. Each strategy's off switch and halts. One that is off gets no order. One that
    cannot be read halts.
 5. `OrderPath.loss`, which fires the stop and halts past it with no order
-   needed.
+   needed. Inside its stop it halts on caps an order could not use, the whole
+   blob and its stress age, before the plan.
 6. `plan_orders`, and then the `decision` entry, which names every file the plan
    was made from, before anything is asked or sent. A plan of this decision the
    journal already holds that is not this one halts, with an alarm naming both.

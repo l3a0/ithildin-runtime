@@ -9,7 +9,7 @@ dataclass exception raised inside a `@contextmanager` block comes out as
 `Outage` is a `Halt` on a store that did not answer, whose alarm has already
 been tried. A caller that meets one stops its later reads and writes of the
 store, since each would alarm on the same outage again. The order path still
-tries two writes after one, as the class says.
+tries three writes after one, as the class says.
 
 `Stopped` derives from `BaseException`, as `KeyboardInterrupt` does, so an
 `except Exception` inside a handler cannot turn a stop into a halt. A stop says
@@ -33,9 +33,12 @@ class Outage(Halt):
 
     `Storage` raises one for S3, and the order path for the journal and the
     controls. A caller that meets one stops its other writes, since each would
-    alarm on the same outage again. The order path still tries two writes after
+    alarm on the same outage again. The order path still tries three writes after
     one. It tries the `abandoned` of an order whose `sending` stands once, with no
-    page. It tries to release the account's lease, which is its own key. A
+    page. It fires the loss stop with no reading on the claim's halt of a
+    decision with no plan, since the call that claimed may have read the loss
+    past its stop and died, and the latch holds a firing whose writes fail. It
+    tries to release the account's lease, which is its own key. A
     release that fails then pages only where another handler refused it or the
     lease is gone, and one the store does not answer adds its words to the halt.
     A halt on an entry the journal did not take after a broker's answer is not

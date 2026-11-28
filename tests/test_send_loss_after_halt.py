@@ -315,8 +315,8 @@ def test_the_loss_reading_still_halts_on_a_valuation_of_another_session() -> Non
     assert world.every_kind().count("stop_fired") == 0
 
 
-@pytest.mark.parametrize("value", [0, -5])
-def test_the_loss_reading_fires_on_a_valuation_at_or_below_zero(value: int) -> None:
+@pytest.mark.parametrize("value", [Decimal("0.0001"), Decimal(0), Decimal(-5)])
+def test_the_loss_reading_fires_on_a_valuation_at_or_below_zero(value: Decimal) -> None:
     """`tighten` halts there, where the loss is largest, and the halt path's reading fires."""
     # Short 1,000 GLD sold at 1 and marked at 1,002 leaves the account worth -1,000.
     world = World(
@@ -325,7 +325,8 @@ def test_the_loss_reading_fires_on_a_valuation_at_or_below_zero(value: int) -> N
         valuation=gates.valuation(value, replayed_through=1),
         constraints=(gates.constraints(loss_stop=Decimal(1)),),
     )
-    with pytest.raises(Halt, match=f"the day's loss of {1000 + value}.0000 is past its stop of 1"):
+    loss = (1000 + value).quantize(Decimal("0.0001"))
+    with pytest.raises(Halt, match=f"the day's loss of {loss} is past its stop of 1"):
         reading(world)
     assert world.every_kind().count("stop_fired") == 1
 
@@ -638,21 +639,33 @@ def test_an_account_that_cannot_be_used_reads_no_loss_and_says_so() -> None:
     assert stop_kinds(made) == [] and made.keeper.losses == []
 
 
-def test_a_settle_that_halts_reads_as_unread_and_fires_nothing() -> None:
+@pytest.mark.parametrize("path", ["a-halt", "a-claim"])
+def test_a_settle_that_halts_reads_as_unread_and_fires_nothing(path: str) -> None:
+    """On the claim's halt with no plan too, where an input that cannot be read fires the stop."""
     made = short_then()
-    made.portfolio_halted(made.at, MISSING)
-    upstream = f"{made.result_key(PORTFOLIO_STAGE)} holds a halt: {MISSING}"
+    if path == "a-halt":
+        made.portfolio_halted(made.at, MISSING)
+        upstream = f"{made.result_key(PORTFOLIO_STAGE)} holds a halt: {MISSING}"
+    else:
+        key = claim_key(DEPLOYMENT, made.run, made.at)
+        made.store.put(key, b'{"token":"dead","writer":"' + b"f" * 32 + b'"}')
+        upstream = f"{key} holds another call's claim, so this one sends nothing"
+    calls: list[int] = []
 
     def refused(report) -> None:
-        raise Halt("the journal still does not take the answer of order X")
+        # The claim's own settle passes, and the reading's settle halts.
+        calls.append(1)
+        if path == "a-halt" or len(calls) > 1:
+            raise Halt("the journal still does not take the answer of order X")
 
     made.account._shared.unstored.settle = refused  # type: ignore[method-assign]
     result = made.send_attempt()
-    assert result.halt is not None
-    # Step 3's settle halts first, and the reading's own settle halts for that same reason.
-    assert result.halt.reason == upstream + (
+    assert result.halt is not None and result.halt.reason.startswith(upstream)
+    # Step 2 halts on the upstream result, or the claim halts, and the reading's own settle halts.
+    assert result.halt.reason.endswith(
         ". The day's loss could not be read: the journal still does not take the answer of order X"
     )
+    assert "fired with no reading" not in result.halt.reason
     assert stop_kinds(made) == []
 
 
@@ -661,14 +674,19 @@ def test_a_settle_that_halts_reads_as_unread_and_fires_nothing() -> None:
     [
         {"stress_move": gates.d("0.01"), "stress_low": gates.d("0.02")},
         {"stress_through": date(2026, 1, 2), "stress_max_age_days": 1},
+        None,
     ],
-    ids=["stress-move-below-its-low", "stress-through-past-its-age"],
+    ids=["stress-move-below-its-low", "stress-through-past-its-age", "no-share-step"],
 )
 def test_step_5_still_halts_on_caps_an_order_could_not_use(rewrite) -> None:
     """The loss reads inside its stop, and a decision that plans no order halts before its plan."""
     made = short_then(Decimal(1000))
-    made.rewrite_caps(**rewrite)
+    if rewrite is None:
+        blob = caps_blob(made.caps, ACCOUNT).replace(b'"share_step"', b'"step"')
+        made.store.put(caps_key(ACCOUNT), blob)
+    else:
+        made.rewrite_caps(**rewrite)
     result = made.send_stage()
     assert result.halt is not None and FIRED not in result.halt.reason
-    assert "the hard caps'" in result.halt.reason
+    assert "the hard caps'" in result.halt.reason or "the caps blob holds no" in result.halt.reason
     assert "decision" not in made.kinds(made.before) and stop_kinds(made) == []
