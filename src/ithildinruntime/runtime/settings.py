@@ -22,6 +22,10 @@ The file is TOML with these keys, each a machine value no tracked file holds.
 7. `heartbeat`, the local file a worker touches while it is healthy, which the
    host's watchdog reads. Optional, and nothing is touched without it.
 
+The forwarder on the host reads a file of its own, through
+`read_forwarder_settings`, whose keys that function lists. It needs none of a
+worker's keys, and it holds the push topic's address, which no worker's does.
+
 The boot id is read from `/proc/sys/kernel/random/boot_id`, which Linux writes
 fresh at each boot. A key that is missing, empty or of the wrong type, or a
 file that cannot be read, raises `SettingError`, which each command turns into
@@ -33,14 +37,22 @@ from __future__ import annotations
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ithildinruntime.core import is_name
 
 from .deployment import Environment, environment
 
-__all__ = ["BOOT_ID", "SETTINGS_VARIABLE", "SettingError", "Settings", "read_settings"]
+__all__ = [
+    "BOOT_ID",
+    "SETTINGS_VARIABLE",
+    "ForwarderSettings",
+    "SettingError",
+    "Settings",
+    "read_forwarder_settings",
+    "read_settings",
+]
 
 SETTINGS_VARIABLE = "ITHILDIN_SETTINGS"
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
@@ -83,8 +95,10 @@ class Settings:
         return text
 
 
-def read_settings(variables: Mapping[str, str] | None = None, boot_id: Path = BOOT_ID) -> Settings:
-    """The settings the file `ITHILDIN_SETTINGS` names, or a `SettingError` saying what is wrong."""
+def _values(
+    variables: Mapping[str, str] | None, required: tuple[str, ...], optional: tuple[str, ...]
+) -> dict[str, str]:
+    """The keys of the settings file `ITHILDIN_SETTINGS` names, each checked to hold text."""
     variables = os.environ if variables is None else variables
     named = variables.get(SETTINGS_VARIABLE, "")
     if not named:
@@ -95,19 +109,29 @@ def read_settings(variables: Mapping[str, str] | None = None, boot_id: Path = BO
         raise SettingError(f"the settings file {named} cannot be read: {error}") from None
     except tomllib.TOMLDecodeError as error:
         raise SettingError(f"the settings file {named} is not TOML: {error}") from None
-    extra = sorted(set(values) - set(_REQUIRED) - set(_OPTIONAL))
+    extra = sorted(set(values) - set(required) - set(optional))
     if extra:
         raise SettingError(f"the settings file {named} holds keys no reader knows: {extra}")
-    for key in _REQUIRED:
+    for key in required:
         if key not in values:
             raise SettingError(f"the settings file {named} has no {key}")
-    for key in (*_REQUIRED, *_OPTIONAL):
+    for key in (*required, *optional):
         if key in values and (not isinstance(values[key], str) or not values[key].strip()):
             raise SettingError(f"the settings file {named} gives {key} no text")
+    return values
+
+
+def _environment(name: str) -> Environment:
     try:
-        place = environment(values["environment"])
+        return environment(name)
     except KeyError as error:
         raise SettingError(str(error.args[0])) from None
+
+
+def read_settings(variables: Mapping[str, str] | None = None, boot_id: Path = BOOT_ID) -> Settings:
+    """The settings the file `ITHILDIN_SETTINGS` names, or a `SettingError` saying what is wrong."""
+    values = _values(variables, _REQUIRED, _OPTIONAL)
+    place = _environment(values["environment"])
     try:
         boot = boot_id.read_text().strip()
     except (OSError, UnicodeDecodeError) as error:
@@ -126,3 +150,48 @@ def read_settings(variables: Mapping[str, str] | None = None, boot_id: Path = BO
         credentials=Path(values["credentials"]),
         **optional,
     )
+
+
+@dataclass(frozen=True)
+class ForwarderSettings:
+    """What the forwarder on the host reads: the environment, its topic's address and its files."""
+
+    environment: Environment
+    address: str = field(repr=False)
+    state: Path
+    journal: Path | None = None
+
+
+_FORWARDER_REQUIRED = ("environment", "push_topic", "state")
+_FORWARDER_OPTIONAL = ("journal",)
+
+
+def read_forwarder_settings(variables: Mapping[str, str] | None = None) -> ForwarderSettings:
+    """The forwarder's settings, from the file `ITHILDIN_SETTINGS` names.
+
+    The forwarder's file holds its own keys, and none of a worker's.
+
+    1. `environment`, the name the release's table knows it by, which each page names.
+    2. `push_topic`, the file the provisioning step writes the environment's push topic's
+       address to. The address is the topic's only password, so no error here shows it.
+    3. `state`, the memory-backed directory that holds the forwarder's cursor, its count of
+       pages a day and its marker of a refused push.
+    4. `journal`, the directory of the host's journal, where the forwarder runs in a
+       container that mounts it. Optional, and `journalctl` reads the default without it.
+    """
+    values = _values(variables, _FORWARDER_REQUIRED, _FORWARDER_OPTIONAL)
+    place = _environment(values["environment"])
+    named = values["push_topic"]
+    try:
+        address = Path(named).read_text().strip()
+    except (OSError, UnicodeDecodeError) as error:
+        raise SettingError(
+            f"the push topic's file {named} cannot be read: {type(error).__name__}"
+        ) from None
+    if not address.startswith("https://") or any(c.isspace() for c in address):
+        raise SettingError(f"the push topic's file {named} holds no one https address")
+    state = Path(values["state"])
+    if not state.is_dir():
+        raise SettingError(f"the forwarder's state directory {state} is not a directory")
+    journal = Path(values["journal"]) if "journal" in values else None
+    return ForwarderSettings(place, address, state, journal)

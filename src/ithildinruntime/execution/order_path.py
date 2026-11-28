@@ -74,7 +74,9 @@ from fractions import Fraction
 from typing import NamedTuple
 
 from ithildinruntime.core import (
+    STORE_OUTAGE,
     Ack,
+    Alarm,
     Alerts,
     BeforeClose,
     BlobMissing,
@@ -157,6 +159,19 @@ from ithildinruntime.journal import (
     record_of,
 )
 
+from .alarms import (
+    ANSWER_REFUSED,
+    IN_DOUBT,
+    LEASE_ABSENT,
+    LEASE_RELEASE,
+    LEASE_REWRITE,
+    LEASE_TAKEN,
+    LOSS_FIRED,
+    LOSS_PAST,
+    MOVED_BY_ANOTHER,
+    TAKEOVER_FAILED,
+    UNJOURNALED,
+)
 from .controls import Controls, Stopping, Where
 from .inputs import Inputs, read_inputs
 from .latch import Latch
@@ -221,14 +236,14 @@ def quietly(report: Callable[[], None]) -> Callable[[], None]:
     return call
 
 
-def _alarm(alerts: Alerts, reason: str) -> str:
+def _alarm(alerts: Alerts, alarm: Alarm) -> str:
     """Send one alarm, and say what a halt adds where it could not be sent.
 
     Nothing an alert channel raises stops what follows, such as an answer's
     entry. A worker runs its handlers in threads, where no error ends the process.
     """
     try:
-        alerts.alarm(reason)
+        alerts.alarm(alarm)
     except BaseException as error:
         return f". The alarm could not be sent: {error_name(error)}"
     return ""
@@ -263,14 +278,14 @@ def _said(error: BaseException) -> str:
 
 
 class Named:
-    """`Alerts` whose every alarm names the account first, by its alias."""
+    """`Alerts` whose every alarm names the account first, by its alias, and is scoped to it."""
 
     def __init__(self, alerts: Alerts, account: str) -> None:
         self._alerts = alerts
         self._account = account
 
-    def alarm(self, reason: str) -> None:
-        self._alerts.alarm(f"account {self._account}: {reason}")
+    def alarm(self, alarm: Alarm) -> None:
+        self._alerts.alarm(alarm.about(f"account {self._account}", self._account))
 
     def heartbeat(self) -> None:
         self._alerts.heartbeat()
@@ -310,7 +325,7 @@ class Unstored:
         self._patience = patience
         self._owner_step = owner_step
         self._kept: list[_Kept] = []
-        self._alarms: deque[str] = deque()
+        self._alarms: deque[Alarm] = deque()
         self._lock = threading.Lock()
 
     def names(self) -> tuple[str, ...]:
@@ -329,15 +344,22 @@ class Unstored:
         with self._lock:
             self._kept.append(kept)
         if isinstance(record, InDoubtEntry):
-            self._say(kept, f"the order {name} is in doubt, {sent}: {record.reason}", report)
+            self._say(
+                kept,
+                IN_DOUBT(f"the order {name} is in doubt, {sent}: {record.reason}", scope=name),
+                report,
+            )
         try:
             return self._store(kept, report, once=True), kept.added
         except Exception as error:
             failed = _said(error)
             self._say(
                 kept,
-                f"the journal did not take {kept.what}: {failed}. The owner's step: "
-                f"{self._owner_step}",
+                UNJOURNALED(
+                    f"the journal did not take {kept.what}: {failed}. The owner's step: "
+                    f"{self._owner_step}",
+                    scope=name,
+                ),
                 report,
             )
             if isinstance(error, StoreError):
@@ -379,9 +401,9 @@ class Unstored:
         for _ in range(owed):
             # Taken one at a time, so another thread that settles sends none of them twice.
             with self._lock:
-                reason = self._alarms.popleft() if self._alarms else None
-            if reason is not None:
-                self._alarm(reason, report)
+                alarm = self._alarms.popleft() if self._alarms else None
+            if alarm is not None:
+                self._alarm(alarm, report)
         failing = []
         for kept in waiting:
             try:
@@ -427,8 +449,11 @@ class Unstored:
             if own is doubt and order.state not in _DOUBTFUL:
                 self._say(
                     kept,
-                    f"the order {kept.name} was kept as in doubt, {kept.sent}, and the journal "
-                    f"shows it {_now(order)}",
+                    ANSWER_REFUSED(
+                        f"the order {kept.name} was kept as in doubt, {kept.sent}, and the "
+                        f"journal shows it {_now(order)}",
+                        scope=kept.name,
+                    ),
                     report,
                 )
                 return self._done(kept, order.state)
@@ -451,30 +476,33 @@ class Unstored:
     def _in_doubt(self, kept: _Kept, report: Callable[[], None], shows: str = "") -> None:
         self._say(
             kept,
-            f"the order {kept.name} is in doubt, {kept.sent}: the journal refused its "
-            f"{kind_of(kept.record)}{shows}",
+            ANSWER_REFUSED(
+                f"the order {kept.name} is in doubt, {kept.sent}: the journal refused its "
+                f"{kind_of(kept.record)}{shows}",
+                scope=kept.name,
+            ),
             report,
         )
 
-    def _say(self, kept: _Kept, reason: str, report: Callable[[], None]) -> None:
-        if not self._alarm(reason, report):
+    def _say(self, kept: _Kept, alarm: Alarm, report: Callable[[], None]) -> None:
+        if not self._alarm(alarm, report):
             kept.added = ". An alarm about it could not be sent"
 
-    def alarm(self, reason: str, report: Callable[[], None]) -> bool:
+    def alarm(self, alarm: Alarm, report: Callable[[], None]) -> bool:
         """Send one alarm, or queue it to be tried at each later settle, and say whether it went."""
-        return self._alarm(reason, report)
+        return self._alarm(alarm, report)
 
     def unsent(self) -> tuple[str, ...]:
-        """Each alarm this process still owes, in the order it was raised."""
+        """The reason of each alarm this process still owes, in the order it was raised."""
         with self._lock:
-            return tuple(self._alarms)
+            return tuple(alarm.reason for alarm in self._alarms)
 
-    def _alarm(self, reason: str, report: Callable[[], None]) -> bool:
+    def _alarm(self, alarm: Alarm, report: Callable[[], None]) -> bool:
         """Send one alarm, or queue it, and say whether it was sent."""
-        sent = not _alarm(self._alerts, reason)
+        sent = not _alarm(self._alerts, alarm)
         if not sent:
             with self._lock:
-                self._alarms.append(reason)
+                self._alarms.append(alarm)
         report()
         return sent
 
@@ -541,14 +569,14 @@ class Shared:
     called: set[int] = field(default_factory=set)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def alarm(self, reason: str) -> str:
+    def alarm(self, alarm: Alarm) -> str:
         """Send one alarm, and say what a halt adds where it could not be sent."""
-        return _alarm(self.alerts, reason)
+        return _alarm(self.alerts, alarm)
 
     def outage(self, reason: str) -> Outage:
         """A store that did not answer, alarmed here, since no halt blob could be stored either."""
         reason = f"{reason}. The owner's step: {self.storage.owner_step}"
-        return Outage(f"{reason}{self.alarm(reason)}")
+        return Outage(f"{reason}{self.alarm(STORE_OUTAGE(reason))}")
 
     def settle(self, report: Callable[[], None]) -> None:
         """Store each entry the journal has not taken, and complete the loss stop's firing.
@@ -1122,7 +1150,7 @@ class OrderPath:
                 f"{decision_at.isoformat()} could not be read and the journal holds no plan of "
                 f"it: {halt.reason}"
             )
-            alarmed = shared.alarm(said)
+            alarmed = shared.alarm(LOSS_FIRED(said))
             added = shared.latch.fire(None, where, said, self._report)
             raise Halt(f"{said}{alarmed}{added}") from None
         for reading in decided:
@@ -1285,8 +1313,10 @@ class OrderPath:
         # The alarm goes before the rewrite that clears `owed`, so a journaled takeover alarms
         # even where that rewrite fails.
         shared.alarm(
-            f"the account's lease was taken over from {whose}, and the broker's order list is "
-            f"stored at {ref.key}{late_said}"
+            LEASE_TAKEN(
+                f"the account's lease was taken over from {whose}, and the broker's order list "
+                f"is stored at {ref.key}{late_said}"
+            )
         )
         held = self._lease
         assert held is not None
@@ -1300,7 +1330,7 @@ class OrderPath:
                 # on the lease as absent where the journal holds a sending, and otherwise starts it
                 # anew. Nothing is left to release, so this is the one page.
                 self._lease = None
-                raise Halt(f"{lost.reason}{shared.alarm(lost.reason)}") from None
+                raise Halt(f"{lost.reason}{shared.alarm(LEASE_REWRITE(lost.reason))}") from None
             # `settled` reads back a write whose answer was lost, so a refusal here is another
             # handler's rewrite. A release on this handler's tag is sure to be refused, so this
             # halt is the one page, and it says the entry stands rather than the takeover failed.
@@ -1313,7 +1343,7 @@ class OrderPath:
                 "it has not already. This send halts, and the next order's take reads the lease "
                 "again"
             )
-            raise Halt(f"{reason}{shared.alarm(reason)}") from None
+            raise Halt(f"{reason}{shared.alarm(LEASE_REWRITE(reason))}") from None
 
     def _stored_list(self, where: Where, read: TakeoverRead) -> BlobRef:
         """Store a takeover's list create-only, at the first key its time leaves free.
@@ -1356,7 +1386,7 @@ class OrderPath:
         )
         if down:
             return self._shared.outage(reason)
-        return Halt(f"{reason}{self._shared.alarm(reason)}")
+        return Halt(f"{reason}{self._shared.alarm(TAKEOVER_FAILED(reason))}")
 
     def _absent(self, view: View, tries: Tries) -> Halt:
         """Raise the absent lease's one halt, at a key two finders of one journal share."""
@@ -1389,7 +1419,7 @@ class OrderPath:
                 f"{lost}. Its halt was not stored at {key}: {code_of(error)}. No halt stands yet, "
                 "so each new order halts on the absent lease and tries to store the halt again"
             )
-        return Halt(f"{reason}{shared.alarm(reason)}")
+        return Halt(f"{reason}{shared.alarm(LEASE_ABSENT(reason))}")
 
     def _renew(self, tries: Tries) -> None:
         held = self._lease
@@ -1436,7 +1466,7 @@ class OrderPath:
         if refused.unanswered:
             self._shared.outage(reason)
         else:
-            self._shared.alarm(reason)
+            self._shared.alarm(LEASE_RELEASE(reason))
         return ""
 
     # Steps 1 to 6
@@ -1932,7 +1962,7 @@ class OrderPath:
         if state is OrderState.ABANDONED:
             return Halt(reason)
         what = f"{reason}. The journal shows {name} {state}, which this call did not do"
-        return Halt(f"{what}{_alarm(self._shared.alerts, what)}")
+        return Halt(f"{what}{_alarm(self._shared.alerts, MOVED_BY_ANOTHER(what, scope=name))}")
 
     def _abandoned(self, name: str, reason: str) -> OrderState:
         """Journal `abandoned` for an order with no `sending`, and return the state it is in."""
@@ -1967,7 +1997,7 @@ class OrderPath:
             f"the day's loss of {reading.loss} is past its stop of {reading.bound}, measured from "
             f"the valuation of {reading.session.isoformat()}"
         )
-        return Halt(f"{reason}{_alarm(self._shared.alerts, reason)}")
+        return Halt(f"{reason}{_alarm(self._shared.alerts, LOSS_PAST(reason))}")
 
     def _fired(self, reading: LossReading, where: tuple[str, str, datetime], reason: str) -> Halt:
         """Alarm on a reading past its stop, fire the stop, and give the halt with both."""

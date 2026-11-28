@@ -1,4 +1,4 @@
-"""Each command's entry point: the supervisor's and every worker's.
+"""Each command's entry point: the supervisor's, every worker's and the host's forwarder's.
 
 `pyproject.toml`'s `[project.scripts]` names one command per process, each a
 `main` here. A `main` reads the machine's settings once, as `runtime/settings.py`
@@ -55,6 +55,10 @@ Each command ends with one of these codes, which #202's units read.
 - 7: SIGTERM ended the supervisor before the run's stop was stored, so nothing
   watches the rest of the session. It alarms.
 
+The forwarder, `forwarder_main`, ends with 2 on a setting it cannot use, and
+otherwise only with an error, when the journal ends or gives an entry it cannot
+read. Its unit restarts it from its saved cursor, as `runtime/forwarder.py` says.
+
 #202's units restart a process that ends with 1 or 7 or by a signal. The
 supervisor's unit carries `RestartPreventExitStatus=2 3 4 5 6` and each worker's
 but execution's `RestartPreventExitStatus=2 6`, because a restart into the same
@@ -90,6 +94,7 @@ from ithildinruntime.adapters import (
     TimeServers,
     WallClock,
 )
+from ithildinruntime.adapters.ntfy import Load, Pager, Post, Repeats, https_post
 from ithildinruntime.core import (
     DATA_STAGE,
     PORTFOLIO_STAGE,
@@ -114,16 +119,32 @@ from ithildinruntime.core import (
 from ithildinruntime.data.reference import QuoteKinds
 from ithildinruntime.data.splits import SplitRecord
 
+from .alarms import PLAN_UNRUN, SETTING
 from .alpha_worker import alpha_handlers
 from .cost_worker import cost_handlers
 from .data_worker import DataBuckets, data_buckets, data_handler
 from .deployment import deployment_table
 from .execution_worker import ExecutionWorker
+from .forwarder import FileDayCount, Forwarder, ForwarderState, Journalctl
 from .loop import Handler, ReceiveLoop, Table
 from .portfolio_worker import portfolio_handler
 from .risk_worker import risk_handler
-from .settings import SettingError, Settings, read_settings
+from .settings import (
+    ForwarderSettings,
+    SettingError,
+    Settings,
+    read_forwarder_settings,
+    read_settings,
+)
 from .supervisor import Outcome, Supervisor, read_release_file
+from .supervisor.deadline import (
+    CAUSE_ENDS_AFTER,
+    PAGE_AGAIN_FIRST,
+    PAGE_AGAIN_FIRST_FOR,
+    PAGE_AGAIN_LATER,
+    PAGES_A_DAY,
+    PAGES_WARN_AT,
+)
 
 __all__ = [
     "EXIT_PLAN",
@@ -136,6 +157,8 @@ __all__ = [
     "cost_main",
     "data_main",
     "execution_main",
+    "forwarder_for",
+    "forwarder_main",
     "measures",
     "one_storage",
     "parts_for",
@@ -259,9 +282,12 @@ def _serve(
     except Halt as halt:
         # A plan this worker cannot run is no reason to restart into the same plan.
         worker.alerts.alarm(
-            f"{component}@{worker.deployment}: {halt.reason}, so it runs nothing. Correct the "
-            "plan or the settings' environment, then start the unit again"
-            + _serves_no_cancel(component)
+            PLAN_UNRUN(
+                f"{component}@{worker.deployment}: {halt.reason}, so it runs nothing. Correct the "
+                "plan or the settings' environment, then start the unit again"
+                + _serves_no_cancel(component),
+                scope=f"{component}@{worker.deployment}",
+            )
         )
         return EXIT_PLAN
     if plan is None:
@@ -446,7 +472,10 @@ def _refuse(component: str, error: Exception) -> NoReturn:
     """End a command on a setting it cannot use: one line, and an alarm line beside it."""
     print(f"ithildin: {error}", file=sys.stderr)
     LogAlerts(component).alarm(
-        f"{error}. Fix it, then start the unit again{_serves_no_cancel(component)}"
+        SETTING(
+            f"{error}. Fix it, then start the unit again{_serves_no_cancel(component)}",
+            scope=component,
+        )
     )
     raise SystemExit(EXIT_SETTING) from None
 
@@ -655,6 +684,32 @@ def portfolio_main() -> None:
 
 def execution_main() -> None:
     _main("execution")
+
+
+def forwarder_for(settings: ForwarderSettings, post: Post = https_post) -> Forwarder:
+    """The host's forwarder for the environment `settings` names, posting through `post`."""
+    state = ForwarderState(settings.state)
+    pager = Pager(
+        environment=settings.environment.name,
+        address=settings.address,
+        post=post,
+        repeats=Repeats(PAGE_AGAIN_FIRST, PAGE_AGAIN_FIRST_FOR, PAGE_AGAIN_LATER, CAUSE_ENDS_AFTER),
+        load=Load(PAGES_A_DAY, PAGES_WARN_AT),
+        count=FileDayCount(state.count_file),
+        refused=state.mark_refused,
+    )
+    return Forwarder(
+        journal=Journalctl(directory=settings.journal).entries, pager=pager, state=state
+    )
+
+
+def forwarder_main() -> None:
+    """Forward the runtime's alarm lines until the journal ends, which ends with an error."""
+    try:
+        settings = read_forwarder_settings()
+    except SettingError as error:
+        _refuse("forwarder", error)
+    forwarder_for(settings).run()
 
 
 def supervisor_main() -> None:

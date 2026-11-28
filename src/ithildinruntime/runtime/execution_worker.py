@@ -50,6 +50,7 @@ from ithildinruntime.core import (
     read_records,
 )
 from ithildinruntime.execution.account import Account
+from ithildinruntime.execution.alarms import PROCESS_ENDS
 from ithildinruntime.execution.brokers.faults import Faults
 from ithildinruntime.execution.brokers.log import SimulatedAccount
 from ithildinruntime.execution.brokers.prices import StoredPrices
@@ -237,8 +238,10 @@ class ExecutionWorker:
             step = held if _fired(owed) else plain
             # Paged ahead of the tries, which can outlast the host's stop.
             account.alarm(
-                f"the process is ending before the journal holds {'; '.join(owed)}, and "
-                f"tries once more. {step}",
+                PROCESS_ENDS(
+                    f"the process is ending before the journal holds {'; '.join(owed)}, and "
+                    f"tries once more. {step}"
+                ),
                 lambda: None,
             )
         failed = False
@@ -255,7 +258,7 @@ class ExecutionWorker:
         step = held if firing else plain
         if owed:
             reason = f"the process ends and the journal was not given {'; '.join(owed)}{said}"
-            account.alarm(f"{reason}. {step}", lambda: None)
+            account.alarm(PROCESS_ENDS(f"{reason}. {step}"), lambda: None)
         unsent = account.unsent()
         if not owed and not unsent and not failed:
             # An account that cannot be used holds nothing, so it loses nothing.
@@ -269,7 +272,7 @@ class ExecutionWorker:
             # A settle that failed cannot vouch for its own count of what it owes,
             # so the owner checks the broker's site as where something was lost.
             reason = f"{reason}. {step}"
-            if account.alarm(reason, lambda: None):
+            if account.alarm(PROCESS_ENDS(reason), lambda: None):
                 reason = f"{reason}. The alarm that says so was not sent"
         # Raised outside each handler, so what ended the loop is what it shows beside it.
         raise Halt(reason)

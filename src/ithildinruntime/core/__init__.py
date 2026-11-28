@@ -6,6 +6,8 @@ but `rfc8785`. docs/architecture/05-building-blocks.md's `## Package layout
 and the import rule` says what it holds and why.
 """
 
+from .alarms import *  # noqa: F403
+from .alarms import __all__ as _alarms
 from .broker import BrokerUnavailable, error_name
 from .clock import *  # noqa: F403
 from .clock import __all__ as _clock
@@ -141,6 +143,7 @@ __all__ = [
     "shows_instrument",
     "to_decimal",
     "to_utc",
+    *_alarms,
     *_clock,
     *_exact,
     *_keys,

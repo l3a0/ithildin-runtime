@@ -1266,7 +1266,7 @@ classDiagram
     }
     class Alerts {
         <<Protocol>>
-        +alarm(reason)
+        +alarm(Alarm)
         +heartbeat()
     }
     class Journal {

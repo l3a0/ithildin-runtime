@@ -21,6 +21,13 @@ dead-man check #201 builds fires only once a deadline has had its chance.
    still missing alarms, naming each stage and decision without one, and the
    supervisor exits with no stop. The host's timer, which #202 sets later than
    this, ends the run, and the next start holds its strategies.
+4. **A page repeats while its cause lasts.** The forwarder and monitoring page
+   a cause at once, again every `PAGE_AGAIN_FIRST` for its first
+   `PAGE_AGAIN_FIRST_FOR`, then every `PAGE_AGAIN_LATER`, and take a cause with
+   no alarm for `CAUSE_ENDS_AFTER` as over. ntfy's public server takes about
+   `PAGES_A_DAY` messages a day from one address, read from its docs on
+   2026-11-27 and measured by #260's first drill, and `PAGES_WARN_AT`, 75% of
+   it, pages that the next cause may go unheard by name.
 """
 
 from __future__ import annotations
@@ -31,8 +38,14 @@ from datetime import datetime, timedelta
 from ithildinruntime.core import CANCEL_CUTOFF, BeforeClose, OrderRecord, SessionTable, to_utc
 
 __all__ = [
+    "CAUSE_ENDS_AFTER",
     "HEARTBEAT_GRACE",
     "IN_DOUBT_LIMIT",
+    "PAGES_A_DAY",
+    "PAGES_WARN_AT",
+    "PAGE_AGAIN_FIRST",
+    "PAGE_AGAIN_FIRST_FOR",
+    "PAGE_AGAIN_LATER",
     "STALL_AFTER_CLOSE",
     "STOP_AFTER_CLOSE",
     "cancel_cutoff",
@@ -46,6 +59,13 @@ STALL_AFTER_CLOSE = timedelta(minutes=60)
 # The dead-man check's grace, which #201 reads. It exceeds every deadline above
 # that runs inside a session, and a test holds it there.
 HEARTBEAT_GRACE = timedelta(minutes=45)
+# One cause lasting a whole day then pages 27 times, against 96 at a steady 15 minutes.
+PAGE_AGAIN_FIRST = timedelta(minutes=15)
+PAGE_AGAIN_FIRST_FOR = timedelta(hours=1)
+PAGE_AGAIN_LATER = timedelta(hours=1)
+CAUSE_ENDS_AFTER = timedelta(hours=1)
+PAGES_A_DAY = 250
+PAGES_WARN_AT = 188
 
 
 def cancel_cutoff(at: datetime, sessions: SessionTable) -> datetime:

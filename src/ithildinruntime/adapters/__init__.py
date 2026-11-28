@@ -1,4 +1,4 @@
-"""The adapters behind `core`'s ports: stores, read-only buckets, queues, clocks and time servers.
+"""The adapters behind `core`'s ports: stores, buckets, queues, clocks, time servers and alerts.
 
 Only `runtime` imports this package, and it imports nothing from
 `ithildinruntime` but `core`, so no module builds an adapter and picks its own

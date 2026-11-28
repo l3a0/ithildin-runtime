@@ -20,6 +20,7 @@ import threading
 from collections.abc import Callable
 
 from ithildinruntime.core import (
+    Alarm,
     Alerts,
     BlobStore,
     Broker,
@@ -152,18 +153,18 @@ class Account:
             raise shared.outage(f"{what}: {code_of(error)}") from None
         return after
 
-    def alarm(self, reason: str, report: Callable[[], None]) -> str:
+    def alarm(self, alarm: Alarm, report: Callable[[], None]) -> str:
         """Send one alarm that names the account, and say what a halt adds where it could not.
 
         One that could not be sent is tried again at each later settle, the
         worker's last one included, which names it where it is still owed.
         """
-        if self._held().unstored.alarm(reason, quietly(report)):
+        if self._held().unstored.alarm(alarm, quietly(report)):
             return ""
         return ". The alarm could not be sent, and is tried again at the next stage's start"
 
     def unsent(self) -> tuple[str, ...]:
-        """Each alarm this process owes, which the channel would not take."""
+        """The reason of each alarm this process owes, which the channel would not take."""
         return () if isinstance(self._shared, Halt) else self._shared.unstored.unsent()
 
     def settle(self, report: Callable[[], None], *, stop: bool = False) -> None:

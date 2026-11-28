@@ -24,6 +24,7 @@ import pytest
 from ithildinruntime.adapters import FolderStore, LogAlerts, SystemTimer
 from ithildinruntime.core import (
     RUN_RECORD_FORMAT,
+    Alarm,
     BeforeClose,
     Mode,
     OrderIntent,
@@ -166,8 +167,13 @@ class World:
         }
         return Supervisor(**(made | changes))
 
+    def raised(self) -> list[Alarm]:
+        """Each alarm the supervisor wrote, read back from its journal lines."""
+        lines = self.lines.getvalue().splitlines()
+        return [Alarm.from_line(line)[1] for line in lines if line.startswith("ALARM")]
+
     def alarms(self) -> list[str]:
-        return [line for line in self.lines.getvalue().splitlines() if line.startswith("ALARM")]
+        return [alarm.reason for alarm in self.raised()]
 
     def results(self, day: date = TODAY, stages=STAGES, run: str | None = None) -> None:
         for stage in stages:

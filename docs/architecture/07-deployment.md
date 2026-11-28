@@ -36,6 +36,7 @@ flowchart TB
         docker["Docker daemon<br/>pulls the pinned image"]
         wd["Host watchdog"]
         onf["OnFailure handler"]
+        fwd["Forwarder<br/>pages each runtime unit's alarm line"]
         subgraph ctrs["Two containers per component, and one supervisor per deployment until the plan's lease is built"]
             sup["Supervisor<br/>writes the plan, sets deadlines"]
             data["Data"]
@@ -88,6 +89,8 @@ flowchart TB
     mon --> beat
     mon --> alerts
     onf -->|"alarms when a unit gives up"| alerts
+    ctrs -.->|"alarm lines in the host's journal"| fwd
+    fwd -->|"one page per cause"| alerts
     beat --> alerts
     cw -->|"EventBridge route"| alerts
     cw -->|"promotion and live drill checks only"| sns
@@ -95,7 +98,7 @@ flowchart TB
         person <-->|"reads status, clears halts, writes overrides,<br/>uses the kill switch"| bucket
 ```
 
-The figure draws slice 1, where the environment has one VM, separate from marketlake's. Each container runs as its own unit and its own user. Once the environment scales out, each of three VMs across availability zones runs these pieces, and three of each container and supervisor are spread across the three VMs, as [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) says.
+The figure draws slice 1, where the environment has one VM, separate from marketlake's. Each container runs as its own unit and its own user. Every container but monitoring writes its alarm as one line to the host's journal, and the forwarder, one per host and an entry point of the same image, pages each line a runtime unit wrote, as [Alarms of the alert channel](../halts-and-drills.md#alarms-of-the-alert-channel) says. So no worker holds the push topic's address. Once the environment scales out, each of three VMs across availability zones runs these pieces, and three of each container and supervisor are spread across the three VMs, as [An environment scales out to a cluster of three VMs](#rule-11-an-environment-scales-out-to-a-cluster-of-three-vms) says.
 
 Eleven rules hold the deployment to the premise and the hard limits.
 

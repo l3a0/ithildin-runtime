@@ -59,6 +59,8 @@ from datetime import date, datetime
 
 from ithildinruntime.core import (
     RUN_RECORD_FORMAT,
+    Alarm,
+    Clears,
     CodecError,
     Halt,
     Mode,
@@ -77,6 +79,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.journal import DOUBTFUL, Journal, NumberTaken, PauseEntry, View
 
+from .alarms import HOLD_UNFINISHED, UNCLEAN_HOLD
 from .deadline import cancel_cutoff
 
 __all__ = [
@@ -143,7 +146,7 @@ def hold_after_unclean_stops(
     starts: Starts,
     sessions: SessionTable,
     now: Callable[[], datetime],
-    alarm: Callable[[str], None],
+    alarm: Callable[[Alarm], None],
     say: Callable[[str], None] = print,
 ) -> tuple[Unclean, ...]:
     """Hold every strategy after each unclean stop it finds, and return those stops.
@@ -195,17 +198,28 @@ def hold_after_unclean_stops(
                 else ""
             )
             alarm(
-                f"{deployment}: the check for an unclean stop could not finish, so "
-                f"{', '.join(held)} stays held and {after}: {reason}.{unheld} The strategies held "
-                f"stay held after a later start succeeds. Start the supervisor's unit again once "
-                f"the cause is fixed. {who(mode)}"
+                HOLD_UNFINISHED(
+                    f"{deployment}: the check for an unclean stop could not finish, so "
+                    f"{', '.join(held)} stays held and {after}: {reason}.{unheld} The strategies "
+                    "held "
+                    "stay held after a later start succeeds. Start the supervisor's unit again "
+                    "once "
+                    f"the cause is fixed. {who(mode)}",
+                    scope=deployment,
+                    clears=Clears.on(mode is Mode.LIVE),
+                )
             )
         else:
             alarm(
-                f"{deployment}: the check for an unclean stop could not finish and stored no halt "
-                f"of its own, so it holds no strategy and {after}: {reason}. A halt written "
-                "earlier may still stand. Pull the kill switch "
-                "of the account, then start the supervisor's unit again once the cause is fixed"
+                HOLD_UNFINISHED(
+                    f"{deployment}: the check for an unclean stop could not finish and stored no "
+                    "halt "
+                    f"of its own, so it holds no strategy and {after}: {reason}. A halt written "
+                    "earlier may still stand. Pull the kill switch "
+                    "of the account, then start the supervisor's unit again once the cause is "
+                    "fixed",
+                    scope=deployment,
+                )
             )
         raise HoldFailed(reason) from error
 
@@ -221,7 +235,7 @@ def _hold(
     starts: Starts,
     sessions: SessionTable,
     now: Callable[[], datetime],
-    alarm: Callable[[str], None],
+    alarm: Callable[[Alarm], None],
     say: Callable[[str], None],
 ) -> tuple[Unclean, ...]:
     view = journal.view()
@@ -254,7 +268,13 @@ def _hold(
         )
     for unclean in reversed(found):
         view = _pause(journal, view, deployment, unclean, names, now)
-        alarm(_alarm(mode, deployment, unclean, names, view, today, sessions))
+        alarm(
+            UNCLEAN_HOLD(
+                _alarm(mode, deployment, unclean, names, view, today, sessions),
+                scope=deployment,
+                clears=Clears.on(mode is Mode.LIVE),
+            )
+        )
     return tuple(found)
 
 

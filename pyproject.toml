@@ -55,6 +55,8 @@ ithildin-cost = "ithildinruntime.runtime.entry:cost_main"
 ithildin-risk = "ithildinruntime.runtime.entry:risk_main"
 ithildin-portfolio = "ithildinruntime.runtime.entry:portfolio_main"
 ithildin-execution = "ithildinruntime.runtime.entry:execution_main"
+# The host's forwarder of alarm lines to the push topic, in runtime/forwarder.py.
+ithildin-forwarder = "ithildinruntime.runtime.entry:forwarder_main"
 
 [build-system]
 requires = ["hatchling"]

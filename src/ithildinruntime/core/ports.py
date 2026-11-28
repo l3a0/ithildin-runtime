@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
+from .alarms import Alarm
 from .queue import Event
 from .records import (
     Ack,
@@ -315,6 +316,13 @@ class Bucket(Protocol):
 
 
 class Alerts(Protocol):
-    def alarm(self, reason: str) -> None: ...
+    """Where an alarm goes: the host's journal, or the environment's push topic.
+
+    `alarm` raises when the alarm went nowhere, so the caller always knows,
+    and an adapter that collapses repeats of one cause into one page counts a
+    held repeat as sent. `core.alarms` says what an `Alarm` carries.
+    """
+
+    def alarm(self, alarm: Alarm) -> None: ...
 
     def heartbeat(self) -> None: ...

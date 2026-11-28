@@ -19,6 +19,7 @@ import pytest
 from ithildinruntime.adapters import FolderStore
 from ithildinruntime.core import (
     Ack,
+    Alarm,
     BlobRef,
     BrokerState,
     BrokerUnavailable,
@@ -1168,7 +1169,8 @@ def test_6_an_alarm_another_thread_is_trying_again_is_not_lost(ends: str) -> Non
     sent: list[str] = []
     tries: list[str] = []
 
-    def alarm(reason: str) -> None:
+    def alarm(raised: Alarm) -> None:
+        reason = raised.reason
         tries.append(reason)
         if threading.current_thread() is not threading.main_thread():
             trying.set()
@@ -1194,7 +1196,7 @@ def test_6_an_alarm_another_thread_is_trying_again_is_not_lost(ends: str) -> Non
         world.send(account=account)
     done.set()
     threads[0].join(5)
-    world.alarms.alarm = sent.append  # type: ignore[method-assign]
+    world.alarms.alarm = lambda raised: sent.append(raised.reason)  # type: ignore[method-assign]
     for _ in range(2):
         account.settle(world.report)
     assert [r for r in sent if f"the order {ID} is in doubt" in r] == sent and len(sent) == 1

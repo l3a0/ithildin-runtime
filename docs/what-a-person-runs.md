@@ -347,7 +347,9 @@ Each line of an alarm has one job.
 
 1. Its first line names the environment, the account, the decision and the reason, so a push on a phone says what happened without opening anything.
 2. Its second line is the command to run first, almost always `ithildin halt explain` on the halt, or `ithildin status` for an alarm with no halt, such as one the heartbeat service raises, whose check's description carries that line.
-3. Its third line names the alarm's row in [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill), where the runbook on [#11](https://github.com/l3a0/ithildin-runtime/issues/11) says, row by row, what to check and which writing command, if any, follows.
+3. Its third line names the alarm's row in [Every alarm and its drill](halts-and-drills.md#every-alarm-and-its-drill) by its first words, with a link to its section, where each row says what to check and which writing command, if any, follows. The rows of the supervisor's, the commands' and the channel's own alarms came with [#257](https://github.com/l3a0/ithildin-runtime/issues/257), and [#258](https://github.com/l3a0/ithildin-runtime/issues/258) and [#259](https://github.com/l3a0/ithildin-runtime/issues/259) add the rows of the alarms they raise.
+
+A cause that lasts pages once, then again every 15 minutes for its first hour and every hour after that, and a repeat says how many alarms of the cause arrived since it began. A second cause pages at once. A page longer than ntfy's 4,096 bytes is cut in its first line, so the second and third stay whole.
 
 Monitoring's report after each decision ends with the same summary `ithildin status` prints.
 
@@ -595,10 +597,11 @@ Each component runs as its own process, from a command that `pyproject.toml` ins
 | `ithildin-data` | Starts the time servers, waits for the day's plan and cuts each decision's snapshot |
 | `ithildin-alpha`, `ithildin-cost`, `ithildin-risk`, `ithildin-portfolio` | Wait for the day's plan and run their stages |
 | `ithildin-execution` | Starts the time servers, waits for the day's plan, recovers and sends |
+| `ithildin-forwarder` | Reads the host's journal from where it left off and pages each alarm line a runtime unit writes to the environment's push topic, one page per cause. One runs per host, and a journal that ends stops it with an error, so its unit restarts it |
 
 #### What a command reads
 
-A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOML file the VM's provisioning step writes in memory-backed storage. The file names the environment, the mirror's directory, marketlake's bucket and prefix, the resolved release pin file and the local release file, the unit user's AWS credential file, which is the one credential the command reads, and may name the local heartbeat file. `runtime/settings.py` lists each key. Everything else about an environment is in the release's table in `runtime/deployment.py`.
+A command reads one environment variable, `ITHILDIN_SETTINGS`, which names a TOML file the VM's provisioning step writes in memory-backed storage. The file names the environment, the mirror's directory, marketlake's bucket and prefix, the resolved release pin file and the local release file, the unit user's AWS credential file, which is the one credential the command reads, and may name the local heartbeat file. `runtime/settings.py` lists each key. The forwarder's file holds keys of its own: the environment, the memory-backed file that holds the push topic's address, the directory that holds its cursor, its count of pages a day and its marker of a refused push, and optionally the journal's directory. Everything else about an environment is in the release's table in `runtime/deployment.py`.
 
 #### What each exit code means
 

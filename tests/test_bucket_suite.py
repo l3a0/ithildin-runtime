@@ -296,9 +296,11 @@ def _refusing(operation: str, code: str, status: int) -> S3Bucket:
     ],
 )
 def test_a_read_s3_refuses_carries_its_answer(code: str, status: int, kind: type) -> None:
-    with pytest.raises(kind, match=f"{status} {code}: said so") as refused:
+    with pytest.raises(kind, match=f"{status} {code}$") as refused:
         _refusing("get_object", code, status).read("k", "v1")
     assert type(refused.value) is kind
+    # S3's message names the caller's role on an AccessDenied, and an answer reaches a page.
+    assert "said so" not in str(refused.value)
 
 
 @pytest.mark.parametrize(
@@ -307,7 +309,7 @@ def test_a_read_s3_refuses_carries_its_answer(code: str, status: int, kind: type
 )
 def test_a_listing_s3_refuses_is_unavailable_with_its_answer(code: str, status: int) -> None:
     """A missing grant reads as its 403, and never as a prefix that holds nothing."""
-    with pytest.raises(StoreUnavailable, match=f"journal/: {status} {code}: said so"):
+    with pytest.raises(StoreUnavailable, match=f"journal/: {status} {code}$"):
         _refusing("list_objects_v2", code, status).list("journal/")
 
 

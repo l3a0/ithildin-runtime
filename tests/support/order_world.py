@@ -26,6 +26,7 @@ from ithildinruntime.core import (
     RISK_STAGE,
     SNAPSHOT_OUTPUT,
     VALUATION_OUTPUT,
+    Alarm,
     BlobHeader,
     BlobMissing,
     BlobRef,
@@ -218,10 +219,12 @@ class Clock:
 class Alarms:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.alarms: list[Alarm] = []
         self.error: BaseException | None = None
 
-    def alarm(self, reason: str) -> None:
-        self.sent.append(reason)
+    def alarm(self, alarm: Alarm) -> None:
+        self.alarms.append(alarm)
+        self.sent.append(alarm.reason)
         if self.error is not None:
             raise self.error
 
