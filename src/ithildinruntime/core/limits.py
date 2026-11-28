@@ -27,8 +27,23 @@ from .halt import Halt
 from .names import is_name, is_sha256
 from .records import Constraints, HardCaps, InstrumentId, Valuation
 from .sessions import load_sessions, require_utc
+from .strategy import StrategyConfig
 
-__all__ = ["check_constraints", "parse_caps", "require_current", "tighten"]
+__all__ = [
+    "RISK_SECTION",
+    "check_constraints",
+    "parse_caps",
+    "parse_loss_stop",
+    "require_current",
+    "require_valued",
+    "smaller_stop",
+    "tighten",
+    "written_loss_stop",
+]
+
+# The section of a strategy's configuration that holds its limits, which `risk.model` reads
+# whole and `written_loss_stop` reads one field of.
+RISK_SECTION = "risk"
 
 _FORMAT = 1
 # A caps blob is written by hand and read before every order, so one far past
@@ -65,20 +80,9 @@ def parse_caps(data: bytes, account: str) -> HardCaps:
     blob beside `format`, `account` and `limits` belong to other readers, so
     this reads none of them. A field of `limits` it does not know halts, so a
     release rolled back past a new cap stops new orders rather than trading
-    without it.
+    without it. `parse_loss_stop` reads the same blob for the day's loss alone.
     """
-    if not is_name(account):
-        raise Halt(f"the account whose caps are asked for is {account!r}, which names none")
-    blob = _json(data)
-    written = blob.get("format")
-    if type(written) is not int or written != _FORMAT:
-        raise Halt(f"the caps blob's format is {shown(written)}, not {_FORMAT}")
-    if blob.get("account") != account:
-        # What was found there is never shown, since it could be a broker's number.
-        raise Halt(f"the caps blob does not name the account {account!r}")
-    limits = blob.get("limits")
-    if not isinstance(limits, dict):
-        raise Halt("the caps blob's limits is missing or no JSON object")
+    limits = _limits(data, account)
     if absent := sorted(_FIELDS - set(limits)):
         raise Halt(f"the caps blob holds no {absent[0]}")
     if unknown := sorted(set(limits) - _FIELDS):
@@ -104,6 +108,52 @@ def parse_caps(data: bytes, account: str) -> HardCaps:
     )
     _check_caps(caps)
     return caps
+
+
+def parse_loss_stop(data: bytes, account: str) -> Decimal:
+    """The caps' `loss_stop` alone, which is all the day's loss reads of the blob.
+
+    The blob is whole for this read when it is a JSON object of format 1 that
+    names `account` and whose limits hold a `loss_stop` that is a finite decimal
+    above zero. No other field is read, so a fault in a stress field or a cap the
+    loss never uses leaves the loss stop able to fire.
+    """
+    limits = _limits(data, account)
+    if "loss_stop" not in limits:
+        raise Halt("the caps blob holds no loss_stop")
+    return _stop("the hard caps'", _decimal("loss_stop", limits["loss_stop"]))
+
+
+def written_loss_stop(strategy: StrategyConfig) -> Decimal:
+    """The `loss_stop` of a strategy's `[risk]` section alone, checked as the risk model checks it.
+
+    The day's loss reads no other field of the section, so a fault in a limit
+    the loss never uses leaves the stop able to fire. The halt names the
+    strategy, the file and the field, as the risk model's does.
+    """
+    section = strategy.section(RISK_SECTION)
+    where = (
+        f"strategy {strategy.name}'s configuration {strategy.source} has a [{RISK_SECTION}] "
+        "section that"
+    )
+    if "loss_stop" not in section:
+        raise Halt(f"{where} states no loss_stop")
+    value = section["loss_stop"]
+    # A bool is an int to Python, and no figure.
+    value = Decimal(value) if type(value) is int else value
+    try:
+        return _stop("the strategy's", value)
+    except Halt as halt:
+        raise Halt(f"{where} core refuses: {halt.reason}") from None
+
+
+def smaller_stop(strategy: object, caps: object) -> Decimal:
+    """The tighter of a strategy's loss stop and the caps', each a finite decimal above zero.
+
+    `tighten` takes its `loss_stop` from here, and so does every reading of the
+    day's loss, so the stop an order is refused on is the stop the loss fires on.
+    """
+    return min(_stop("the strategy's", strategy), _stop("the hard caps'", caps))
 
 
 def tighten(constraints: Constraints, caps: HardCaps, valuation: Valuation | None) -> Constraints:
@@ -133,7 +183,7 @@ def tighten(constraints: Constraints, caps: HardCaps, valuation: Valuation | Non
         max_gross=min(constraints.max_gross, caps.max_gross),
         max_open_orders=min(constraints.max_open_orders, caps.max_open_orders),
         max_net=min(constraints.max_net, net),
-        loss_stop=min(constraints.loss_stop, caps.loss_stop),
+        loss_stop=smaller_stop(constraints.loss_stop, caps.loss_stop),
         moc_cutoff=max(constraints.moc_cutoff, caps.moc_cutoff),
     )
 
@@ -153,9 +203,23 @@ def check_pair(constraints: Constraints, caps: HardCaps) -> None:
 def require_current(caps: HardCaps, valuation: Valuation, decision_at: datetime) -> None:
     """Halt unless V and the stress move are the ones a decision may use.
 
-    V is of the session before the decision's, since an older one measures
-    another day's loss and net cap. The stress move's vintage ends no longer
-    before the decision than the caps allow.
+    V is checked by `require_valued`. The stress move's vintage ends no longer
+    before the decision than the caps allow. The day's loss reads no stress
+    move, so it calls `require_valued` alone.
+    """
+    today = require_valued(valuation, decision_at)
+    age = (today - caps.stress_through).days
+    if age > caps.stress_max_age_days:
+        raise Halt(
+            f"the hard caps' stress_through is {caps.stress_through.isoformat()}, {age} "
+            f"days before the decision and past the {caps.stress_max_age_days} allowed"
+        )
+
+
+def require_valued(valuation: Valuation, decision_at: datetime) -> date:
+    """Halt unless V is of the session before the decision's, and give the decision's session day.
+
+    An older V measures another day's loss and net cap.
     """
     if type(valuation.session) is not date:
         raise Halt(f"the valuation's session is {valuation.session!r}, not a date")
@@ -167,12 +231,7 @@ def require_current(caps: HardCaps, valuation: Valuation, decision_at: datetime)
             f"the valuation is of {valuation.session.isoformat()}, not of {prior.isoformat()}, "
             "the session before the decision's"
         )
-    age = (today - caps.stress_through).days
-    if age > caps.stress_max_age_days:
-        raise Halt(
-            f"the hard caps' stress_through is {caps.stress_through.isoformat()}, {age} "
-            f"days before the decision and past the {caps.stress_max_age_days} allowed"
-        )
+    return today
 
 
 def _smaller(
@@ -241,16 +300,21 @@ def _check_shared(source: Constraints | HardCaps, where: str) -> None:
             )
     for name in _MAXIMA:
         _not_negative(f"{where} {name}", getattr(source, name))
-    # V is rounded to four places and cash is not, so a stop of zero fires on the rounding alone.
-    stop = finite(f"{where} loss_stop", source.loss_stop)
-    if stop <= 0:
-        raise Halt(f"{where} loss_stop is {stop}, not above zero")
+    _stop(where, source.loss_stop)
     for name in _COUNTS:
         count = _integer(f"{where} {name}", getattr(source, name))
         if count < 0:
             raise Halt(f"{where} {name} is {count}, below zero")
         if count >= INT_LIMIT:
             raise Halt(f"{where} {name} is {shown(count)}, past what a record can hold")
+
+
+def _stop(where: str, value: object) -> Decimal:
+    # V is rounded to four places and cash is not, so a stop of zero fires on the rounding alone.
+    stop = finite(f"{where} loss_stop", value)
+    if stop <= 0:
+        raise Halt(f"{where} loss_stop is {stop}, not above zero")
+    return stop
 
 
 def _not_negative(what: str, value: object) -> None:
@@ -262,6 +326,23 @@ def _integer(what: str, value: object) -> int:
     if type(value) is not int:
         raise Halt(f"{what} is {value!r}, not a whole number")
     return value
+
+
+def _limits(data: bytes, account: str) -> dict[str, object]:
+    """The blob's `limits`, once its format and its account are checked."""
+    if not is_name(account):
+        raise Halt(f"the account whose caps are asked for is {account!r}, which names none")
+    blob = _json(data)
+    written = blob.get("format")
+    if type(written) is not int or written != _FORMAT:
+        raise Halt(f"the caps blob's format is {shown(written)}, not {_FORMAT}")
+    if blob.get("account") != account:
+        # What was found there is never shown, since it could be a broker's number.
+        raise Halt(f"the caps blob does not name the account {account!r}")
+    limits = blob.get("limits")
+    if not isinstance(limits, dict):
+        raise Halt("the caps blob's limits is missing or no JSON object")
+    return limits
 
 
 def _json(data: bytes) -> dict[str, object]:

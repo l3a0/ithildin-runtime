@@ -2544,8 +2544,10 @@ The price is seven things.
    captured bars alone, which this halt passes. The price-kind rows of both state
    their kind, and the alpha model reads them.
 2. A position held when a later change arrives is held through those decisions.
-   No strategy exit goes out, and the day's loss is not tested, because the send
-   stage tests it only on a decision that reaches it. Worst loss covers only the
+   No strategy exit goes out. The day's loss is not tested either, because data's
+   halt leaves the send stage no snapshot to read it from, and until
+   [#264](https://github.com/l3a0/ithildin-runtime/issues/264) rules what such a
+   decision does, it does what it did before. Worst loss covers only the
    stress move's window, so, as [for any position a halt leaves
    open](#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it), only
    the owner's act bounds it.

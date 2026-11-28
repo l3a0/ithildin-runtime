@@ -409,6 +409,7 @@ sequenceDiagram
     X->>J: journals any new fill under its fill id,<br/>and each new record as an outside entry
     X->>X: does the book from the journal<br/>agree with the broker?
     X->>X: runs the daily loss stop's test,<br/>with no order needed
+    Note over X,J: a halt of any step since the claim<br/>still runs this test, with no broker,<br/>before the decision ends
     break the day's loss is past the stop
         Note over X,J: execution records the firing<br/>and halts the decision. The report, the ping<br/>and the read after the close still run
     end
@@ -641,9 +642,12 @@ flowchart TB
         direction LR
         c1["Step 1<br/>check every leg"] --> c2["Step 2<br/>store the outcome"] --> c3["Step 3<br/>report, then ping"]
     end
+    a2 -.->|"a halt at step 2 or before"| h["read the day's loss with no broker,<br/>fire the stop past it, then halt"]
     prepare --> each
     each --> finish
 ```
+
+The dotted arrow is the one variation the figure draws. A halt of the stage's inputs, of the sync or of a strategy's switch still runs the daily loss stop's test before the decision ends, as step 3 below says.
 
 #### Prepare, once per decision
 
@@ -655,9 +659,9 @@ Three more checks sit inside these steps, as [How a rerun never doubles anything
 
 The steps run in this order.
 
-1. **Claim the stage.** Whichever execution instance receives portfolio construction's result writes a create-only claim on the send stage, naming its process's writer and a token of this one call, so a second call in the same process never reads the first one's claim as its own. An instance that finds a claim it did not write never plans for that decision. It halts, and its reason names where each planned order of the decision stands, each order in doubt with the time its `sending` was stored, and each leg whose partner did not go. It alarms on each order in doubt, and then reads the day's loss, whose own halt joins the reason. All of that comes before any input is read, so an unreadable snapshot hides no order.
+1. **Claim the stage.** Whichever execution instance receives portfolio construction's result writes a create-only claim on the send stage, naming its process's writer and a token of this one call, so a second call in the same process never reads the first one's claim as its own. An instance that finds a claim it did not write never plans for that decision. It halts, and its reason names where each planned order of the decision stands, each order in doubt with the time its `sending` was stored, and each leg whose partner did not go. It alarms on each order in doubt, and then reads the day's loss, which joins the reason where it fires the stop or cannot be read. A store that does not answer that reading fires nothing, since the outage has already paged. All of that comes before any input is read, so an unreadable snapshot hides no order. A run that builds no broker for this stage writes no claim, because it sends nothing, and still reads the day's loss before it halts.
 2. **Sync with the broker.** Every step fetches and syncs before changing state. So it fetches the broker's positions, open orders, cash and fills again, afresh on every attempt, and stores the read at `broker-read-<n>.json` with the first number left free. Until [#211](https://github.com/l3a0/ithildin-runtime/issues/211) lets another instance take a send stage over, a second attempt halts at the claim, so the read lands at `broker-read-1.json`. It stores that read and journals its hash before the comparison, as the sentence on every `Broker` read in [The interfaces](05-building-blocks.md#the-interfaces) says. It journals any fill that arrived since phase 1. It also reads the broker's records and journals each ahead of the comparison, a listed one inside its range as an outside entry and any other as unmatched, as recover does. It then checks the journal's book against the broker. A fill of its own order brings the book up to date. Any order or fill the journal did not send is journaled as received and halts for a person.
-3. **Run the daily loss stop's test.** It is the gate's `loss`, which runs with no order needed, so a decision that plans no order still runs it. A reading past the stop fires it, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says.
+3. **Run the daily loss stop's test.** It is the gate's `loss`, which runs with no order needed, so a decision that plans no order still runs it. A reading past the stop fires it, as [The risk gate refuses an order](#the-risk-gate-refuses-an-order) says. A halt before this step runs the same test before the decision ends, with no broker. That covers a halt of an input's result, such as a missing forecast or a halted risk stage, a halt of the sync, and a strategy's switch that answers with no switch. A firing there names that halt in its entry, and the halt keeps its cause, so monitoring does not page on it twice. A reading after a halt of the sync can fire and never proves the loss stayed inside the stop, because the journal's book it reads is the one the sync found to differ from the broker's. A store that does not answer, at the halt or at the reading, fires nothing. The code numbers these steps 1 to 5, with the inputs' results as its step 2 and the switches as its step 4.
 4. **Plan the orders and journal the target whole.** Each strategy's order manager turns the target minus that strategy's own positions and open orders into planned orders, cancels and replacements.
    - **What the stored entry holds.** One stored entry holds seven things.
      1. The target.
@@ -1014,7 +1018,12 @@ The price of the last two is no trading for the rest of that session.
 
 #### When the stop is tested
 
-The send stage runs the stop's test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop. Every verdict carries the same reading, so a loss found while an order is checked counts too, whichever limit the verdict names.
+The send stage runs the stop's test on every decision that reaches it, before any order is planned and with no order needed. So a decision that plans no order still tests the stop. A decision that halts first still runs the test before it ends, as step 3 of [Prepare, once per decision](#prepare-once-per-decision) says. The test reads each strategy's stop from its own `[risk]` section and the caps blob's `loss_stop`, and no output of the risk stage, so a halted risk stage or a fault in a field the loss never uses leaves it readable.
+
+Two kinds of decision leave the day's loss untested.
+
+1. One whose loss cannot be read at all, such as one whose data or recover halted, or whose caps blob holds no usable `loss_stop`. Until [#264](https://github.com/l3a0/ithildin-runtime/issues/264) rules what such a decision does, it does what it did before.
+2. One where a store does not answer, at the halt or at the reading. The outage pages, and a store that does not answer cannot take a firing. Every verdict carries the same reading, so a loss found while an order is checked counts too, whichever limit the verdict names.
 
 The stop has a stated limit: no decision tests the price move from close−20 to the close.
 

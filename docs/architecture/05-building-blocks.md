@@ -1681,7 +1681,7 @@ flowchart LR
 
 ##### What the gate is handed
 
-`check` takes six things, and `loss`, which reads the day's loss with no order, takes all but the first.
+`check` takes six things, and `loss`, which reads the day's loss with no order, takes all but the first. Of the constraints and the caps, `loss` reads only each `loss_stop`, and it reads no stress field, no net cap and no stress age. The order path calls `loss_against`, which takes the stop itself in place of the constraints and the caps, because it reads each strategy's `loss_stop` from its `[risk]` section and the caps' from their blob, so that a halted risk stage leaves the loss readable. All three go through one measure of the loss, and the smaller of the two stops comes from `core.smaller_stop`, which `tighten` calls too.
 
 1. The order.
 2. The snapshot.
@@ -1834,7 +1834,7 @@ It first makes the checks `core.tighten` makes of the constraints and of the cap
 
 It gives back the caps with m the largest of their own and of every record that counts. A record counts when it is of the strategy, is not withdrawn, and names as the leg that made its move one the constraints limit. Its other legs do not matter, because that leg made the move. So a record can only tighten, and `Verdict` carries the m the check used.
 
-The gate's `loss` does not hold the caps, because the day's loss reads no m. So where the owner rewrites the caps after the risk stage has run, and only the hold refuses them, `check` halts every order and the loss is still read.
+The gate's `loss` does not hold the caps, because the day's loss reads no m. It reads no other stress field either, and no stress age. So where the owner rewrites the caps after the risk stage has run, with a stress move the hold refuses, one outside its range or one past its age, `check` halts every order and the loss is still read.
 
 The price is seven things.
 
@@ -1844,7 +1844,7 @@ The price is seven things.
 4. **The caps hold one vintage for an account.** Two strategies of other legs never share a vintage, so each strategy the named record is not of halts. With the smaller m's record named, the gate alone would approve that strategy's order against a book that holds the larger's leg. What stops that is the risk stage's halt on two strategies. So the change that lifts it says which record the caps name, with that case in its test.
 5. **A larger record can refuse both exits of a pair already held.** A pair cut to the older cap can have each leg past the new one, and closing either first can then widen net. [Raise the stress move](../what-a-person-runs.md#raise-the-stress-move) has the owner look first.
 6. **A leg the strategy holds and the constraints do not limit counts at the m of the legs they do**, whatever its own record holds. Portfolio construction halts on a held leg its forecast does not name, so no order forms.
-7. **While the risk stage halts on the records, no decision tests the day's loss**, because the send stage tests it only on a decision that reaches it.
+7. **While the risk stage halts on the records, the send stage reads the day's loss after that halt.** It reads each strategy's stop from its own `[risk]` section and the caps blob, and no output of the risk stage, so a loss past the stop still fires it. What stays untested is a decision whose loss cannot be read at all, such as one whose data or recover halted, which [#264](https://github.com/l3a0/ithildin-runtime/issues/264) holds.
 
 #### The risk model writes each decision's limits
 

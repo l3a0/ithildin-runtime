@@ -218,7 +218,9 @@ def blob(world: World) -> StopBlob:
 def test_a_loss_past_its_stop_journals_the_firing_and_stores_its_blob() -> None:
     world = losing()
     halted(
-        world, "past its stop of 100", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION)
+        world,
+        "past its stop of 100",
+        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, world.strategies()),
     )
     assert stop_kinds(world) == ["stop_fired", "stop_stored"]
     stop = standing(world)
@@ -251,20 +253,32 @@ def test_the_order_after_a_firing_is_refused_with_the_firing_named_once_the_pric
         "from the valuation of 2026-09-30. `ithildin stop clear --account paper-1` clears it"
     ) in reason
     assert world.state() is OrderState.REFUSED
-    halted(world, "loss stop stands", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
+    halted(
+        world,
+        "loss stop stands",
+        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, world.strategies()),
+    )
 
 
 def test_a_second_reading_past_its_stop_before_a_clear_records_nothing_more() -> None:
     world = losing()
     for _ in range(2):
-        halted(world, "past its stop", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
+        halted(
+            world,
+            "past its stop",
+            lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, world.strategies()),
+        )
     assert stop_kinds(world) == ["stop_fired", "stop_stored"]
 
 
 def test_a_rerun_after_the_close_fires_on_the_decisions_own_loss() -> None:
     world = losing()
     world.clock.at = gates.CLOSE + timedelta(minutes=1)
-    halted(world, "past its stop", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
+    halted(
+        world,
+        "past its stop",
+        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, world.strategies()),
+    )
     assert stop_kinds(world) == ["stop_fired", "stop_stored"]
     entry = standing(world).standing.entry
     assert entry.reason == "the day's loss at the decision's own time read past its stop"
@@ -274,12 +288,22 @@ def test_an_unread_loss_fires_only_where_asked() -> None:
     world = World()
     world.store.drop(next(k for k in world.store.blobs if "valuation" in k))
     missing = "valuation.json, listed by .* is missing"
-    halted(world, missing, lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
+    halted(
+        world,
+        missing,
+        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, world.strategies()),
+    )
     assert stop_kinds(world) == [] and world.alarms.sent == []
     reason = halted(
         world,
         "^the loss stop fired with no reading",
-        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, unread=True),
+        lambda: world.account().loss(
+            (DEPLOYMENT, RUN, gates.DECISION),
+            world.strategies(),
+            world.report,
+            after="a halt",
+            unread=True,
+        ),
     )
     assert re.search(missing, reason) and world.alarms.sent == [f"account {ACCOUNT}: {reason}"]
     entry = standing(world).standing.entry
@@ -575,14 +599,18 @@ def test_the_ask_fires_the_stop_on_a_reading_past_it() -> None:
 
 def test_a_reading_past_its_stop_at_the_clocks_time_alone_fires_it_too() -> None:
     class Later(Gate):
-        def loss(self, book, snapshot, constraints, inputs, now):  # type: ignore[no-untyped-def]
-            read = super().loss(book, snapshot, constraints, inputs, now)
+        def loss_against(self, book, snapshot, stop, valuation, state, now):  # type: ignore[no-untyped-def]
+            read = super().loss_against(book, snapshot, stop, valuation, state, now)
             if now == gates.DECISION:
                 return read
             return dataclasses.replace(read, loss=read.bound + 1, past=True)
 
     world = World(gate=Later)
-    halted(world, "past its stop", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION))
+    halted(
+        world,
+        "past its stop",
+        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, world.strategies()),
+    )
     entry = standing(world).standing.entry
     assert entry.reason == "the day's loss at the clock's time read past its stop"
     assert stop_kinds(world) == ["stop_fired", "stop_stored"] and len(world.alarms.sent) == 1
@@ -818,7 +846,17 @@ def test_the_page_goes_out_before_the_firings_writes(unread: bool) -> None:
     halted(
         world,
         "no reading" if unread else "past its stop",
-        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, unread=unread),
+        lambda: (
+            world.account().loss(
+                (DEPLOYMENT, RUN, gates.DECISION),
+                world.strategies(),
+                world.report,
+                after="a halt",
+                unread=True,
+            )
+            if unread
+            else world.path().loss(DEPLOYMENT, RUN, gates.DECISION, world.strategies())
+        ),
     )
     assert paged == [1]
 
@@ -850,7 +888,9 @@ def test_a_halt_on_a_reading_past_its_stop_says_which_of_its_writes_failed() -> 
     world = losing()
     world.store.refuse(("create", entry_prefix()), ("create", KEY))
     reason = halted(
-        world, "past its stop", lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION)
+        world,
+        "past its stop",
+        lambda: world.path().loss(DEPLOYMENT, RUN, gates.DECISION, world.strategies()),
     )
     assert "not wholly stored: its entry was not stored" in reason
     assert f"{KEY} was not stored" in reason

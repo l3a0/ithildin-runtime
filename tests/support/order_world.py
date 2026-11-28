@@ -46,6 +46,7 @@ from ithildinruntime.core import (
     Storage,
     StoredBlob,
     StoreUnavailable,
+    StrategyConfig,
     StressRecord,
     TargetPortfolio,
     TimeInForce,
@@ -458,6 +459,10 @@ class World:
             alerts=self.alarms,
             owner_step="the broker's site",
         )
+
+    def strategies(self) -> tuple[StrategyConfig, ...]:
+        """A strategy for each constraints in risk's file, as the day's loss reads its stop."""
+        return tuple(gates.strategy_of(c) for c in self.constraints)
 
     def report(self) -> None:
         self.reports += 1

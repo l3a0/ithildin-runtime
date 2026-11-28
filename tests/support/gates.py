@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from ithildinruntime.core import (
+    RISK_SECTION,
     Bar,
     BarStatus,
     Book,
@@ -30,12 +31,14 @@ from ithildinruntime.core import (
     OrderType,
     Snapshot,
     StopState,
+    StrategyConfig,
     StressRecord,
     StressRecords,
     TimeInForce,
     Valuation,
     Verdict,
     load_sessions,
+    parse_strategy,
 )
 from ithildinruntime.risk import Gate
 from tests.support.quotes import NONE_READ, quote, read_at
@@ -144,6 +147,16 @@ def constraints(**changes: object) -> Constraints:
         "moc_cutoff": 0,
     }
     return Constraints(**fields | changes)  # type: ignore[arg-type]
+
+
+def strategy_of(limits: Constraints) -> StrategyConfig:
+    """The strategy `limits` names, with a `[risk]` section of their `loss_stop` alone.
+
+    That is the one field the day's loss reads of the section, where the risk
+    stage's file stands in for the rest.
+    """
+    made = parse_strategy(limits.strategy, b'instruments = ["GLD", "USO"]\n')
+    return replace(made, sections={**made.sections, RISK_SECTION: {"loss_stop": limits.loss_stop}})
 
 
 def book(

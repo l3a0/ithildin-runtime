@@ -324,6 +324,17 @@ class StageDecision:
         record = self._run.storage.halt_record(halt, cause=cause)
         return DecisionResult(header=self._header(), outputs=self._captures, halt=record)
 
+    def joined(self, halt: Halt, reason: str) -> Halt:
+        """A halt with `reason` in place of `halt`'s, which `halted` links to `halt`'s cause.
+
+        The send stage joins what it read of the day's loss to an upstream halt,
+        and the joined halt is still that upstream halt's, so monitoring, which
+        alarms only on a halt with no cause, does not page on it twice.
+        """
+        made = Halt(reason)
+        self._passed_on += [(made, ref) for passed, ref in self._passed_on if passed is halt]
+        return made
+
     def _key(self, name: str) -> str:
         run = self._run
         return output_key(run.deployment, run.run, self._at, run.stage, name)

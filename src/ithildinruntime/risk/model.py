@@ -48,6 +48,7 @@ from collections.abc import Callable, Mapping
 from decimal import Decimal
 
 from ithildinruntime.core import (
+    RISK_SECTION,
     Book,
     Constraints,
     Halt,
@@ -66,7 +67,7 @@ from ithildinruntime.core import (
 
 __all__ = ["SECTION", "LimitRisk"]
 
-SECTION = "risk"
+SECTION = RISK_SECTION
 _FIELDS = tuple(f.name for f in dataclasses.fields(Constraints) if f.name != "strategy")
 _SHARES = ("max_order_qty", "max_position")
 _COUNTS = ("max_open_orders", "moc_cutoff")

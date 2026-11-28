@@ -714,8 +714,11 @@ def test_a_claim_names_every_planned_order_however_the_loss_reads(why) -> None:
     for name in gates_names(made):
         assert f"{name} is Acknowledged" in reason
     if why == "after the close":
-        # The loss's own halt joins the reason after the orders, and skips neither.
-        assert reason.index("Acknowledged") < reason.index("session's close at")
+        # The reading at the decision's own time is inside its stop, so it counts as read, and
+        # the second reading's halt past the close joins nothing.
+        assert "session's close at" not in reason and "could not be read" not in reason
+    else:
+        assert reason.index("Acknowledged") < reason.index("The day's loss could not be read")
 
 
 def test_a_run_with_no_broker_halts_the_send_stage_before_its_claim() -> None:
