@@ -113,9 +113,11 @@ class SqsQueue:
             # as Python's own error, so no botocore type reaches a caller.
             raise TypeError(f"botocore refused the call before sending it: {error}") from None
         except ClientError as error:
+            # SQS's message names the caller's role ARN on an AccessDenied, and an answer
+            # reaches a page, so only the status and the code are kept, as S3's are.
             detail = error.response.get("Error", {})
-            raise QueueUnavailable(
-                f"{detail.get('Code', '')}: {detail.get('Message', '')}".strip()
-            ) from None
+            status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            code = str(detail.get("Code", ""))
+            raise QueueUnavailable(f"{status or ''} {code}".strip() or "no code") from None
         except BotoCoreError as error:
             raise QueueUnavailable(f"no answer: {error}") from None

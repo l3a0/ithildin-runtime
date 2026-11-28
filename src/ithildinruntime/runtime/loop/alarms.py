@@ -1,9 +1,10 @@
 """Each kind of alarm the receive loop raises.
 
 `core.alarms` says what a `Kind` carries, and `tests/test_alarms.py` checks
-each row it names. A cause leaves out the worker's instance, so one fault on
-every instance of a host pages once, and scopes by the item where two items'
-faults must page apart.
+each row it names. A cause leaves out the worker, because the pager keys a page
+by the component and the cause, so one fault on every instance of a component
+pages once. A cause scopes by the item where two items' faults must page apart.
+A kind that goes with a halt or a held capture says who clears by the mode.
 """
 
 from __future__ import annotations
@@ -29,36 +30,32 @@ UNHANDLED = Kind(
     EXPLAIN,
     Clears.BY_MODE,
 )
-COULD_NOT_FINISH = Kind("loop.could-not-finish", _OPERATIONS, "A worker could not finish an item")
+COULD_NOT_FINISH = Kind(
+    "loop.could-not-finish",
+    _OPERATIONS,
+    "A worker could not finish an item",
+    EXPLAIN,
+    Clears.BY_MODE,
+)
 LOOP_STOPPED = Kind("loop.stopped", _OPERATIONS, "A worker stopped receiving")
 QUEUE_SILENT = Kind("loop.queue-silent", _OPERATIONS, "A worker stopped receiving")
 HOLDING = Kind(
     "loop.holding",
     _OPERATIONS,
     "A worker stopped receiving and holds a halt or a capture S3 has not stored",
+    clears=Clears.BY_MODE,
 )
-LOOP_STOPPED = Kind("loop.stopped", _OPERATIONS, "A worker stopped receiving")
-QUEUE_SILENT = Kind("loop.queue-silent", _OPERATIONS, "A worker stopped receiving")
-HOLDING = Kind(
-    "loop.holding",
+HALT_UNSTORED = Kind(
+    "loop.halt-unstored",
     _OPERATIONS,
-    "A worker stopped receiving and holds a halt or a capture S3 has not stored",
-)
-QUEUE_SILENT = Kind("loop.queue-silent", _OPERATIONS, "A worker stopped receiving")
-HOLDING = Kind(
-    "loop.holding",
-    _OPERATIONS,
-    "A worker stopped receiving and holds a halt or a capture S3 has not stored",
-)
-HOLDING = Kind(
-    "loop.holding",
-    _OPERATIONS,
-    "A worker stopped receiving and holds a halt or a capture S3 has not stored",
-)
-HALT_UNSTORED = Kind("loop.halt-unstored", _OPERATIONS, "A worker could not store a halt")
-HALT_DROPPED = Kind(
-    "loop.halt-dropped", _OPERATIONS, "A halt a worker held was answered by S3 and not stored"
+    "A worker could not store a halt",
+    EXPLAIN,
+    Clears.BY_MODE,
 )
 HALT_DROPPED = Kind(
-    "loop.halt-dropped", _OPERATIONS, "A halt a worker held was answered by S3 and not stored"
+    "loop.halt-dropped",
+    _OPERATIONS,
+    "A halt a worker held was answered by S3 and not stored",
+    EXPLAIN,
+    Clears.BY_MODE,
 )

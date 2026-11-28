@@ -160,10 +160,11 @@ class ForwarderSettings:
     address: str = field(repr=False)
     state: Path
     journal: Path | None = None
+    heartbeat: Path | None = None
 
 
 _FORWARDER_REQUIRED = ("environment", "push_topic", "state")
-_FORWARDER_OPTIONAL = ("journal",)
+_FORWARDER_OPTIONAL = ("journal", "heartbeat")
 
 
 def read_forwarder_settings(variables: Mapping[str, str] | None = None) -> ForwarderSettings:
@@ -178,20 +179,25 @@ def read_forwarder_settings(variables: Mapping[str, str] | None = None) -> Forwa
        pages a day and its marker of a refused push.
     4. `journal`, the directory of the host's journal, where the forwarder runs in a
        container that mounts it. Optional, and `journalctl` reads the default without it.
+    5. `heartbeat`, the file the forwarder touches while it runs, which the host's watchdog
+       reads. Optional, and nothing is touched without it.
+
+    An error names the key, never what it holds, since a person may write the address
+    itself where the file's path belongs.
     """
     values = _values(variables, _FORWARDER_REQUIRED, _FORWARDER_OPTIONAL)
     place = _environment(values["environment"])
-    named = values["push_topic"]
     try:
-        address = Path(named).read_text().strip()
+        address = Path(values["push_topic"]).read_text().strip()
     except (OSError, UnicodeDecodeError) as error:
         raise SettingError(
-            f"the push topic's file {named} cannot be read: {type(error).__name__}"
+            f"the file the key push_topic names cannot be read: {type(error).__name__}"
         ) from None
     if not address.startswith("https://") or any(c.isspace() for c in address):
-        raise SettingError(f"the push topic's file {named} holds no one https address")
+        raise SettingError("the file the key push_topic names holds no one https address")
     state = Path(values["state"])
     if not state.is_dir():
         raise SettingError(f"the forwarder's state directory {state} is not a directory")
     journal = Path(values["journal"]) if "journal" in values else None
-    return ForwarderSettings(place, address, state, journal)
+    heartbeat = Path(values["heartbeat"]) if "heartbeat" in values else None
+    return ForwarderSettings(place, address, state, journal, heartbeat)

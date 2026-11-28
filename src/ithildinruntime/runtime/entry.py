@@ -699,7 +699,10 @@ def forwarder_for(settings: ForwarderSettings, post: Post = https_post) -> Forwa
         refused=state.mark_refused,
     )
     return Forwarder(
-        journal=Journalctl(directory=settings.journal).entries, pager=pager, state=state
+        journal=Journalctl(directory=settings.journal).entries,
+        pager=pager,
+        state=state,
+        beat=_beat(settings.heartbeat),
     )
 
 

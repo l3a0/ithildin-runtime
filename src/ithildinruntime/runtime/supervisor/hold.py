@@ -192,8 +192,8 @@ def hold_after_unclean_stops(
         free = sorted(set(strategies) - set(held))
         if held:
             unheld = (
-                f" No halt of {', '.join(free)} could be stored, so it is not held: pull the "
-                "kill switch of the account."
+                f" No halt of {', '.join(free)} could be stored, so it is not held: pull the kill "
+                "switch of the account."
                 if free
                 else ""
             )
@@ -201,9 +201,8 @@ def hold_after_unclean_stops(
                 HOLD_UNFINISHED(
                     f"{deployment}: the check for an unclean stop could not finish, so "
                     f"{', '.join(held)} stays held and {after}: {reason}.{unheld} The strategies "
-                    "held "
-                    "stay held after a later start succeeds. Start the supervisor's unit again "
-                    "once "
+                    "held stay held after a later start succeeds. Start the supervisor's unit "
+                    "again once "
                     f"the cause is fixed. {who(mode)}",
                     scope=deployment,
                     clears=Clears.on(mode is Mode.LIVE),
@@ -213,12 +212,12 @@ def hold_after_unclean_stops(
             alarm(
                 HOLD_UNFINISHED(
                     f"{deployment}: the check for an unclean stop could not finish and stored no "
-                    "halt "
-                    f"of its own, so it holds no strategy and {after}: {reason}. A halt written "
-                    "earlier may still stand. Pull the kill switch "
-                    "of the account, then start the supervisor's unit again once the cause is "
+                    f"halt of its own, so it holds no strategy and {after}: {reason}. A halt "
+                    "written earlier may still stand. Pull the kill switch of the account, then "
+                    "start the supervisor's unit again once the cause is "
                     "fixed",
                     scope=deployment,
+                    clears=Clears.on(mode is Mode.LIVE),
                 )
             )
         raise HoldFailed(reason) from error

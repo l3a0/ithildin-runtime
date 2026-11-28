@@ -163,13 +163,18 @@ def test_a_line_with_a_field_missing_extra_or_empty_is_refused() -> None:
         Alarm.from_line(good.replace('"reason": "why"', '"reason": " "'))
     with pytest.raises(AlarmUnread):
         Alarm.from_line(good.replace('"clears": "nobody needed"', '"clears": "anyone"'))
+    with pytest.raises(AlarmUnread, match="format 2"):
+        Alarm.from_line(good.replace('"format": 1', '"format": 2'))
 
 
-def test_an_alarm_with_an_empty_or_untyped_field_is_refused() -> None:
-    with pytest.raises(ValueError):
-        KIND("")
+def test_a_blank_reason_still_makes_an_alarm_and_an_untyped_one_is_refused() -> None:
+    # Built before the guard that keeps a channel's error from stopping what follows, so a
+    # blank reason pages rather than raising there.
+    assert KIND("").reason == KIND("  \n").reason == "no reason given"
     with pytest.raises(TypeError):
         KIND(3)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        Alarm("c", "", "s", "r", STATUS, Clears.NOBODY)
 
 
 def test_log_alerts_writes_one_line_per_alarm() -> None:
@@ -212,3 +217,69 @@ def test_an_s3_refusal_keeps_its_status_and_code_and_drops_its_message() -> None
     refusal = _refusal("k", error, None, StoreUnavailable)
     assert refusal.answer == "403 AccessDenied"
     assert "arn:" not in str(refusal) and "123456789012" not in str(refusal)
+
+
+def test_an_sqs_refusal_keeps_its_status_and_code_and_drops_its_message() -> None:
+    from ithildinruntime.adapters.sqs import SqsQueue
+    from ithildinruntime.core import QueueUnavailable
+
+    arn = "arn:aws:sts::123456789012:assumed-role/ithildin-shadow-data/i-0abc"
+
+    def refused():
+        raise ClientError(
+            {
+                "Error": {"Code": "AccessDenied", "Message": f"User: {arn} is not authorized"},
+                "ResponseMetadata": {"HTTPStatusCode": 403},
+            },
+            "ReceiveMessage",
+        )
+
+    queue = SqsQueue.__new__(SqsQueue)
+    with pytest.raises(QueueUnavailable) as raised:
+        queue._call(refused)
+    assert raised.value.answer == "403 AccessDenied"
+    assert "arn:" not in str(raised.value) and "123456789012" not in str(raised.value)
+
+
+# Each kind that goes with a halt or a hold, whose page must never say that nobody needs to
+# clear it, since on a live account only the owner does.
+HALTS = [
+    "execution.in-doubt",
+    "execution.unjournaled",
+    "execution.answer-refused",
+    "execution.loss-stop",
+    "execution.loss-past",
+    "execution.moved-by-another",
+    "execution.other-plan",
+    "execution.claim-taken",
+    "execution.nothing-sent",
+    "execution.legs-stand",
+    "execution.unsettled",
+    "execution.process-ending",
+    "execution.process-ends",
+    "execution.takeover-failed",
+    "execution.lease-rewrite",
+    "execution.lease-absent",
+    "storage.outage",
+    "loop.unhandled",
+    "loop.could-not-finish",
+    "loop.holding",
+    "loop.halt-unstored",
+    "loop.halt-dropped",
+    "supervisor.hold-unfinished",
+    "supervisor.unclean-hold",
+    "supervisor.halt-stands",
+    "supervisor.stall",
+    "supervisor.stop-asked",
+    "supervisor.run-halted",
+    "supervisor.run-halt-unstored",
+    "supervisor.stop-asked-before-halt",
+    "supervisor.run-halt-stored",
+    "supervisor.run-halt-unread",
+]
+
+
+@pytest.mark.parametrize("cause", HALTS)
+def test_a_kind_that_goes_with_a_halt_never_says_nobody_needs_to_clear_it(cause: str) -> None:
+    (kind,) = [k for k in every_kind() if k.cause == cause]
+    assert kind.clears is not Clears.NOBODY

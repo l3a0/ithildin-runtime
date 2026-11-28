@@ -27,6 +27,7 @@ __all__ = [
     "NOTHING_SENT",
     "OPEN_PAST_CLOSE",
     "OTHER_PLAN",
+    "PROCESS_ENDING",
     "PROCESS_ENDS",
     "TAKEOVER_FAILED",
     "UNJOURNALED",
@@ -105,6 +106,15 @@ OPEN_PAST_CLOSE = Kind(
     _ORDER,
     "An order that the book and the broker both hold open past its session's close",
 )
+# The page before the process's last tries, and the one after them, are two kinds, so a
+# pager never holds the outcome as a repeat of the attempt.
+PROCESS_ENDING = Kind(
+    "execution.process-ending",
+    _ORDER,
+    "An execution process that ends while its journal lacks an answer of the broker's",
+    STATUS,
+    Clears.BY_MODE,
+)
 PROCESS_ENDS = Kind(
     "execution.process-ends",
     _ORDER,
@@ -121,12 +131,14 @@ TAKEOVER_FAILED = Kind(
     "execution.takeover-failed",
     _LEASE,
     "A takeover's broker list read, capture write or journal write failed",
+    clears=Clears.BY_MODE,
 )
 LEASE_REWRITE = Kind(
     "execution.lease-rewrite",
     _LEASE,
     "The store does not answer the take of the account's lease, or the rewrite that clears "
     "`owed` after a takeover",
+    clears=Clears.BY_MODE,
 )
 LEASE_ABSENT = Kind(
     "execution.lease-absent",

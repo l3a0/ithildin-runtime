@@ -109,6 +109,13 @@ def test_a_cause_still_going_pages_again_at_15_minutes_saying_how_many_were_held
         "shadow data: at 15. Repeated: 16 alarms of this cause since 2026-11-27T14:00Z, "
         "14 of them held\n"
     )
+    for minute in range(16, 31):
+        paging.offer("data", OUTAGE(f"at {minute}"), START + timedelta(minutes=minute))
+    # The count of held alarms starts again at each page: minutes 16 to 29.
+    assert topic.bodies[-1].startswith(
+        "shadow data: at 30. Repeated: 31 alarms of this cause since 2026-11-27T14:00Z, "
+        "14 of them held\n"
+    )
 
 
 def test_a_cause_that_lasts_a_whole_day_pages_27_times() -> None:
@@ -140,6 +147,55 @@ def test_a_second_cause_pages_at_once_while_the_first_is_held() -> None:
         paging.offer("data", OUTAGE("down", scope="x"), START + timedelta(minutes=3)) is Sent.SENT
     )
     assert len(topic.posts) == 3
+
+
+def test_one_kind_of_fault_in_two_components_pages_twice() -> None:
+    topic = Topic()
+    paging = pager(topic)
+    assert paging.offer("data", OUTAGE("down"), START) is Sent.SENT
+    assert paging.offer("execution", OUTAGE("down"), START + timedelta(minutes=5)) is Sent.SENT
+    assert paging.offer("data", OUTAGE("down"), START + timedelta(minutes=6)) is Sent.HELD
+
+
+def test_an_attempt_and_its_outcome_are_two_causes_and_both_page() -> None:
+    from ithildinruntime.execution.alarms import PROCESS_ENDING, PROCESS_ENDS
+    from ithildinruntime.runtime.supervisor.alarms import (
+        START_UNRECORDED,
+        START_UNWRITTEN,
+        STARTS_UNREAD,
+    )
+
+    topic = Topic()
+    paging = pager(topic)
+    for kinds in ((PROCESS_ENDING, PROCESS_ENDS), (STARTS_UNREAD, START_UNRECORDED)):
+        for second, kind in enumerate(kinds):
+            assert paging.offer("x", kind("x", scope="a"), START + timedelta(seconds=second)) is (
+                Sent.SENT
+            )
+    assert paging.offer("x", START_UNWRITTEN("x", scope="a"), START) is Sent.SENT
+
+
+def test_the_first_page_after_a_cause_ended_names_the_alarms_held_before() -> None:
+    topic = Topic()
+    paging = pager(topic)
+    paging.offer("supervisor", OUTAGE("first"), START)
+    for minute in (1, 2, 3):
+        paging.offer("supervisor", OUTAGE("held"), START + timedelta(minutes=minute))
+    later = START + timedelta(minutes=3) + CAUSE_ENDS_AFTER
+    assert paging.offer("supervisor", OUTAGE("again"), later) is Sent.SENT
+    assert topic.bodies[-1].startswith(
+        "shadow supervisor: again. Before this, 3 alarms of this cause from 2026-11-27T14:00Z "
+        "to 2026-11-27T14:03Z were held and not paged\n"
+    )
+
+
+def test_a_cause_ended_long_ago_is_forgotten() -> None:
+    topic = Topic()
+    paging = pager(topic)
+    for n in range(100):
+        paging.offer("data", OTHER("x", scope=str(n)), START)
+    paging.offer("data", OTHER("x", scope="new"), START + 2 * CAUSE_ENDS_AFTER)
+    assert len(paging._causes) == 1
 
 
 def test_a_cause_silent_for_an_hour_has_ended_and_its_next_alarm_begins_it_again() -> None:
@@ -188,6 +244,14 @@ def test_a_page_that_fits_is_not_cut() -> None:
     assert "…" not in page.body
 
 
+def test_a_page_of_exactly_4096_bytes_is_whole_and_one_byte_more_is_cut() -> None:
+    bare = len(page_of("live", "data", OUTAGE("x")).body.encode()) - 1
+    exact = page_of("live", "data", OUTAGE("x" * (PAGE_BYTES - bare)))
+    assert len(exact.body.encode()) == PAGE_BYTES and "…" not in exact.body
+    over = page_of("live", "data", OUTAGE("x" * (PAGE_BYTES - bare + 1)))
+    assert len(over.body.encode()) <= PAGE_BYTES and "…" in over.body
+
+
 def test_a_title_is_plain_ascii_for_the_header() -> None:
     page = page_of("live", "data", Kind("test.é", "s", "r")("x"))
     page.title.encode("ascii")
@@ -217,6 +281,8 @@ def test_the_page_that_reaches_75_percent_of_the_limit_is_followed_by_one_that_s
     for n in range(PAGES_WARN_AT, PAGES_WARN_AT + 10):
         paging.offer("data", OTHER("restarted", scope=str(n)), START + timedelta(seconds=n))
     assert sum("pages went out today" in body for body in topic.bodies) == 1
+    # The page about the count is counted too.
+    assert paging._count.add(START.date()) == PAGES_WARN_AT + 10 + 2
 
 
 def test_the_count_of_pages_starts_again_each_utc_day() -> None:
@@ -286,13 +352,21 @@ class _Server(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers["Content-Length"]))
         _Server.taken.append((self.path, body, dict(self.headers)))
         self.send_response(_Server.status)
+        if _Server.status == 302:
+            # A redirect is no page: followed, it would read as sent with nothing posted.
+            self.send_header("Location", "/elsewhere")
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        _Server.taken.append((self.path, b"", dict(self.headers)))
+        self.send_response(200)
         self.end_headers()
 
     def log_message(self, *args) -> None:
         pass
 
 
-@pytest.mark.parametrize("status", [200, 429])
+@pytest.mark.parametrize("status", [200, 429, 302])
 def test_https_post_returns_the_status_the_server_answered(status) -> None:
     server = http.server.HTTPServer(("127.0.0.1", 0), _Server)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

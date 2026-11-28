@@ -26,6 +26,7 @@ from ithildinruntime.core import (
     RUN_RECORD_FORMAT,
     Alarm,
     BeforeClose,
+    Clears,
     Mode,
     OrderIntent,
     Plan,
@@ -502,6 +503,11 @@ def test_a_previous_run_with_no_stop_holds_every_strategy_and_journals_one_pause
     assert "2026-10-01 ended uncleanly: it stored no stop" in alarm
     assert f"Open positions: {CHAN} GLD +4" in alarm
     assert "The operator clears it" in alarm
+    (raised,) = world.raised()
+    assert (raised.cause, raised.clears) == (
+        f"supervisor.unclean-hold:{DEPLOYMENT}",
+        Clears.OPERATOR,
+    )
 
 
 def test_a_live_hold_names_the_owner(world: World) -> None:
@@ -512,6 +518,7 @@ def test_a_live_hold_names_the_owner(world: World) -> None:
     # A live plan is a different plan, so the start ends there, after the hold.
     (alarm, *_) = world.alarms()
     assert "The owner clears it" in alarm and "operator" not in alarm
+    assert world.raised()[0].clears is Clears.OWNER
 
 
 def test_every_strategy_the_book_holds_is_held_with_the_tables(world: World) -> None:
@@ -825,6 +832,7 @@ def test_a_stall_alarm_says_a_later_restart_can_still_store_the_stop(world: Worl
     world.supervisor().run(TODAY)
     (alarm,) = world.alarms()
     assert "unless the missing result lands and a person starts the supervisor's unit" in alarm
+    assert world.raised()[0].clears is Clears.OPERATOR
 
 
 def test_a_stop_asked_before_the_runs_stop_ends_with_its_own_code(world: World) -> None:
@@ -1258,8 +1266,9 @@ def test_a_standing_hold_on_live_names_the_owner(world: World) -> None:
     world.opened()
     world.put(_hold_key(), b"{}")
     world.supervisor(mode=Mode.LIVE).run(TODAY)
-    standing = [a for a in world.alarms() if "still held" in a]
-    assert standing and "The owner clears it" in standing[0]
+    standing = [a for a in world.raised() if "still held" in a.reason]
+    assert standing and "The owner clears it" in standing[0].reason
+    assert standing[0].clears is Clears.OWNER
 
 
 # Round 2 of the review: what no test reached

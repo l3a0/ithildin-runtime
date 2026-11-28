@@ -50,7 +50,7 @@ from ithildinruntime.core import (
     read_records,
 )
 from ithildinruntime.execution.account import Account
-from ithildinruntime.execution.alarms import PROCESS_ENDS
+from ithildinruntime.execution.alarms import PROCESS_ENDING, PROCESS_ENDS
 from ithildinruntime.execution.brokers.faults import Faults
 from ithildinruntime.execution.brokers.log import SimulatedAccount
 from ithildinruntime.execution.brokers.prices import StoredPrices
@@ -238,7 +238,7 @@ class ExecutionWorker:
             step = held if _fired(owed) else plain
             # Paged ahead of the tries, which can outlast the host's stop.
             account.alarm(
-                PROCESS_ENDS(
+                PROCESS_ENDING(
                     f"the process is ending before the journal holds {'; '.join(owed)}, and "
                     f"tries once more. {step}"
                 ),

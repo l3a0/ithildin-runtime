@@ -317,4 +317,105 @@ def test_a_held_repeat_from_the_journal_is_not_paged(settings_file) -> None:
     made = forwarder(settings_file, journal, topic)
     made.run()
     assert len(topic.bodies) == 1
-    assert made.handle(journal.add("ithildin-data.service", line("data", "x"), 601)) is Sent.HELD
+    repeat = journal.add("ithildin-supervisor.service", line("supervisor", "x"), 601)
+    assert made.handle(repeat) is Sent.HELD
+
+
+# Round 1 of the review
+
+
+def test_an_address_written_where_its_file_belongs_is_never_printed(
+    tmp_path, settings_file, monkeypatch, capsys
+) -> None:
+    text = settings_file.read_text().replace(str(tmp_path / "topic"), ADDRESS)
+    settings_file.write_text(text)
+    monkeypatch.setenv("ITHILDIN_SETTINGS", str(settings_file))
+    with pytest.raises(SystemExit) as ended:
+        entry.forwarder_main()
+    assert ended.value.code == entry.EXIT_SETTING
+    err = capsys.readouterr().err
+    assert "the file the key push_topic names cannot be read" in err
+    assert "secret-topic-name" not in err and "ntfy.example" not in err
+
+
+@pytest.mark.parametrize("held", [f"{ADDRESS}\nhttps://other/x", f"{ADDRESS} x", "ftp://a/b"])
+def test_a_topic_file_that_holds_no_one_https_address_is_refused(
+    tmp_path, settings_file, held
+) -> None:
+    (tmp_path / "topic").write_text(held)
+    with pytest.raises(SettingError, match="holds no one https address") as refused:
+        read_forwarder_settings({"ITHILDIN_SETTINGS": str(settings_file)})
+    assert "secret-topic-name" not in str(refused.value)
+
+
+def test_the_journal_and_heartbeat_keys_reach_the_forwarder(tmp_path, settings_file) -> None:
+    beat = tmp_path / "beat"
+    settings_file.write_text(
+        settings_file.read_text() + f'journal = "/var/log/journal"\nheartbeat = "{beat}"\n'
+    )
+    settings = read_forwarder_settings({"ITHILDIN_SETTINGS": str(settings_file)})
+    assert (settings.journal, settings.heartbeat) == (Path("/var/log/journal"), beat)
+    made = entry.forwarder_for(settings, post=Topic())
+    assert "--directory=/var/log/journal" in made._journal.__self__.arguments(None)
+    made._journal = Journal()
+    made.run()
+    assert beat.exists(), "the forwarder touched its heartbeat as it started"
+
+
+def test_the_forwarder_beats_while_it_runs(settings_file) -> None:
+    import time
+
+    beats: list[float] = []
+
+    def slow(after):
+        for n in range(5):
+            time.sleep(0.05)
+            yield Entry(f"c{n}", "sshd.service", "noise", START)
+
+    settings = read_forwarder_settings({"ITHILDIN_SETTINGS": str(settings_file)})
+    made = entry.forwarder_for(settings, post=Topic())
+    made = Forwarder(
+        journal=slow,
+        pager=made._pager,
+        state=made._state,
+        beat=lambda: beats.append(time.monotonic()),
+        beat_every=0.02,
+    )
+    made.run()
+    assert len(beats) >= 3, beats
+
+
+def test_a_state_write_that_fails_leaves_the_cursor_before_the_line(
+    tmp_path, settings_file
+) -> None:
+    journal, topic = Journal(), Topic()
+    journal.add("sshd.service", "noise")
+    journal.add("ithildin-data.service", line("data", "a stall"), seconds=1)
+    topic.status = 429
+    made = forwarder(settings_file, journal, topic)
+
+    def broken(refusal) -> None:
+        raise OSError("the state directory is full")
+
+    made._pager._refused = broken
+    with pytest.raises(OSError):
+        made.run()
+    assert (tmp_path / "state" / "cursor").read_text() == "c0", "a restart reads the line again"
+
+
+def test_two_units_unreadable_lines_page_apart(settings_file) -> None:
+    journal, topic = Journal(), Topic()
+    journal.add("ithildin-alpha.service", "ALARM alpha: old form")
+    journal.add("ithildin-alpha@b.service", "ALARM alpha: old form", seconds=1)
+    journal.add("ithildin-risk.service", "ALARM risk: old form", seconds=2)
+    forwarder(settings_file, journal, topic).run()
+    assert len(topic.bodies) == 3, "each unit's unreadable line is its own cause"
+
+
+def test_a_link_planted_at_a_part_file_is_not_followed(tmp_path) -> None:
+    target = tmp_path / "elsewhere"
+    target.write_text("keep")
+    (tmp_path / ".cursor.part").symlink_to(target)
+    ForwarderState(tmp_path).save_cursor("c1")
+    assert target.read_text() == "keep"
+    assert (tmp_path / "cursor").read_text() == "c1"

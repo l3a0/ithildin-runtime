@@ -152,4 +152,9 @@ class Kind:
 
     def __call__(self, reason: str, *, scope: str = "", clears: Clears | None = None) -> Alarm:
         cause = f"{self.cause}:{scope}" if scope else self.cause
-        return Alarm(cause, reason, self.section, self.row, self.first, clears or self.clears)
+        # A blank reason still pages, since a caller builds the alarm before the guard that
+        # keeps a channel's error from stopping what follows.
+        said = reason if isinstance(reason, str) and reason.strip() else "no reason given"
+        if not isinstance(reason, str):
+            raise TypeError(f"an alarm's reason is text, not {type(reason).__name__}")
+        return Alarm(cause, said, self.section, self.row, self.first, clears or self.clears)

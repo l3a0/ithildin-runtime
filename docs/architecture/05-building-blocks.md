@@ -1311,7 +1311,7 @@ classDiagram
         +path(Broker, report) OrderPath
         +view(report) View
         +record(View, record, report) View
-        +alarm(reason, report) str
+        +alarm(Alarm, report) str
         +settle(report)
         +unstored() list
     }
@@ -1336,7 +1336,7 @@ classDiagram
     }
     class Monitoring {
         -Alerts alerts
-        +alarm(reason)
+        +alarm(Alarm)
         +report(run)
     }
     class core {

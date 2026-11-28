@@ -23,6 +23,7 @@ from ithildinruntime.core import (
     BlobRef,
     BrokerState,
     BrokerUnavailable,
+    Clears,
     Halt,
     HardCaps,
     JournalAck,
@@ -849,6 +850,10 @@ def test_6_every_other_outcome_is_in_doubt(outcome: Outcome) -> None:
     assert isinstance(found, InDoubtEntry) and (found.raw, found.cut) == (b"what", False)
     (alarm,) = world.alarms.sent
     assert alarm.startswith(f"account {ACCOUNT}: the order {ID} is in doubt") and "b-1" in alarm
+    # Scoped to the order and the account, so two orders or two accounts page apart.
+    (raised,) = world.alarms.alarms
+    assert raised.cause == f"execution.in-doubt:{ID}:{ACCOUNT}"
+    assert raised.clears is Clears.BY_MODE and raised.row == "An order first journaled `InDoubt`"
 
 
 @pytest.mark.parametrize(

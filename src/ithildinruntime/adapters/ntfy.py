@@ -6,8 +6,11 @@ no page and no error text here. The host's provisioning step writes it to
 memory-backed storage, and only the forwarder on the host and monitoring read
 it, as `adapters/alerts.py` says.
 
-**One page per cause.** A `Pager` keys each alarm by its `cause` and holds, in
-memory, when that cause began, when it was last seen and when it last paged.
+**One page per cause.** A `Pager` keys each alarm by its component and its
+`cause`, and holds, in memory, when that cause began, when it was last seen and
+when it last paged. The component leaves out the instance, so one fault on
+every instance of a component pages once, and the same kind of fault in two
+components pages twice.
 
 1. An alarm of a cause not seen for `Repeats.ends_after` pages at once.
 2. One of a cause still going pages again once `Repeats.first` has passed
@@ -17,8 +20,9 @@ memory, when that cause began, when it was last seen and when it last paged.
 3. Any other alarm is held. A held alarm counts as sent, so an `Alerts` that
    wraps the pager raises only on a push the server refused.
 
-A repeat names how many alarms of the cause arrived since it began. A second
-cause pages at once under its own key. The keys live in memory, because a
+A repeat names how many alarms of the cause arrived since it began, and the
+first page after a cause ended names how many of its alarms were held and never
+paged. A second cause pages at once under its own key. The keys live in memory, because a
 machine holds no state and the store may be what is down. The price is that a
 restart pages each cause again at once, which is the cheaper failure than a
 dropped page.
@@ -178,11 +182,21 @@ def page_of(environment: str, component: str, alarm: Alarm, again: str = "") -> 
     return Page(title[:200], f"{first}{tail}")
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Follows no redirect, which would turn the post into a GET and read as sent."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def https_post(address: str, body: bytes, headers: Mapping[str, str], timeout: float = 10.0) -> int:
-    """Post `body` to `address`, and return the status the server answered."""
+    """Post `body` to `address`, and return the status the server answered, a redirect's too."""
     request = urllib.request.Request(address, data=body, headers=dict(headers), method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as answer:  # noqa: S310
+        with _OPENER.open(request, timeout=timeout) as answer:
             return int(answer.status)
     except urllib.error.HTTPError as error:
         return int(error.code)
@@ -217,10 +231,19 @@ class Pager:
 
     def offer(self, component: str, alarm: Alarm, at: datetime) -> Sent:
         """Page `alarm` now, or hold it as a repeat of a cause that paged within its interval."""
-        cause = self._causes.get(alarm.cause)
+        key = f"{component}:{alarm.cause}"
+        cause = self._causes.get(key)
         if cause is None or at - cause.seen >= self._repeats.ends_after:
-            self._causes[alarm.cause] = _Cause(began=at, seen=at, paged=at)
-            return self._send(component, alarm, at, "")
+            self._forget(at)
+            self._causes[key] = _Cause(began=at, seen=at, paged=at)
+            held = (
+                f". Before this, {cause.since_page} alarms of this cause from "
+                f"{cause.paged:%Y-%m-%dT%H:%M}Z to {cause.seen:%Y-%m-%dT%H:%M}Z were held and "
+                "not paged"
+                if cause is not None and cause.since_page
+                else ""
+            )
+            return self._send(component, alarm, at, held)
         cause.seen, cause.alarms = at, cause.alarms + 1
         young = at - cause.began < self._repeats.first_for
         interval = self._repeats.first if young else self._repeats.later
@@ -234,6 +257,16 @@ class Pager:
         cause.paged, cause.since_page = at, 0
         return self._send(component, alarm, at, again)
 
+    def _forget(self, at: datetime) -> None:
+        """Drop each cause that has ended, so a fault that keeps naming new causes holds no memory.
+
+        A cause that ended with alarms held keeps its count until its own next alarm, which
+        names them, or until twice `Repeats.ends_after` has passed.
+        """
+        ended = 2 * self._repeats.ends_after
+        for key in [k for k, c in self._causes.items() if at - c.seen >= ended]:
+            del self._causes[key]
+
     def _send(self, component: str, alarm: Alarm, at: datetime, again: str) -> Sent:
         sent = self._push(alarm.cause, page_of(self._environment, component, alarm, again), at)
         if sent is not Sent.SENT:
@@ -242,7 +275,7 @@ class Pager:
             near = PAGES_NEAR_LIMIT(
                 f"{self._load.warn_at} pages went out today, of the push server's limit of about "
                 f"{self._load.limit} a day from one address. Past the limit the server refuses "
-                "each page, and the dead-man check pages in its place without the cause"
+                "each page, and each refusal leaves only the marker of a refused push"
             )
             if self._push(near.cause, page_of(self._environment, "channel", near), at) is Sent.SENT:
                 self._count.add(at.date())

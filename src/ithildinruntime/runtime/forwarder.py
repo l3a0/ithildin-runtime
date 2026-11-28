@@ -28,6 +28,26 @@ forwarder that reads it ship together. #202 builds its unit.
    alarm tries again at its interval.
 6. **Its count of pages a day** is kept beside the cursor too, so a restart of
    its unit does not start the day's count again.
+7. **It beats while it runs.** It touches its heartbeat file every
+   `BEAT_EVERY` seconds, as each worker does, so the host's watchdog, which
+   #202 points at it, sees a forwarder that stopped. A forwarder that runs and
+   hears nothing is not told apart from a quiet host, and #260's drills fire a
+   line through it.
+
+The marker of a refused push holds the latest refusal and is never removed:
+monitoring compares its time with that of its own last ping. Every file the
+forwarder writes replaces the old one whole, and a planted link in the state
+directory is refused rather than followed.
+
+The forwarder needs three things of #202, which `07-deployment.md`'s
+`## Where it runs` states.
+
+1. Each runtime unit is named `ithildin-<component>[@<instance>].service`,
+   which `RUNTIME_UNIT` reads.
+2. Each container's standard error reaches the journal under its own unit, as
+   a container run attached in its unit's process does, and not under the
+   Docker daemon's, as Docker's own journald log driver would write it.
+3. A journal it reads from a mounted directory is mounted read-only.
 
 A journal that ends, or an entry it cannot read, ends the process with an
 error. Its unit restarts it from the last cursor, and its own `OnFailure`
@@ -40,6 +60,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -51,6 +72,7 @@ from ithildinruntime.core import Alarm, AlarmUnread
 from .alarms import FORWARDER_UNREAD
 
 __all__ = [
+    "BEAT_EVERY",
     "RUNTIME_UNIT",
     "Entry",
     "FileDayCount",
@@ -61,6 +83,9 @@ __all__ = [
     "entry_of",
     "runtime_component",
 ]
+
+# Seconds between the forwarder's touches of its heartbeat file.
+BEAT_EVERY = 10.0
 
 # The runtime's units, one per component and an instance after an `@`. The forwarder's own,
 # `ithildin-forwarder.service`, is left out.
@@ -152,9 +177,14 @@ class Journalctl:
 
 
 def _write(path: Path, text: str) -> None:
-    """Replace `path` with `text` whole, so a crash leaves the old file or the new one."""
+    """Replace `path` with `text` whole, so a crash leaves the old file or the new one.
+
+    The part file is made afresh, owner-only, and never through a link planted in its place.
+    """
     part = path.with_name(f".{path.name}.part")
-    with open(part, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as file:
+    part.unlink(missing_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    with open(part, "w", opener=lambda p, _: os.open(p, flags, 0o600)) as file:
         file.write(text)
     os.replace(part, path)
 
@@ -211,16 +241,43 @@ class Forwarder:
         journal: Callable[[str | None], Iterable[Entry]],
         pager: Pager,
         state: ForwarderState,
+        beat: Callable[[], None] = lambda: None,
+        beat_every: float = BEAT_EVERY,
     ) -> None:
         self._journal = journal
         self._pager = pager
         self._state = state
+        self._beat = beat
+        self._beat_every = beat_every
 
     def run(self) -> None:
-        """Handle each entry after the saved cursor, saving the cursor after each one."""
-        for entry in self._journal(self._state.cursor()):
-            self.handle(entry)
-            self._state.save_cursor(entry.cursor)
+        """Handle each entry after the saved cursor, saving the cursor after each one.
+
+        It beats at once and then every `beat_every` seconds until the journal ends.
+        """
+        stop = threading.Event()
+
+        def beat() -> None:
+            try:
+                self._beat()
+            except OSError:
+                # A heartbeat file that cannot be touched reads as stopped, which pages.
+                pass
+
+        def beating() -> None:
+            while not stop.wait(self._beat_every):
+                beat()
+
+        beat()
+
+        beater = threading.Thread(target=beating, name="forwarder-beat", daemon=True)
+        beater.start()
+        try:
+            for entry in self._journal(self._state.cursor()):
+                self.handle(entry)
+                self._state.save_cursor(entry.cursor)
+        finally:
+            stop.set()
 
     def handle(self, entry: Entry) -> Sent | None:
         """Page one entry where it is a runtime unit's alarm, and say what became of it."""

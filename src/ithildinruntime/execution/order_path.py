@@ -1315,7 +1315,8 @@ class OrderPath:
         shared.alarm(
             LEASE_TAKEN(
                 f"the account's lease was taken over from {whose}, and the broker's order list "
-                f"is stored at {ref.key}{late_said}"
+                f"is stored at {ref.key}{late_said}",
+                scope=ref.key,
             )
         )
         held = self._lease
