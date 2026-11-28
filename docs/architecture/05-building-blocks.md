@@ -1834,7 +1834,7 @@ It first makes the checks `core.tighten` makes of the constraints and of the cap
 
 It gives back the caps with m the largest of their own and of every record that counts. A record counts when it is of the strategy, is not withdrawn, and names as the leg that made its move one the constraints limit. Its other legs do not matter, because that leg made the move. So a record can only tighten, and `Verdict` carries the m the check used.
 
-The gate's `loss` does not hold the caps, because the day's loss reads no m. It reads no other stress field either, and no stress age. So where the owner rewrites the caps after the risk stage has run, with a stress move the hold refuses, one outside its range or one past its age, the loss is still read. A move outside its range or past its age then halts the decision at the send stage's step 5 once the loss reads inside its stop, and one the hold alone refuses halts at `check`.
+The gate's `loss` does not hold the caps, because the day's loss reads no m. It reads no other stress field either, and no stress age. So where the owner rewrites the caps after the risk stage has run, with a stress move the hold refuses, one outside its range or one past its age, the loss is still read. A move outside its range or past its age then halts the decision at the send stage's step 5 once the loss reads inside its stop, and an order the hold alone refuses halts at `check`.
 
 The price is seven things.
 

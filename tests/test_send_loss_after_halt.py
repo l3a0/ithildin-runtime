@@ -715,6 +715,7 @@ def test_a_journal_that_does_not_answer_at_the_claim_fires_nothing() -> None:
     paged = len(made.alarms.sent)
     result = made.send_attempt()
     assert result.halt is not None and "the journal could not be read" in result.halt.reason
+    assert "fired with no reading" not in result.halt.reason
     assert made.keeper.losses == []
     made.store.before = lambda number, op, key: None
     assert stop_kinds(made) == []
