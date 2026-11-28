@@ -211,6 +211,16 @@ def test_a_cause_ended_keeps_its_held_count_while_other_causes_come_and_go() -> 
     assert "Before this, 1 alarms of this cause" in topic.bodies[-1]
 
 
+def test_a_held_count_older_than_two_hours_is_not_named() -> None:
+    topic = Topic()
+    paging = pager(topic)
+    paging.offer("data", OUTAGE("first"), START)
+    paging.offer("data", OUTAGE("held"), START + timedelta(minutes=1))
+    later = START + timedelta(minutes=1) + 2 * CAUSE_ENDS_AFTER
+    assert paging.offer("data", OUTAGE("again"), later) is Sent.SENT
+    assert "Before this" not in topic.bodies[-1]
+
+
 def test_a_cause_ended_long_ago_is_forgotten() -> None:
     topic = Topic()
     paging = pager(topic)

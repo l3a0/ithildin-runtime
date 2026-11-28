@@ -204,7 +204,7 @@ class Supervisor:
         self._boot = boot
         self._timer = timer
         self._alerts = alerts
-        # Who clears each alarm is read from the mode here, once, and no call site says it.
+        # Who clears each alarm is read from the mode here, once, and no call site passes it.
         live = self._mode is Mode.LIVE
         self._raise: Callable[[Kind, str], None] = lambda kind, reason: alerts.alarm(
             raised(kind, reason, deployment=deployment, live=live)

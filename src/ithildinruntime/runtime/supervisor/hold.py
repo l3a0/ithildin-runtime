@@ -155,7 +155,7 @@ def hold_after_unclean_stops(
     strategy of `strategies` at the open of today's session.
     """
     today_run = run_part(mode, today, today)
-    # Who clears each alarm is read from the mode here, once, and no call site says it.
+    # Who clears each alarm is read from the mode here, once, and no call site passes it.
     live = mode is Mode.LIVE
 
     def raise_(kind: Kind, reason: str) -> None:

@@ -236,6 +236,9 @@ class Pager:
         """Page `alarm` now, or hold it as a repeat of a cause that paged within its interval."""
         key = alarm.cause
         cause = self._causes.get(key)
+        if cause is not None and at - cause.seen >= 2 * self._repeats.ends_after:
+            # Past two hours a cause's held count is forgotten, whether or not `_forget` ran.
+            cause = None
         if cause is None or at - cause.seen >= self._repeats.ends_after:
             self._forget(at)
             self._causes[key] = _Cause(began=at, seen=at, paged=at)

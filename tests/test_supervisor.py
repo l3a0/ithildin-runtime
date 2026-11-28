@@ -822,6 +822,8 @@ def test_a_halted_runs_alarm_says_what_to_do_and_who_clears_it(world: World) -> 
     assert "confirm the account's positions there" in alarm
     assert "Once the halt is stored, the next session's start holds every strategy" in alarm
     assert "The operator clears it" in alarm
+    (raised,) = world.raised()
+    assert (raised.cause, raised.clears) == (f"supervisor.run-halted:{DEPLOYMENT}", Clears.OPERATOR)
 
 
 def test_a_stall_alarm_says_a_later_restart_can_still_store_the_stop(world: World) -> None:

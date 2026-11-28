@@ -4,7 +4,7 @@
 each row it names. The supervisor knows its mode, so every alarm it and its
 hold check raise goes through `raised`, which turns a kind's "by the mode" into
 the operator or the owner on paper and the owner alone on live. No call site
-says who clears on its own. An attempt and its outcome,
+passes who clears on its own. An attempt and its outcome,
 such as a start record that could not be read and the start it then left
 unrecorded, are two kinds, so a pager never holds the outcome as a repeat.
 """

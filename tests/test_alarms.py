@@ -306,10 +306,28 @@ def test_no_supervisor_alarm_says_who_clears_on_its_own() -> None:
 
     root = Path(ithildinruntime.__file__).parent / "runtime" / "supervisor"
     for name in ("__init__.py", "hold.py"):
-        calls = [
-            n for n in ast.walk(ast.parse((root / name).read_text())) if isinstance(n, ast.Call)
-        ]
+        tree = ast.parse((root / name).read_text())
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
         named = [ast.unparse(c.func) for c in calls]
         assert named.count("raised") == 1, name
         assert sum(f.endswith("alarm") and not f.endswith("_alarm") for f in named) == 1, name
         assert not any(k.arg == "clears" for c in calls for k in c.keywords), name
+        # No alias of the channel's alarm: every mention of it is the one call above, or the
+        # supervisor handing it to the hold check, which reads the mode for itself.
+        handed = {
+            id(k.value)
+            for c in calls
+            if ast.unparse(c.func) == "hold_after_unclean_stops"
+            for k in c.keywords
+            if k.arg == "alarm"
+        }
+        mentions = [
+            n
+            for n in ast.walk(tree)
+            if id(n) not in handed
+            and (
+                (isinstance(n, ast.Attribute) and n.attr == "alarm")
+                or (isinstance(n, ast.Name) and n.id == "alarm" and isinstance(n.ctx, ast.Load))
+            )
+        ]
+        assert len(mentions) == 1, (name, [ast.unparse(m) for m in mentions])
