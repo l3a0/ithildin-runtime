@@ -315,9 +315,14 @@ def test_the_loss_reading_still_halts_on_a_valuation_of_another_session() -> Non
     assert world.every_kind().count("stop_fired") == 0
 
 
-@pytest.mark.parametrize("value", [Decimal("0.0001"), Decimal(0), Decimal(-5)])
+@pytest.mark.parametrize(
+    "value",
+    [Decimal(0), Decimal(-5), Decimal("0.0001")],
+    ids=["zero", "below-zero", "a-step-above-zero"],
+)
 def test_the_loss_reading_fires_on_a_valuation_at_or_below_zero(value: Decimal) -> None:
-    """`tighten` halts there, where the loss is largest, and the halt path's reading fires."""
+    """`tighten` halts on a V at or below zero, and the halt path's reading, which never calls it,
+    fires there as it does on a V a step above."""
     # Short 1,000 GLD sold at 1 and marked at 1,002 leaves the account worth -1,000.
     world = World(
         position=Decimal(-1000),
@@ -660,25 +665,34 @@ def test_a_settle_that_halts_reads_as_unread_and_fires_nothing(path: str) -> Non
 
     made.account._shared.unstored.settle = refused  # type: ignore[method-assign]
     result = made.send_attempt()
-    assert result.halt is not None and result.halt.reason.startswith(upstream)
-    # Step 2 halts on the upstream result, or the claim halts, and the reading's own settle halts.
-    assert result.halt.reason.endswith(
+    suffix = (
         ". The day's loss could not be read: the journal still does not take the answer of order X"
     )
+    assert result.halt is not None
+    # Step 2 halts on the upstream result, or the claim halts, and the reading's own settle halts.
+    if path == "a-halt":
+        assert result.halt.reason == upstream + suffix
+    else:
+        # The claim's own settle was the first call, and the reading's the second.
+        assert len(calls) == 2
+        assert result.halt.reason.startswith(upstream) and result.halt.reason.endswith(suffix)
     assert "fired with no reading" not in result.halt.reason
     assert stop_kinds(made) == []
 
 
 @pytest.mark.parametrize(
-    "rewrite",
+    ("rewrite", "why"),
     [
-        {"stress_move": gates.d("0.01"), "stress_low": gates.d("0.02")},
-        {"stress_through": date(2026, 1, 2), "stress_max_age_days": 1},
-        None,
+        (
+            {"stress_move": gates.d("0.01"), "stress_low": gates.d("0.02")},
+            "the hard caps' stress_move is 0.01",
+        ),
+        ({"stress_through": date(2026, 1, 2), "stress_max_age_days": 1}, "past the 1 allowed"),
+        (None, "the caps blob holds no share_step"),
     ],
     ids=["stress-move-below-its-low", "stress-through-past-its-age", "no-share-step"],
 )
-def test_step_5_still_halts_on_caps_an_order_could_not_use(rewrite) -> None:
+def test_step_5_still_halts_on_caps_an_order_could_not_use(rewrite, why: str) -> None:
     """The loss reads inside its stop, and a decision that plans no order halts before its plan."""
     made = short_then(Decimal(1000))
     if rewrite is None:
@@ -688,5 +702,21 @@ def test_step_5_still_halts_on_caps_an_order_could_not_use(rewrite) -> None:
         made.rewrite_caps(**rewrite)
     result = made.send_stage()
     assert result.halt is not None and FIRED not in result.halt.reason
-    assert "the hard caps'" in result.halt.reason or "the caps blob holds no" in result.halt.reason
+    assert why in result.halt.reason
     assert "decision" not in made.kinds(made.before) and stop_kinds(made) == []
+
+
+def test_a_journal_that_does_not_answer_at_the_claim_fires_nothing() -> None:
+    """The claim cannot tell whether a plan exists, so it halts as an outage, as before #247."""
+    made = short_then()
+    key = claim_key(DEPLOYMENT, made.run, made.at)
+    made.store.put(key, b'{"token":"dead","writer":"' + b"f" * 32 + b'"}')
+    made.store.refuse(("*", "journal/"))
+    paged = len(made.alarms.sent)
+    result = made.send_attempt()
+    assert result.halt is not None and "the journal could not be read" in result.halt.reason
+    assert made.keeper.losses == []
+    made.store.before = lambda number, op, key: None
+    assert stop_kinds(made) == []
+    (page,) = made.alarms.sent[paged:]
+    assert "the journal could not be read" in page
