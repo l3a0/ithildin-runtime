@@ -17,6 +17,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from ithildinruntime.core import (
     CONSTRAINTS_OUTPUT,
@@ -24,6 +25,7 @@ from ithildinruntime.core import (
     FORECAST_OUTPUT,
     PORTFOLIO_STAGE,
     RECOVER_STAGE,
+    RISK_SECTION,
     RISK_STAGE,
     SCHEDULE_OUTPUT,
     SEND_STAGE,
@@ -75,6 +77,15 @@ def strategy(name: str = CHAN, execution: str = EXECUTION) -> StrategyConfig:
     return parse_strategy(name, f'instruments = ["GLD", "USO"]\n{execution}'.encode())
 
 
+def risked(made: StrategyConfig, stop: Decimal) -> StrategyConfig:
+    """`made` with a `[risk]` section whose `loss_stop` is `stop`, as the day's loss reads it.
+
+    Only the field the loss reads is written, since the risk stage's own file
+    stands in for the rest of the section here.
+    """
+    return replace(made, sections={**made.sections, RISK_SECTION: {"loss_stop": stop}})
+
+
 class Gatekeeper:
     """The real gate, but for the answers a case plants by order and by call.
 
@@ -89,6 +100,8 @@ class Gatekeeper:
         self._gate = gate
         self.planted: dict[str, list[object]] = {}
         self.asked: list[str] = []
+        # Each moment the day's loss was read at with no order, as the order path reads it.
+        self.losses: list[datetime] = []
 
     def check(self, intent, book, snapshot, constraints, inputs, now) -> Verdict:
         name = intent.client_order_id
@@ -111,6 +124,10 @@ class Gatekeeper:
 
     def loss(self, *args, **kwargs):
         return self._gate.loss(*args, **kwargs)
+
+    def loss_against(self, book, snapshot, stop, valuation, state, now):
+        self.losses.append(now)
+        return self._gate.loss_against(book, snapshot, stop, valuation, state, now)
 
 
 @dataclass
@@ -220,10 +237,37 @@ class SendWorld(RecoverWorld):
     def portfolio_halted(self, at: datetime, reason: str) -> None:
         """Store portfolio construction's result as a halt, as the loop stores a stage's halt."""
         self.targets(at, {})
-        key = result_key(DEPLOYMENT, self.run, at, PORTFOLIO_STAGE)
+        self.stage_halted(at, PORTFOLIO_STAGE, reason)
+
+    def result_key(self, stage: str) -> str:
+        """The key of a stage's result at the newest decision."""
+        return result_key(DEPLOYMENT, self.run, self.at, stage)
+
+    def result_ref(self, stage: str) -> BlobRef:
+        """A stage's stored result at the newest decision, as a halt's `cause` names it."""
+        key = self.result_key(stage)
+        return BlobRef(key, sha256_of(self.store.blobs[key]))
+
+    def stage_halted(self, at: datetime, stage: str, reason: str) -> BlobRef:
+        """Store a stage's stored result again as a halt, and give the halted result's ref."""
+        key = result_key(DEPLOYMENT, self.run, at, stage)
         header = decode(self.store.blobs[key], DecisionResult).header
         halted = DecisionResult(header, (), HaltRecord(reason, None, (), (), ()))
-        self.store.put(key, encode(halted))
+        data = encode(halted)
+        self.store.put(key, data)
+        return BlobRef(key, sha256_of(data))
+
+    def risked(self) -> tuple[StrategyConfig, ...]:
+        """Each strategy, given the `loss_stop` its constraints in risk's file hold.
+
+        A strategy with a `[risk]` section of its own keeps it, and one that no
+        constraints name is left with none.
+        """
+        stops = {c.strategy: c.loss_stop for c in (self.constraints, *self.others)}
+        return tuple(
+            s if RISK_SECTION in s.sections or s.name not in stops else risked(s, stops[s.name])
+            for s in self.strategies
+        )
 
     def sender(
         self,
@@ -237,7 +281,7 @@ class SendWorld(RecoverWorld):
             brokers or (lambda at: self.broker()),
             self.storage(),
             self.clock,  # type: ignore[arg-type]
-            strategies=self.strategies,
+            strategies=self.risked(),
             writer=writer,
             stage=SEND_STAGE,
             kind=StageKind.CAPTURING,
@@ -317,4 +361,4 @@ class SendWorld(RecoverWorld):
         return found
 
 
-__all__ = ["CHAN", "Gatekeeper", "SendWorld", "strategy"]
+__all__ = ["CHAN", "Gatekeeper", "SendWorld", "risked", "strategy"]

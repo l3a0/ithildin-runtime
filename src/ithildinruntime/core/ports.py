@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol
 
 from .queue import Event
@@ -37,6 +38,7 @@ from .records import (
     PositionsRead,
     RecordsRead,
     Snapshot,
+    StopState,
     StoredBlob,
     Valuation,
     Verdict,
@@ -241,11 +243,24 @@ class RiskGate(Protocol):
         inputs: GateInputs,
         now: datetime,
     ) -> LossReading:
-        """The day's loss, with no order needed.
+        """The day's loss, with no order needed, against the tighter of the two loss stops.
 
-        It has `check`'s halts on its inputs but one, the hold of the caps to the
-        stress records, because the day's loss reads no stress move.
+        It halts only on what the loss figure uses: each loss stop, V and its
+        session, the snapshot's marks and the book. It reads no stress field, no
+        net cap and no stress age, and measures a V at or below zero.
         """
+        ...
+
+    def loss_against(
+        self,
+        book: Book,
+        snapshot: Snapshot,
+        stop: Decimal,
+        valuation: Valuation | None,
+        state: StopState,
+        now: datetime,
+    ) -> LossReading:
+        """`loss`, against a stop the caller read itself, as `core.smaller_stop` gives it."""
         ...
 
 

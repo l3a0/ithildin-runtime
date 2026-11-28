@@ -998,11 +998,25 @@ ORDERS_ALONE = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(set(HALTS) - ORDERS_ALONE))
+# The halts of an order's check on what the day's loss never uses: a stress move past its age.
+CHECK_ALONE = {"a-stress-move-past-its-age"}
+
+
+@pytest.mark.parametrize("name", sorted(set(HALTS) - ORDERS_ALONE - CHECK_ALONE))
 def test_5_the_loss_reading_halts_on_the_same_inputs(name: str) -> None:
     broken, reason = HALTS[name]
     with pytest.raises(Halt, match=reason):
         broken(World()).loss()
+
+
+@pytest.mark.parametrize("name", sorted(CHECK_ALONE))
+def test_5_the_loss_reading_reads_past_a_halt_of_the_check_alone(name: str) -> None:
+    """A stress move past its age halts an order and leaves the day's loss readable."""
+    broken, reason = HALTS[name]
+    world = broken(World())
+    with pytest.raises(Halt, match=reason):
+        world.check()
+    assert world.loss() == World().loss()
 
 
 LEG_HALTS: dict[str, tuple[Callable[[Snapshot], Snapshot], str]] = {

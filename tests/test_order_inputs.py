@@ -682,7 +682,7 @@ def losing(loss: Decimal, **changes: object) -> World:
 @pytest.mark.parametrize("loss", [100 - STEP, Decimal(100)])
 def test_9_a_loss_inside_its_bound_sends(loss: Decimal) -> None:
     world = losing(loss)
-    (reading,) = world.path().loss(DEPLOYMENT, RUN, AT)
+    (reading,) = world.path().loss(DEPLOYMENT, RUN, AT, world.strategies())
     assert (reading.loss, reading.bound, reading.past) == (loss, Decimal(100), False)
     assert world.kinds() == [] and world.alarms.sent == []
     assert world.send() is OrderState.ACKNOWLEDGED
@@ -695,7 +695,7 @@ def test_9_a_loss_past_its_bound_halts_there_and_on_a_verdict() -> None:
         "2026-11-02"
     )
     alarm = f"account {ACCOUNT}: {said}"
-    halted(world, said, lambda: world.path().loss(DEPLOYMENT, RUN, AT))
+    halted(world, said, lambda: world.path().loss(DEPLOYMENT, RUN, AT, world.strategies()))
     assert world.alarms.sent == [alarm] and world.kinds() == ["stop_fired", "stop_stored"]
     halted(world, said)
     assert world.alarms.sent == [alarm, alarm]
@@ -739,11 +739,15 @@ def test_9_every_strategys_stop_is_read() -> None:
     world = losing(Decimal(60))
     world.constraints = (gates.constraints(loss_stop=gates.d(100)), tight)
     refiled(world, "constraints")
-    halted(world, "past its stop of 50", lambda: world.path().loss(DEPLOYMENT, RUN, AT))
+    halted(
+        world,
+        "past its stop of 50",
+        lambda: world.path().loss(DEPLOYMENT, RUN, AT, world.strategies()),
+    )
     one = losing(Decimal(40))
     one.constraints = (gates.constraints(loss_stop=gates.d(100)), tight)
     refiled(one, "constraints")
-    assert [r.bound for r in one.path().loss(DEPLOYMENT, RUN, AT)] == [100, 50]
+    assert [r.bound for r in one.path().loss(DEPLOYMENT, RUN, AT, one.strategies())] == [100, 50]
 
 
 def test_9_a_stop_that_stands_or_cannot_be_read_halts_at_each_read() -> None:
@@ -753,7 +757,11 @@ def test_9_a_stop_that_stands_or_cannot_be_read_halts_at_each_read() -> None:
     ):
         world = World()
         spoil(world)
-        halted(world, why, lambda world=world: world.path().loss(DEPLOYMENT, RUN, AT))
+        halted(
+            world,
+            why,
+            lambda world=world: world.path().loss(DEPLOYMENT, RUN, AT, world.strategies()),
+        )
         halted(world, why)
         (entry,) = [r for r in world.entries() if isinstance(r, VerdictEntry)]
         assert entry.verdict.limit.value == "stop"
@@ -763,49 +771,82 @@ def test_9_a_stop_that_stands_or_cannot_be_read_halts_at_each_read() -> None:
 def test_9_a_loss_past_its_bound_is_said_even_where_the_stop_stands() -> None:
     world = losing(Decimal(101))
     world.store.put(loss_stop_key(ACCOUNT), b"{}")
-    halted(world, "the day's loss", lambda: world.path().loss(DEPLOYMENT, RUN, AT))
+    halted(
+        world, "the day's loss", lambda: world.path().loss(DEPLOYMENT, RUN, AT, world.strategies())
+    )
 
 
-# Two strategies' constraints are read in turn, and a file is compared with no plan.
+# A file is compared with no plan. The loss reads no file of the risk stage's.
 @pytest.mark.parametrize(
     ("fault", "name"),
     [
         (fault, name)
         for fault in FILE_FAULTS
         for name in FILES
-        if fault != "file rewritten since the plan"
-        and (fault, name) != ("file of two entries", "constraints")
+        if fault != "file rewritten since the plan" and name != "constraints"
     ],
 )
 def test_9_the_loss_halts_on_a_file_it_cannot_use(fault: str, name: str) -> None:
     spoil, why = FILE_FAULTS[fault]
     world = World()
     spoil(world, name)
-    halted(world, why, lambda: world.path().loss(DEPLOYMENT, RUN, AT))
+    halted(world, why, lambda: world.path().loss(DEPLOYMENT, RUN, AT, world.strategies()))
     assert world.kinds() == []
 
 
-@pytest.mark.parametrize("fault", CAPS)
+@pytest.mark.parametrize("fault", [f for f in FILE_FAULTS if f != "file rewritten since the plan"])
+def test_9_the_loss_reads_its_stop_with_no_file_of_the_risk_stage(fault: str) -> None:
+    """Each strategy's stop comes from its own `[risk]` section, so risk's file is never read."""
+    spoil, _ = FILE_FAULTS[fault]
+    world = losing(Decimal(40))
+    spoil(world, "constraints")
+    (reading,) = world.path().loss(DEPLOYMENT, RUN, AT, world.strategies())
+    assert (reading.loss, reading.bound, reading.past) == (40, 100, False)
+
+
+# The loss reads the caps' loss_stop alone, so these faults stop orders and not the loss.
+NEVER_READ = ("stale", "no step")
+
+
+@pytest.mark.parametrize("fault", [f for f in CAPS if f not in NEVER_READ])
 def test_9_the_loss_halts_on_hard_caps_it_cannot_use(fault: str) -> None:
     spoil, why = CAPS[fault]
     world = World()
     spoil(world)
-    halted(world, why, lambda: world.path().loss(DEPLOYMENT, RUN, AT))
+    halted(world, why, lambda: world.path().loss(DEPLOYMENT, RUN, AT, world.strategies()))
+
+
+@pytest.mark.parametrize("fault", NEVER_READ)
+def test_9_the_loss_is_read_past_a_caps_field_it_never_uses(fault: str) -> None:
+    """A stale stress move or a missing share step halts an order, and the loss still reads."""
+    spoil, why = CAPS[fault]
+    world = losing(Decimal(101))
+    spoil(world)
+    halted(
+        world,
+        "past its stop of 100",
+        lambda: world.path().loss(DEPLOYMENT, RUN, AT, world.strategies()),
+    )
+    assert world.kinds() == ["stop_fired", "stop_stored"]
 
 
 def test_9_the_loss_is_read_at_the_clocks_time() -> None:
     """The gate halts on a reading after its session's close, and the decision is before it."""
     world = World()
     world.clock.at = gates.CLOSE
-    world.path().loss(DEPLOYMENT, RUN, AT)
+    world.path().loss(DEPLOYMENT, RUN, AT, world.strategies())
     world.clock.at = gates.CLOSE + timedelta(microseconds=1)
-    halted(world, "to its session's close", lambda: world.path().loss(DEPLOYMENT, RUN, AT))
+    halted(
+        world,
+        "to its session's close",
+        lambda: world.path().loss(DEPLOYMENT, RUN, AT, world.strategies()),
+    )
 
 
 def test_9_a_wrong_run_or_deployment_halts() -> None:
     for named in (("other", RUN, AT), (DEPLOYMENT, "2026-11-02", AT), (DEPLOYMENT, RUN, AT - DAY)):
         world = World()
-        halted(world, "is not stored", lambda w=world, n=named: w.path().loss(*n))
+        halted(world, "is not stored", lambda w=world, n=named: w.path().loss(*n, w.strategies()))
 
 
 # 10. The gate's answer, rebuilt
@@ -1286,7 +1327,7 @@ EVERY_CALL: dict[str, Callable] = {
     "send": lambda path: path.send(ID),
     "hold": lambda path: path.hold([ID]),
     "abandon": lambda path: path.abandon(ID, "no"),
-    "loss": lambda path: path.loss(DEPLOYMENT, RUN, AT),
+    "loss": lambda path: path.loss(DEPLOYMENT, RUN, AT, (gates.strategy_of(gates.constraints()),)),
 }
 
 

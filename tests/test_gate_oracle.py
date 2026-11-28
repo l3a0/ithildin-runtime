@@ -363,6 +363,9 @@ def worlds() -> list[World]:
 def test_4_every_field_of_every_verdict_agrees(worlds: list[World]) -> None:
     for seed, world in enumerate(worlds):
         assert _asked(world) == _expected(world), seed
+        # The day's loss halts on fewer inputs than an order's check, so the two readings are
+        # compared wherever the check reads one.
+        assert world.loss() == world.check().loss, seed
 
 
 def test_4_the_books_hold_each_kind_the_limits_can_be_wrong_about(worlds: list[World]) -> None:

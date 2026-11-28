@@ -113,6 +113,7 @@ from ithildinruntime.core import (
     StopState,
     Storage,
     StoreError,
+    StrategyConfig,
     Verdict,
     account_halt_key,
     caps_key,
@@ -123,12 +124,16 @@ from ithildinruntime.core import (
     journal_entry_key,
     load_sessions,
     parse_caps,
+    parse_loss_stop,
     read_order_id,
     readable_until,
+    require_current,
     sha256_of,
+    smaller_stop,
     takeover_key,
     tighten,
     to_utc,
+    written_loss_stop,
 )
 from ithildinruntime.journal import (
     DOUBTFUL,
@@ -158,7 +163,7 @@ from ithildinruntime.journal import (
 )
 
 from .controls import Controls, Stopping, Where
-from .inputs import Inputs, read_inputs
+from .inputs import Inputs, read_inputs, read_measured
 from .latch import Latch
 from .lease import (
     FORMAT,
@@ -179,9 +184,11 @@ __all__ = [
     "Outage",
     "Settled",
     "Shared",
+    "Unread",
     "Unstored",
     "copy_differs",
     "quietly",
+    "read_loss",
 ]
 
 # How many times a step that lost its number starts over.
@@ -1083,61 +1090,28 @@ class OrderPath:
     # The day's loss
 
     def loss(
-        self, deployment: str, run: str, decision_at: datetime, *, unread: bool = False
+        self,
+        deployment: str,
+        run: str,
+        decision_at: datetime,
+        strategies: tuple[StrategyConfig, ...],
     ) -> tuple[LossReading, ...]:
-        """The day's loss against each strategy's stop, with no order needed.
+        """The day's loss against each strategy's stop, with no order needed: `read_loss`.
 
-        It settles the account first, which completes a firing a past write
-        left part stored. Each strategy's loss is read twice: at the decision's
-        own time, from its stored inputs, and then at the clock's time. A
-        reading past its bound at either pages, fires the stop and halts the
-        decision, and so does a loss stop that stands or cannot be read. A rerun
-        after the close so fires on the decision's own loss, where the gate's
-        check of the clock against the session's close halts the second read.
-
-        `unread` fires the stop with no reading where the loss cannot be read,
-        for the claim halt of a decision the journal holds no plan of, since
-        only that plan proves the loss was read inside its bound.
+        It first halts unless the broker trades this account. That is the
+        reading's one touch of the broker, which `Account.loss` leaves out.
+        Once the loss reads inside its stop, it also halts on caps an order
+        could not use, the whole blob and its stress age, so a decision that
+        plans no order halts on them before its plan.
         """
         self._one_account()
         shared = self._shared
-        shared.settle(self._report)
-        where = (deployment, run, decision_at)
-        try:
-            view = self._view()
-            book = view.book
-            state, error = shared.latch.state(view, shared.patience.tries(self._report))
-            caps, _ = self._caps()
-            inputs = read_inputs(shared.storage, deployment, run, decision_at, self._report)
-            handed = GateInputs(caps=caps, valuation=inputs.valuation, stop=state, close_entry=None)
-            decided = tuple(
-                shared.gate.loss(book, inputs.snapshot, limits, handed, decision_at)
-                for limits in inputs.constraints
-            )
-        except Halt as halt:
-            if not unread:
-                raise
-            said = (
-                f"the loss stop fired with no reading, because the day's loss of the decision at "
-                f"{decision_at.isoformat()} could not be read and the journal holds no plan of "
-                f"it: {halt.reason}"
-            )
-            alarmed = shared.alarm(said)
-            added = shared.latch.fire(None, where, said, self._report)
-            raise Halt(f"{said}{alarmed}{added}") from None
-        for reading in decided:
-            if reading.past:
-                raise self._fired(reading, where, _DECIDED)
-        now = shared.clock.now()
-        readings = tuple(
-            shared.gate.loss(book, inputs.snapshot, limits, handed, now)
-            for limits in inputs.constraints
-        )
-        for reading in readings:
-            if reading.past:
-                raise self._fired(reading, where, _NOW)
-        if state is not StopState.ABSENT:
-            raise Halt(shared.latch.said(view, state, error))
+        readings = read_loss(shared, self._report, (deployment, run, decision_at), strategies)
+        # The loss reads the caps' loss_stop alone, so it fires on caps an order could not use.
+        # Inside its stop, the decision still halts on them before its plan, as an order would.
+        caps, _ = self._caps()
+        _, valuation = read_measured(shared.storage, deployment, run, decision_at, self._report)
+        require_current(caps, valuation, decision_at)
         return readings
 
     # Reads
@@ -1877,11 +1851,7 @@ class OrderPath:
             raise Halt(f"the broker trades another account than {account!r}")
 
     def _view(self, until: datetime | None = None, tries: Tries | None = None) -> View:
-        tries = tries or self._shared.patience.tries(self._report, until)
-        try:
-            return tries(self._shared.journal.view)
-        except StoreError as error:
-            raise self._outage(f"the journal could not be read: {code_of(error)}") from None
+        return _viewed(self._shared, tries or self._shared.patience.tries(self._report, until))
 
     def _record(
         self, view: View, record: Record, until: datetime | None = None
@@ -1961,19 +1931,137 @@ class OrderPath:
     def _outage(self, reason: str) -> Outage:
         return self._shared.outage(reason)
 
-    def _past(self, reading: LossReading) -> Halt:
-        """The halt on a reading past its stop, alarmed before the firing's writes are tried."""
-        reason = (
-            f"the day's loss of {reading.loss} is past its stop of {reading.bound}, measured from "
-            f"the valuation of {reading.session.isoformat()}"
-        )
-        return Halt(f"{reason}{_alarm(self._shared.alerts, reason)}")
-
     def _fired(self, reading: LossReading, where: tuple[str, str, datetime], reason: str) -> Halt:
         """Alarm on a reading past its stop, fire the stop, and give the halt with both."""
-        halt = self._past(reading)
-        added = self._shared.latch.fire(reading, where, reason, self._report)
-        return Halt(f"{halt.reason}{added}")
+        return _fired(self._shared, reading, where, reason, self._report)
+
+
+class Unread(Halt):
+    """A halt on an input of the day's loss, so the loss was not read at all."""
+
+
+def read_loss(
+    shared: Shared,
+    report: Callable[[], None],
+    where: tuple[str, str, datetime],
+    strategies: tuple[StrategyConfig, ...],
+    *,
+    after: str | None = None,
+    unread: bool = False,
+) -> tuple[LossReading, ...]:
+    """The day's loss against each strategy's stop, which touches no broker.
+
+    It settles the account first, which completes a firing a past write left
+    part stored. The stop of each strategy is the smaller of its `[risk]`
+    section's `loss_stop` and the caps blob's, each read alone, so no output of
+    the risk stage and no field the loss never uses can stop it. The loss is
+    read twice: at the decision's own time, from data's snapshot and recover's
+    V, and then at the clock's time. A reading past its stop at either pages,
+    fires the stop and halts, and so does a loss stop that stands or cannot be
+    read. A rerun after the close so fires on the decision's own loss, where the
+    gate's check of the clock against the session's close halts the second read.
+
+    A halt on an input, or a settle that halts, raises `Unread`, and an
+    `Outage` passes through with no firing, since the outage has already paged
+    and a caller stops its other writes on one. `after` is set
+    where the decision has already halted, and names why, in the firing's
+    entry. There a reading at the decision's own time inside its stop counts as
+    read, even where the second reading halts. `unread` fires the stop with no
+    reading where an input halts, for the claim halt of a decision the journal
+    holds no plan of, since only that plan proves the loss was read inside its
+    bound. It fires on an `Outage` too, since the call that claimed may have
+    read the loss past its stop and died, and the latch holds a firing whose
+    writes fail until a later settle stores it. A settle that halts fires
+    nothing, as before.
+    """
+    try:
+        shared.settle(report)
+    except Halt as halt:
+        # A settle folds an outage into a plain halt, so nothing here tells the two apart.
+        raise Unread(halt.reason) from None
+    deployment, run, decision_at = where
+    try:
+        view = _viewed(shared, shared.patience.tries(report))
+        book = view.book
+        state, error = shared.latch.state(view, shared.patience.tries(report))
+        data = shared.storage.read_blob(caps_key(shared.account))
+        report()
+        caps = parse_loss_stop(data, shared.account)
+        if not strategies:
+            raise Halt("the stage runs no strategy, so no loss stop could be read")
+        stops = tuple(smaller_stop(written_loss_stop(s), caps) for s in strategies)
+        snapshot, valuation = read_measured(shared.storage, deployment, run, decision_at, report)
+        decided = tuple(
+            shared.gate.loss_against(book, snapshot, stop, valuation, state, decision_at)
+            for stop in stops
+        )
+    except Halt as halt:
+        if isinstance(halt, Outage) and not unread:
+            raise
+        if not unread:
+            raise Unread(halt.reason) from None
+        said = (
+            f"the loss stop fired with no reading, because the day's loss of the decision at "
+            f"{decision_at.isoformat()} could not be read and the journal holds no plan of "
+            f"it: {halt.reason}"
+        )
+        alarmed = shared.alarm(said)
+        added = shared.latch.fire(None, where, said, report)
+        raise Halt(f"{said}{alarmed}{added}") from None
+    for reading in decided:
+        if reading.past:
+            raise _fired(shared, reading, where, _because(_DECIDED, after), report)
+    now = shared.clock.now()
+    try:
+        readings = tuple(
+            shared.gate.loss_against(book, snapshot, stop, valuation, state, now) for stop in stops
+        )
+    except Outage:
+        raise
+    except Halt:
+        if after is None:
+            raise
+        return decided
+    for reading in readings:
+        if reading.past:
+            raise _fired(shared, reading, where, _because(_NOW, after), report)
+    if state is not StopState.ABSENT:
+        raise Halt(shared.latch.said(view, state, error))
+    return readings
+
+
+def _because(read: str, after: str | None) -> str:
+    """Why a firing's entry says the stop fired, naming the halt it was read after."""
+    return read if after is None else f"{read}, read after {after}"
+
+
+def _viewed(shared: Shared, tries: Tries) -> View:
+    try:
+        return tries(shared.journal.view)
+    except StoreError as error:
+        raise shared.outage(f"the journal could not be read: {code_of(error)}") from None
+
+
+def _past(shared: Shared, reading: LossReading) -> Halt:
+    """The halt on a reading past its stop, alarmed before the firing's writes are tried."""
+    reason = (
+        f"the day's loss of {reading.loss} is past its stop of {reading.bound}, measured from "
+        f"the valuation of {reading.session.isoformat()}"
+    )
+    return Halt(f"{reason}{_alarm(shared.alerts, reason)}")
+
+
+def _fired(
+    shared: Shared,
+    reading: LossReading,
+    where: tuple[str, str, datetime],
+    reason: str,
+    report: Callable[[], None],
+) -> Halt:
+    """Alarm on a reading past its stop, fire the stop, and give the halt with both."""
+    halt = _past(shared, reading)
+    added = shared.latch.fire(reading, where, reason, report)
+    return Halt(f"{halt.reason}{added}")
 
 
 def _counted(book: Book, order: OrderIntent) -> Book:

@@ -1,6 +1,8 @@
 """The risk gate: the one check on the one order path.
 
-`check` answers one order and `loss` reads the day's loss with none. Both are
+`check` answers one order and `loss` reads the day's loss with none, as
+`loss_against` does from a stop its caller read. All three measure the loss
+through one function, so they agree wherever each reads. They are
 pure functions of what they are handed and of the stress records the gate was
 built with, with no store, no clock and no mode, so one order checked twice on
 the same inputs gets one answer, in a backtest and live alike.
@@ -38,6 +40,7 @@ from ithildinruntime.core import (
     Exposure,
     GateInputs,
     Halt,
+    HardCaps,
     InstrumentId,
     Limit,
     LossReading,
@@ -66,7 +69,9 @@ from ithildinruntime.core import (
     quotient,
     require_current,
     require_utc,
+    require_valued,
     rounded,
+    smaller_stop,
     tighten,
     to_utc,
     worth,
@@ -155,13 +160,42 @@ class Gate:
         inputs: GateInputs,
         now: datetime,
     ) -> LossReading:
-        """The day's loss, which the send stage reads on every decision with no order.
+        """The day's loss against the tighter of the strategy's loss stop and the caps'.
 
-        It reads no stress move, so it holds the caps to no record. Caps rewritten
-        after the risk stage ran, which the hold alone refuses, would otherwise stop
-        the loss stop from firing.
+        It reads each loss stop, V and its session, the snapshot's marks and the
+        book, and no other limit. So it holds the caps to no stress record, reads
+        no stress field, no net cap and no stress age, and measures a V at or
+        below zero rather than halting on it. Caps rewritten after the risk stage
+        ran, a stress move past its age, or a limit the loss never uses would
+        otherwise stop the loss stop from firing. `check` reads the same figure
+        through the same function, so the two agree wherever both read.
         """
-        return _read(book, snapshot, constraints, inputs, now, None, ()).reading
+        _types(("the book is", book, Book), ("the snapshot is", snapshot, Snapshot))
+        _types(("the gate's inputs are", inputs, GateInputs))
+        _mappings(book, snapshot)
+        _types(
+            ("the constraints are", constraints, Constraints),
+            ("the hard caps are", inputs.caps, HardCaps),
+        )
+        stop = smaller_stop(constraints.loss_stop, inputs.caps.loss_stop)
+        return _measured(book, snapshot, stop, inputs.valuation, inputs.stop, now)
+
+    def loss_against(
+        self,
+        book: Book,
+        snapshot: Snapshot,
+        stop: Decimal,
+        valuation: Valuation | None,
+        state: StopState,
+        now: datetime,
+    ) -> LossReading:
+        """`loss`, against a stop the caller read itself, as `core.smaller_stop` gives it.
+
+        The order path reads each loss stop alone, from the caps blob and from a
+        strategy's `[risk]` section, so that a halt of the risk stage or a fault
+        in a field the loss never uses leaves the loss readable.
+        """
+        return _measured(book, snapshot, stop, valuation, state, now)
 
 
 def _read(
@@ -170,20 +204,71 @@ def _read(
     constraints: Constraints,
     inputs: GateInputs,
     now: datetime,
-    intent: OrderIntent | None,
+    intent: OrderIntent,
     records: StressRecords,
 ) -> _Read:
-    """Every input checked, or a halt naming the first one that is absent, stale or invalid.
+    """Every input of one order's check, or a halt naming the first absent, stale or invalid.
 
-    An order's caps are held to the stress records, and a loss reading's are not.
+    The caps are held to the stress records. The day's loss is measured by the
+    function `Gate.loss` goes through, against the tightened stop.
     """
-    for what, part, kind in (
+    _types(
         ("the book is", book, Book),
         ("the snapshot is", snapshot, Snapshot),
         ("the gate's inputs are", inputs, GateInputs),
-    ):
+    )
+    _mappings(book, snapshot)
+    valuation = _valued(inputs.valuation)
+    caps = hold_to_record(constraints, inputs.caps, records)
+    limits = tighten(constraints, caps, valuation)
+    _state(inputs.stop)
+    session, prior = _window(snapshot, now)
+    cutoff = to_utc(session.day, BeforeClose(limits.moc_cutoff))
+    require_current(caps, valuation, snapshot.decision_at)
+    _check_book(book, valuation, prior)
+    _check_intent(intent, book, limits)
+    marks = _marks(book, snapshot, valuation, now, intent.instrument)
+    loss, reading = _figure(book, valuation, marks, limits.loss_stop)
+    return _Read(
+        limits=limits,
+        stress_move=caps.stress_move,
+        session=session,
+        cutoff=cutoff,
+        marks=marks,
+        loss=loss,
+        reading=reading,
+    )
+
+
+def _measured(
+    book: Book,
+    snapshot: Snapshot,
+    stop: Decimal,
+    valuation: Valuation | None,
+    state: StopState,
+    now: datetime,
+) -> LossReading:
+    """The day's loss with no order, from what the loss figure uses and nothing else."""
+    _types(("the book is", book, Book), ("the snapshot is", snapshot, Snapshot))
+    _mappings(book, snapshot)
+    valuation = _valued(valuation)
+    if not isinstance(stop, Decimal) or not stop.is_finite() or stop <= 0:
+        raise Halt(f"the loss stop is {stop!r}, not a finite decimal above zero")
+    _state(state)
+    session, prior = _window(snapshot, now)
+    require_valued(valuation, snapshot.decision_at)
+    _check_book(book, valuation, prior)
+    marks = _marks(book, snapshot, valuation, now, None)
+    return _figure(book, valuation, marks, stop)[1]
+
+
+def _types(*parts: tuple[str, object, type]) -> None:
+    for what, part, kind in parts:
         if not isinstance(part, kind):
             raise Halt(f"{what} missing")
+
+
+def _mappings(book: Book, snapshot: Snapshot) -> None:
     for what, part in (
         ("the book's positions", book.positions_by_strategy),
         ("the book's open orders", book.open_orders_by_strategy),
@@ -191,15 +276,21 @@ def _read(
     ):
         if not isinstance(part, Mapping):
             raise Halt(f"{what} are {part!r}, not a mapping")
-    valuation = inputs.valuation
+
+
+def _valued(valuation: object) -> Valuation:
     if not isinstance(valuation, Valuation):
         raise Halt("the valuation is missing")
-    caps = inputs.caps
-    if intent is not None:
-        caps = hold_to_record(constraints, caps, records)
-    limits = tighten(constraints, caps, valuation)
-    if not isinstance(inputs.stop, StopState):
-        raise Halt(f"the loss stop's state is {inputs.stop!r}, which names none")
+    return valuation
+
+
+def _state(stop: object) -> None:
+    if not isinstance(stop, StopState):
+        raise Halt(f"the loss stop's state is {stop!r}, which names none")
+
+
+def _window(snapshot: Snapshot, now: datetime) -> tuple[Session, Session]:
+    """The decision's session and the one before it, once `now` is checked to lie in it."""
     table = load_sessions()
     decision = require_utc("the decision", snapshot.decision_at)
     session = table.opened_by(decision)
@@ -208,27 +299,31 @@ def _read(
             f"now is {now.isoformat()}, not from the decision at {decision.isoformat()} to its "
             f"session's close at {session.close.isoformat()}"
         )
-    cutoff = to_utc(session.day, BeforeClose(limits.moc_cutoff))
-    require_current(caps, valuation, decision)
-    _check_book(book, valuation, table.before(session.day))
-    if intent is not None:
-        _check_intent(intent, book, limits)
-    instruments = {*held(book), *([intent.instrument] if intent is not None else [])}
-    marks = {i: mark(snapshot, i, valuation.session, now) for i in sorted(instruments)}
+    return session, table.before(session.day)
+
+
+def _marks(
+    book: Book,
+    snapshot: Snapshot,
+    valuation: Valuation,
+    now: datetime,
+    ordered: InstrumentId | None,
+) -> dict[InstrumentId, Decimal]:
+    """The mark of each instrument the book holds or has a working order in, and the order's."""
+    instruments = {*held(book), *([ordered] if ordered is not None else [])}
+    return {i: mark(snapshot, i, valuation.session, now) for i in sorted(instruments)}
+
+
+def _figure(
+    book: Book, valuation: Valuation, marks: Mapping[InstrumentId, Decimal], stop: Decimal
+) -> tuple[Decimal, LossReading]:
+    """The day's loss, exact and as recorded against its stop."""
     loss = _day_loss(book, valuation, marks)
-    return _Read(
-        limits=limits,
-        stress_move=caps.stress_move,
-        session=session,
-        cutoff=cutoff,
-        marks=marks,
-        loss=loss,
-        reading=LossReading(
-            loss=rounded("the day's loss", loss, _MONEY),
-            bound=rounded("the loss stop", limits.loss_stop, _MONEY),
-            past=loss > limits.loss_stop,
-            session=valuation.session,
-        ),
+    return loss, LossReading(
+        loss=rounded("the day's loss", loss, _MONEY),
+        bound=rounded("the loss stop", stop, _MONEY),
+        past=loss > stop,
+        session=valuation.session,
     )
 
 

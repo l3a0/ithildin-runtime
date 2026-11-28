@@ -13,7 +13,11 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    unreadable snapshot hides no order. Where the loss cannot be read and the
    journal holds no plan of the decision, the stop fires with no reading,
    since the call that claimed it may have read the loss past its stop and
-   died before its firing was stored.
+   died before its firing was stored, and so does a store that does not
+   answer that reading, since the latch holds a firing whose writes fail. A
+   journal that does not answer halts the claim as an outage, and a settle
+   that halts fires nothing. A run that builds no broker for this stage writes
+   no claim, since it sends nothing.
 2. Each input's result in the row's order, each halt passed on, and then the
    snapshot, the constraints, the targets, and recover's book, valuation and
    caps, all read before any file of this stage's is stored.
@@ -25,7 +29,8 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
 4. Each strategy's off switch and halts. One that is off gets no order. One that
    cannot be read halts.
 5. `OrderPath.loss`, which fires the stop and halts past it with no order
-   needed.
+   needed. Inside its stop it halts on caps an order could not use, the whole
+   blob and its stress age, before the plan.
 6. `plan_orders`, and then the `decision` entry, which names every file the plan
    was made from, before anything is asked or sent. A plan of this decision the
    journal already holds that is not this one halts, with an alarm naming both.
@@ -50,6 +55,22 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    abandoned and an alarm naming every leg.
 9. `outcome.json`, and then the result.
 
+A halt of steps 2 to 4, and the halt of a run with no broker, reads the day's
+loss before it ends the decision, through `Account.loss`, which touches no
+broker, as the claim's halt does. A reading past its stop fires the stop, as
+step 5 does, and its `stop_fired` entry names the halt. A reading inside its
+stop leaves the halt as it was, and the halt keeps its cause, so monitoring does
+not page on a halt passed on from upstream. One whose inputs halt says why, and
+names a reason it shares with the halt only once. An `Outage` and a `LeaseHeld`
+pass through with no reading. An outage during a reading fires nothing, except
+on the claim's halt of a decision the journal holds no plan of, where it fires
+with no reading as any input it cannot read does. The stop of each strategy is
+the smaller of its `[risk]` section's `loss_stop` and the caps blob's, read
+alone, so a halted risk stage, a stress field the caps hold wrongly, or a limit
+the loss never uses leaves the loss readable. A reading after a halt of the sync
+can fire and never proves the loss stayed inside its stop, because the journal's
+book is the one the sync found to differ from the broker's.
+
 A result holds a halt or an outcome, never both.
 """
 
@@ -59,7 +80,7 @@ import json
 import secrets
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from ithildinruntime.core import (
     ALPHA_COMPONENT,
@@ -87,6 +108,7 @@ from ithildinruntime.core import (
     InstrumentId,
     OrderIntent,
     OrderState,
+    OrderType,
     Progress,
     Remainder,
     SendOutcome,
@@ -100,6 +122,7 @@ from ithildinruntime.core import (
     StrategyEnd,
     StrategySent,
     TargetPortfolio,
+    TimeInForce,
     Valuation,
     broker_read_key,
     claim_key,
@@ -114,7 +137,8 @@ from ithildinruntime.journal import DOUBTFUL, NOT_SENT, DecisionEntry, View
 
 from .account import Account
 from .inputs import read_inputs
-from .order_path import OrderPath, Outage
+from .lease import LeaseHeld
+from .order_path import OrderPath, Outage, Unread
 from .orders import order_type, plan_orders
 from .recover import fills_since
 from .sync import journal_read, read_broker, recorded
@@ -133,6 +157,20 @@ MARGIN = timedelta(seconds=5)
 
 class _Item(Protocol):
     decision_at: datetime
+
+
+class _Ready(NamedTuple):
+    """What steps 2 to 4 read, which the plan is made from."""
+
+    path: OrderPath
+    view: View
+    seq: int
+    off: dict[str, str]
+    named: dict[str, BlobRef]
+    types: dict[str, tuple[OrderType, TimeInForce]]
+    targets: tuple[TargetPortfolio, ...]
+    caps: HardCaps
+    snapshot: Snapshot
 
 
 class SendStage:
@@ -195,9 +233,67 @@ class SendStage:
         self, decision: StageDecision, at: datetime, report: Callable[[], None]
     ) -> SendOutcome:
         account, brokers = self._account, self._brokers
-        if isinstance(brokers, Halt):
-            raise Halt(brokers.reason)
-        self._claim(at, brokers, report)
+        if not isinstance(brokers, Halt):
+            self._claim(at, report)
+        try:
+            if isinstance(brokers, Halt):
+                # Nothing is sent, so no claim is written, and the loss is still read.
+                raise Halt(brokers.reason)
+            ready = self._before_loss(decision, at, brokers, report)
+        except Halt as halt:
+            raise self._read_after(decision, halt, at, report) from None
+
+        path, view, off, targets = ready.path, ready.view, ready.off, ready.targets
+
+        # Step 5
+        path.loss(self._deployment, self._run.run, at, self._strategies)
+
+        # Step 6
+        plan = plan_orders(
+            targets,
+            view.book,
+            types=ready.types,
+            share_step=ready.caps.share_step,
+            decision_at=at,
+            off=off,
+        )
+        entry = DecisionEntry(
+            deployment=self._deployment,
+            run=self._run.run,
+            decision_at=at,
+            targets=targets,
+            orders=plan.orders,
+            off=tuple(sorted(off)),
+            inputs=ready.named,
+            read=ready.seq,
+            synced=view.through.seq,
+        )
+        try:
+            view = recorded(account, view, lambda v: _planned(v, at, entry), report)
+        except _OtherPlan as other:
+            added = account.alarm(other.reason, report)
+            raise Halt(f"{other.reason}{added}") from None
+        names = [order.client_order_id for order in plan.orders]
+
+        # Step 7
+        if names:
+            self._lasting(path, ready.snapshot, view, plan.orders, report)
+            self._asked(path, names, report)
+
+        # Step 8
+        ended = self._sends(path, plan.orders, report)
+        view = account.view(report)
+        return _outcome(view, at, plan.orders, off, ended, plan.remainders, self._strategies)
+
+    def _before_loss(
+        self,
+        decision: StageDecision,
+        at: datetime,
+        brokers: Callable[[datetime], Broker],
+        report: Callable[[], None],
+    ) -> _Ready:
+        """Steps 2 to 4, any of whose halts `_read_after` reads the day's loss on."""
+        account = self._account
 
         # Step 2
         for upstream in (DATA_STAGE, RECOVER_STAGE, RISK_STAGE, PORTFOLIO_STAGE):
@@ -235,50 +331,26 @@ class SendStage:
 
         # Step 4
         off = {s.name: why for s in self._strategies if (why := path.off(s.name)) is not None}
+        return _Ready(path, view, seq, off, named, types, targets, caps, snapshot)
 
-        # Step 5
-        path.loss(self._deployment, self._run.run, at)
+    def _read_after(
+        self, decision: StageDecision, halt: Halt, at: datetime, report: Callable[[], None]
+    ) -> Halt:
+        """`halt`, joined to the day's loss read after it where the reading fired or halted.
 
-        # Step 6
-        plan = plan_orders(
-            targets,
-            view.book,
-            types=types,
-            share_step=caps.share_step,
-            decision_at=at,
-            off=off,
-        )
-        entry = DecisionEntry(
-            deployment=self._deployment,
-            run=self._run.run,
-            decision_at=at,
-            targets=targets,
-            orders=plan.orders,
-            off=tuple(sorted(off)),
-            inputs=named,
-            read=seq,
-            synced=view.through.seq,
-        )
-        try:
-            view = recorded(account, view, lambda v: _planned(v, at, entry), report)
-        except _OtherPlan as other:
-            added = account.alarm(other.reason, report)
-            raise Halt(f"{other.reason}{added}") from None
-        names = [order.client_order_id for order in plan.orders]
-
-        # Step 7
-        if names:
-            self._lasting(path, snapshot, view, plan.orders, report)
-            self._asked(path, names, report)
-
-        # Step 8
-        ended = self._sends(path, plan.orders, report)
-        view = account.view(report)
-        return _outcome(view, at, plan.orders, off, ended, plan.remainders, self._strategies)
+        An `Outage` and a `LeaseHeld` pass through with no reading. A loss read
+        inside its stop leaves `halt` as it is, and a joined halt keeps its cause.
+        """
+        # No step before 5 takes the account's lease today. A `LeaseHeld` passes through for the
+        # wait #237's plan ends one with, once a step before the loss takes the lease.
+        if isinstance(halt, (Outage, LeaseHeld)):
+            return halt
+        said = self._loss_after(halt.reason, at, f"the decision halted: {halt.reason}", report)
+        return decision.joined(halt, f"{halt.reason}{said}") if said else halt
 
     # Step 1
 
-    def _claim(self, at: datetime, brokers: Callable[[datetime], Broker], report) -> None:
+    def _claim(self, at: datetime, report: Callable[[], None]) -> None:
         key = claim_key(self._deployment, self._run.run, at)
         mark = {"token": secrets.token_hex(16), "writer": self._writer}
         data = json.dumps(mark, sort_keys=True, separators=(",", ":")).encode()
@@ -293,15 +365,40 @@ class SendStage:
         added = ""
         for doubt in doubts:
             added = account.alarm(f"{doubt}, and {key} holds another call's claim", report) or added
-        try:
-            path = account.path(brokers(at), report)
-            path.loss(self._deployment, self._run.run, at, unread=at not in view.decided)
-            loss = ""
-        except Halt as halt:
-            loss = f". {halt.reason}"
-        raise Halt(
-            f"{key} holds another call's claim, so this one sends nothing: {said}{loss}{added}"
+        reason = f"{key} holds another call's claim, so this one sends nothing: {said}"
+        loss = self._loss_after(
+            reason,
+            at,
+            f"{key} held another call's claim",
+            report,
+            unread=at not in view.decided,
         )
+        raise Halt(f"{reason}{loss}{added}")
+
+    def _loss_after(
+        self, halted: str, at: datetime, after: str, report: Callable[[], None], unread=False
+    ) -> str:
+        """What a halt says of the day's loss read after it, as words to join to `halted`.
+
+        The reading touches no broker, so it runs whether or not one was built.
+        A reading past its stop fires the stop, as step 5 does, and a reading
+        inside it adds nothing. One whose inputs halt adds why, and names a reason
+        it shares with `halted` only once. An `Outage` fires nothing, since the
+        outage has already paged, except under `unread`. `after` names `halted`
+        in a firing's entry, and `unread` fires the stop with no reading where an
+        input halts or a store does not answer, for the claim's halt with no plan.
+        """
+        where = (self._deployment, self._run.run, at)
+        try:
+            self._account.loss(where, self._strategies, report, after=after, unread=unread)
+        except (Unread, Outage) as unreadable:
+            why = unreadable.reason
+            if why == halted or why in halted:
+                return ". The day's loss could not be read, for that same reason"
+            return f". The day's loss could not be read: {why}"
+        except Halt as fired:
+            return f". {fired.reason}"
+        return ""
 
     # Step 6
 

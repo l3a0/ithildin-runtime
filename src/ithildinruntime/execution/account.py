@@ -4,10 +4,11 @@ The worker builds one `Account` and keeps it across decisions, because a cold
 view of a long journal is slow and because the account keeps each answer the
 journal has not taken. `path` gives the `OrderPath` for one decision's broker.
 
-A stage reads the journal through `view` and adds what the broker said of an
-order, the send stage its plan, a record the broker booked or what the platform
-did not send through `record`, which takes the ten kinds a stage may write and no
-entry of the path's own.
+A stage reads the journal through `view`, and reads the day's loss of a
+decision that has halted through `loss`, with no broker. It adds what the
+broker said of an order, the send stage its plan, a record the broker booked or
+what the platform did not send through `record`, which takes the ten kinds a
+stage may write and no entry of the path's own.
 
 Nothing here raises while it is built. A worker whose start raises is restarted
 by the host and read by no person, so an account that cannot be used halts each
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from datetime import datetime
 
 from ithildinruntime.core import (
     Alerts,
@@ -25,10 +27,12 @@ from ithildinruntime.core import (
     Broker,
     Clock,
     Halt,
+    LossReading,
     Retry,
     RiskGate,
     Storage,
     StoreError,
+    StrategyConfig,
 )
 from ithildinruntime.journal import (
     DecisionEntry,
@@ -49,7 +53,7 @@ from ithildinruntime.journal import (
 from .controls import Controls
 from .latch import Latch
 from .lease import AccountLease, Holder
-from .order_path import Named, OrderPath, Shared, Unstored, quietly
+from .order_path import Named, OrderPath, Shared, Unread, Unstored, quietly, read_loss
 from .patience import Patience, code_of
 
 __all__ = ["Account", "StageRecord"]
@@ -125,6 +129,27 @@ class Account:
     def path(self, broker: Broker, report: Callable[[], None]) -> OrderPath:
         """The order path for one decision's broker, calling `report` as it works."""
         return OrderPath(self._shared, broker, report)
+
+    def loss(
+        self,
+        where: tuple[str, str, datetime],
+        strategies: tuple[StrategyConfig, ...],
+        report: Callable[[], None],
+        *,
+        after: str,
+        unread: bool = False,
+    ) -> tuple[LossReading, ...]:
+        """The day's loss of a decision that has halted, read with no broker: `read_loss`.
+
+        `where` is the decision's deployment, run and time, and `after` names
+        why it halted. An account that cannot be used raises `Unread`, so it
+        fires nothing.
+        """
+        if isinstance(self._shared, Halt):
+            raise Unread(self._shared.reason)
+        return read_loss(
+            self._shared, quietly(report), where, strategies, after=after, unread=unread
+        )
 
     def view(self, report: Callable[[], None]) -> View:
         """One consistent reading of the journal, which halts and alarms on a store that is down."""
