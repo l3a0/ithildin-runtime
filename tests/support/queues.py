@@ -40,6 +40,7 @@ from botocore.exceptions import ClientError
 
 from ithildinruntime.adapters import Faults, FolderStore, PipeQueue, S3Store, SqsQueue
 from ithildinruntime.core import (
+    Alarm,
     BlobHeader,
     DecisionResult,
     EventKind,
@@ -207,9 +208,11 @@ class SystemTimer:
 class Alarms:
     def __init__(self) -> None:
         self.reasons: list[str] = []
+        self.alarms: list[Alarm] = []
 
-    def alarm(self, reason: str) -> None:
-        self.reasons.append(reason)
+    def alarm(self, alarm: Alarm) -> None:
+        self.alarms.append(alarm)
+        self.reasons.append(alarm.reason)
 
     def heartbeat(self) -> None:
         pass

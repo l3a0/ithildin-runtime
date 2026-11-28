@@ -21,12 +21,13 @@ from pathlib import Path
 
 import pytest
 
-from ithildinruntime.core import Mode
+from ithildinruntime.core import Alarm, Mode
 from ithildinruntime.runtime import entry
+from ithildinruntime.runtime.alarms import SETTING
 from ithildinruntime.runtime.deployment import ENVIRONMENTS, WORKERS
 from ithildinruntime.runtime.settings import SettingError, read_settings
 
-COMMANDS = {f"ithildin-{w}": f"{w}_main" for w in (*WORKERS, "supervisor")}
+COMMANDS = {f"ithildin-{w}": f"{w}_main" for w in (*WORKERS, "supervisor", "forwarder")}
 BIN = Path(sys.executable).parent
 
 
@@ -46,11 +47,15 @@ def test_a_command_with_no_settings_exits_2_naming_them(command: str) -> None:
     )
     assert done.returncode == entry.EXIT_SETTING
     worker = command.removeprefix("ithildin-")
-    assert done.stderr.splitlines() == [
-        "ithildin: ITHILDIN_SETTINGS names no settings file",
-        f"ALARM {worker}: ITHILDIN_SETTINGS names no settings file. Fix it, then start the "
-        f"unit again{entry._serves_no_cancel(worker)}",
-    ]
+    said, line = done.stderr.splitlines()
+    assert said == "ithildin: ITHILDIN_SETTINGS names no settings file"
+    component, alarm = Alarm.from_line(line)
+    assert component == worker
+    assert alarm.reason == (
+        "ITHILDIN_SETTINGS names no settings file. Fix it, then start the "
+        f"unit again{entry._serves_no_cancel(worker)}"
+    )
+    assert (alarm.cause, alarm.row) == (f"command.setting:{worker}", SETTING.row)
 
 
 GOOD = {
@@ -211,7 +216,7 @@ CHILD = textwrap.dedent(
     root = Path(sys.argv[1])
 
     class Alarms:
-        def alarm(self, reason): print("ALARM", reason, flush=True)
+        def alarm(self, alarm): print("ALARM", alarm.reason, flush=True)
         def heartbeat(self): pass
 
     store = FolderStore(root / "store")
@@ -274,7 +279,8 @@ def _idle_worker(root: Path, mode: Mode) -> entry.Worker:
         def __init__(self) -> None:
             self.reasons: list[str] = []
 
-        def alarm(self, reason: str) -> None:
+        def alarm(self, alarm: Alarm) -> None:
+            reason = alarm.reason
             self.reasons.append(reason)
 
         def heartbeat(self) -> None:
@@ -701,7 +707,8 @@ def test_a_worker_handed_a_release_file_and_no_boot_is_released_by_nothing(tmp_p
     assert entry._released(None, "sha256:r", "2026-11-30", None) is True
 
 
-@pytest.mark.parametrize("command", sorted(COMMANDS))
+# The forwarder has no core that returns a code. It runs until its journal ends.
+@pytest.mark.parametrize("command", sorted(set(COMMANDS) - {"ithildin-forwarder"}))
 def test_each_command_ends_with_the_code_its_core_returns(command: str, monkeypatch) -> None:
     from ithildinruntime.runtime.supervisor import Outcome
 
@@ -738,7 +745,7 @@ def test_a_credential_file_that_cannot_be_read_exits_2_with_an_alarm(
         entry._clients(settings, "alpha")
     assert ended.value.code == entry.EXIT_SETTING
     err = capsys.readouterr().err.splitlines()
-    assert err[0].startswith("ithildin: the credential file") and err[1].startswith("ALARM alpha:")
+    assert err[0].startswith("ithildin: the credential file") and err[1].startswith("ALARM alpha {")
 
 
 def test_a_pin_the_supervisor_cannot_use_exits_2_with_an_alarm(monkeypatch, capsys) -> None:
@@ -751,7 +758,8 @@ def test_a_pin_the_supervisor_cannot_use_exits_2_with_an_alarm(monkeypatch, caps
     with pytest.raises(SystemExit) as ended:
         entry.supervisor_main()
     assert ended.value.code == entry.EXIT_SETTING
-    assert "ALARM supervisor: the release pin file /x cannot be read" in capsys.readouterr().err
+    line = capsys.readouterr().err.splitlines()[-1]
+    assert Alarm.from_line(line)[1].reason.startswith("the release pin file /x cannot be read")
 
 
 def test_execution_that_cannot_run_its_plan_says_no_cancel_is_served(tmp_path: Path) -> None:
@@ -815,4 +823,4 @@ def test_a_command_whose_credential_file_cannot_be_read_names_itself(
         else:
             entry.parts_for(settings, command, threading.Event())
     assert ended.value.code == entry.EXIT_SETTING
-    assert f"ALARM {command}:" in capsys.readouterr().err
+    assert f"ALARM {command} {{" in capsys.readouterr().err

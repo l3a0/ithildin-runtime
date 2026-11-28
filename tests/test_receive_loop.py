@@ -15,6 +15,7 @@ import pytest
 
 from ithildinruntime.adapters import WallClock
 from ithildinruntime.core import (
+    Alarm,
     BlobRef,
     DecisionResult,
     EventKind,
@@ -270,6 +271,8 @@ def test_a_halt_that_cannot_be_stored_holds_the_process_until_s3_takes_it(
     assert _key("alpha") in holding()[0]
     assert "because the halt for" in holding()[0] and "alpha-1 holds 1 blob " in holding()[0]
     assert "unless the host kills it first, which loses them" in holding()[0]
+    # Scoped to the component and not the instance, so every instance of alpha pages once.
+    assert "loop.holding:alpha" in [a.cause for a in alarms.alarms]
     if ends == "raises":
         # The handler's own error is sent even though its halt is not stored.
         assert any("did not handle: ValueError: broken" in r for r in alarms.reasons)
@@ -596,11 +599,12 @@ class FailingAlarms(Alarms):
         self.down = True
         self.refused = 0
 
-    def alarm(self, reason: str) -> None:
+    def alarm(self, alarm: Alarm) -> None:
+        reason = alarm.reason
         if self.down and "S3 has not stored" in reason:
             self.refused += 1
             raise ConnectionError("the alert channel is down")
-        super().alarm(reason)
+        super().alarm(alarm)
 
 
 def test_the_hold_sends_its_alarm_again_until_the_channel_takes_it(tmp_path) -> None:
@@ -693,10 +697,11 @@ def test_one_halt_s3_still_refuses_does_not_hold_back_another(tmp_path) -> None:
 class SlowAlarms(Alarms):
     """An alert channel that takes 0.6 seconds over the hold's alarm."""
 
-    def alarm(self, reason: str) -> None:
+    def alarm(self, alarm: Alarm) -> None:
+        reason = alarm.reason
         if "S3 has not stored" in reason:
             __import__("time").sleep(0.6)
-        super().alarm(reason)
+        super().alarm(alarm)
 
 
 def test_a_slow_alert_channel_never_holds_the_holds_beat_back(tmp_path) -> None:
@@ -1110,10 +1115,11 @@ def test_a_stop_with_nothing_held_never_beats_over_a_silent_handler(tmp_path) ->
 class SlowGiveUpAlarms(Alarms):
     """An alert channel that takes a second over the alarm of a queue that failed."""
 
-    def alarm(self, reason: str) -> None:
+    def alarm(self, alarm: Alarm) -> None:
+        reason = alarm.reason
         if "KeyError" in reason and "S3 has not stored" not in reason:
             __import__("time").sleep(1.0)
-        super().alarm(reason)
+        super().alarm(alarm)
 
 
 def test_a_slow_give_up_alarm_never_holds_the_beat_back(tmp_path) -> None:
@@ -2353,10 +2359,11 @@ def test_a_handlers_fault_that_is_hard_to_record_still_stores_a_halt(tmp_path, b
     own = BlobRef(output_key(DEPLOYMENT, RUN, FIRST, "alpha", "x"), "0")
 
     class Channel(Alarms):
-        def alarm(self, reason: str) -> None:
+        def alarm(self, alarm: Alarm) -> None:
+            reason = alarm.reason
             # As a channel that sends text over a wire does.
             reason.encode()
-            super().alarm(reason)
+            super().alarm(alarm)
             if broken == "channel-down":
                 raise RuntimeError("no channel")
             if broken == "channel-exits":
@@ -2539,8 +2546,9 @@ def test_a_held_halt_is_stored_whatever_else_the_hold_meets(tmp_path, stuck: str
     both = threading.Barrier(2)
 
     class Channel(Alarms):
-        def alarm(self, reason: str) -> None:
-            super().alarm(reason)
+        def alarm(self, alarm: Alarm) -> None:
+            reason = alarm.reason
+            super().alarm(alarm)
             if stuck == "channel" and refusing[0].down and "S3 has not stored" in reason:
                 raise SystemExit("no channel")
 
@@ -2649,9 +2657,10 @@ def test_a_halt_whose_record_the_codec_refuses_ends_the_loop_with_its_reason_ala
     started: list[Item] = []
 
     class Channel(Alarms):
-        def alarm(self, reason: str) -> None:
+        def alarm(self, alarm: Alarm) -> None:
+            reason = alarm.reason
             reason.encode()
-            super().alarm(reason)
+            super().alarm(alarm)
 
     def alpha(item: Item, report: Progress):
         started.append(item)

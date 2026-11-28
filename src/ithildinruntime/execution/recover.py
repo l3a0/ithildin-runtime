@@ -56,6 +56,7 @@ from ithildinruntime.core import (
     RECOVER_STAGE,
     VALUATION_OUTPUT,
     AccountRead,
+    Alarm,
     BlobRef,
     Book,
     Broker,
@@ -86,6 +87,7 @@ from ithildinruntime.journal import (
 )
 
 from .account import Account
+from .alarms import NOT_SETTLED, OPEN_PAST_CLOSE
 from .order_path import OrderPath, Outage
 from .sync import UNSETTLED, journal_read, keeper, read_broker
 
@@ -255,15 +257,15 @@ class RecoverStage:
                 )
                 step = "Look each up on the broker's site"
                 page = f"a store stopped answering, so {left}. {step}"
-                added = self._alarm(page, report) or added
+                added = self._alarm(NOT_SETTLED(page, scope=name), report) or added
                 said = [*failed, outage.reason, left[0].upper() + left[1:]]
                 raise Halt(f"account {self._account.alias}: {'. '.join(said)}{added}") from None
             except Halt as halt:
                 failed.append(halt.reason)
-                added = self._alarm(halt.reason, report) or added
+                added = self._alarm(NOT_SETTLED(halt.reason, scope=name), report) or added
                 continue
             if settled.said:
-                added = self._alarm(settled.said, report) or added
+                added = self._alarm(NOT_SETTLED(settled.said, scope=name), report) or added
         view = self._account.view(report)
         said: list[str] = []
         for entry in plans:
@@ -278,17 +280,17 @@ class RecoverStage:
             raise Halt(f"account {self._account.alias}: {'. '.join([*failed, *said])}{added}")
         return view
 
-    def _alarm(self, reason: str, report: Callable[[], None]) -> str:
+    def _alarm(self, alarm: Alarm, report: Callable[[], None]) -> str:
         """Send an alarm once in this process, and say what a halt adds where it went nowhere.
 
         A stored lookup's key is under each decision's own prefix, so it is left out of
         what makes two alarms the same cause.
         """
-        cause = _STORED.sub("a stored lookup", reason)
-        if cause in self._said:
+        said = _STORED.sub("a stored lookup", alarm.reason)
+        if said in self._said:
             return ""
-        self._said.add(cause)
-        return self._account.alarm(reason, report)
+        self._said.add(said)
+        return self._account.alarm(alarm, report)
 
     # Step 8
 
@@ -307,8 +309,11 @@ class RecoverStage:
             close = load_sessions().opened_by(sent_for).close
             if close < at:
                 self._alarm(
-                    f"the order {name} is still open after its session's close at "
-                    f"{close.isoformat()}",
+                    OPEN_PAST_CLOSE(
+                        f"the order {name} is still open after its session's close at "
+                        f"{close.isoformat()}",
+                        scope=name,
+                    ),
                     report,
                 )
 

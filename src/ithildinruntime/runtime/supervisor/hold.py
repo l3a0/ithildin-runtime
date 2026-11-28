@@ -59,8 +59,10 @@ from datetime import date, datetime
 
 from ithildinruntime.core import (
     RUN_RECORD_FORMAT,
+    Alarm,
     CodecError,
     Halt,
+    Kind,
     Mode,
     Plan,
     RunStop,
@@ -77,6 +79,7 @@ from ithildinruntime.core import (
 )
 from ithildinruntime.journal import DOUBTFUL, Journal, NumberTaken, PauseEntry, View
 
+from .alarms import HOLD_UNFINISHED, UNCLEAN_HOLD, raised
 from .deadline import cancel_cutoff
 
 __all__ = [
@@ -143,7 +146,7 @@ def hold_after_unclean_stops(
     starts: Starts,
     sessions: SessionTable,
     now: Callable[[], datetime],
-    alarm: Callable[[str], None],
+    alarm: Callable[[Alarm], None],
     say: Callable[[str], None] = print,
 ) -> tuple[Unclean, ...]:
     """Hold every strategy after each unclean stop it finds, and return those stops.
@@ -152,6 +155,12 @@ def hold_after_unclean_stops(
     strategy of `strategies` at the open of today's session.
     """
     today_run = run_part(mode, today, today)
+    # Who clears each alarm is read from the mode here, once, and no call site passes it.
+    live = mode is Mode.LIVE
+
+    def raise_(kind: Kind, reason: str) -> None:
+        alarm(raised(kind, reason, deployment=deployment, live=live))
+
     try:
         return _hold(
             storage,
@@ -164,7 +173,7 @@ def hold_after_unclean_stops(
             starts,
             sessions,
             now,
-            alarm,
+            raise_,
             say,
         )
     except Exception as error:
@@ -189,23 +198,27 @@ def hold_after_unclean_stops(
         free = sorted(set(strategies) - set(held))
         if held:
             unheld = (
-                f" No halt of {', '.join(free)} could be stored, so it is not held: pull the "
-                "kill switch of the account."
+                f" No halt of {', '.join(free)} could be stored, so it is not held: pull the kill "
+                "switch of the account."
                 if free
                 else ""
             )
-            alarm(
+            raise_(
+                HOLD_UNFINISHED,
                 f"{deployment}: the check for an unclean stop could not finish, so "
-                f"{', '.join(held)} stays held and {after}: {reason}.{unheld} The strategies held "
-                f"stay held after a later start succeeds. Start the supervisor's unit again once "
-                f"the cause is fixed. {who(mode)}"
+                f"{', '.join(held)} stays held and {after}: {reason}.{unheld} The strategies "
+                "held stay held after a later start succeeds. Start the supervisor's unit "
+                "again once "
+                f"the cause is fixed. {who(mode)}",
             )
         else:
-            alarm(
-                f"{deployment}: the check for an unclean stop could not finish and stored no halt "
-                f"of its own, so it holds no strategy and {after}: {reason}. A halt written "
-                "earlier may still stand. Pull the kill switch "
-                "of the account, then start the supervisor's unit again once the cause is fixed"
+            raise_(
+                HOLD_UNFINISHED,
+                f"{deployment}: the check for an unclean stop could not finish and stored no "
+                f"halt of its own, so it holds no strategy and {after}: {reason}. A halt "
+                "written earlier may still stand. Pull the kill switch of the account, then "
+                "start the supervisor's unit again once the cause is "
+                "fixed",
             )
         raise HoldFailed(reason) from error
 
@@ -221,7 +234,7 @@ def _hold(
     starts: Starts,
     sessions: SessionTable,
     now: Callable[[], datetime],
-    alarm: Callable[[str], None],
+    raise_: Callable[[Kind, str], None],
     say: Callable[[str], None],
 ) -> tuple[Unclean, ...]:
     view = journal.view()
@@ -254,7 +267,7 @@ def _hold(
         )
     for unclean in reversed(found):
         view = _pause(journal, view, deployment, unclean, names, now)
-        alarm(_alarm(mode, deployment, unclean, names, view, today, sessions))
+        raise_(UNCLEAN_HOLD, _alarm(mode, deployment, unclean, names, view, today, sessions))
     return tuple(found)
 
 

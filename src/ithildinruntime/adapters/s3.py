@@ -176,7 +176,9 @@ def _refusal(
     code = str(detail.get("Code", ""))
     status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     message = str(detail.get("Message", ""))
-    answer = f"{status} {code}: {message}".strip()
+    # S3's message names the caller's role ARN on an AccessDenied, and an answer reaches a
+    # page, so only the status and the code are kept. The message still sorts a checksum.
+    answer = f"{status} {code}".strip()
     if on_precondition is not None and (code in _EXISTS or status == 412):
         return on_precondition(key, answer)
     if code in _MISSING_KEY:

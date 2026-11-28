@@ -16,6 +16,7 @@ import pytest
 
 from ithildinruntime import core
 from ithildinruntime.core import (
+    Alarm,
     BlobHeader,
     BlobMissing,
     BlobRef,
@@ -66,9 +67,11 @@ class FakeTimer:
 class Alarms:
     def __init__(self) -> None:
         self.reasons: list[str] = []
+        self.alarms: list[Alarm] = []
 
-    def alarm(self, reason: str) -> None:
-        self.reasons.append(reason)
+    def alarm(self, alarm: Alarm) -> None:
+        self.alarms.append(alarm)
+        self.reasons.append(alarm.reason)
 
     def heartbeat(self) -> None:
         pass
@@ -799,8 +802,8 @@ class FailingAlarms(Alarms):
         super().__init__()
         self.error = error
 
-    def alarm(self, reason: str) -> None:
-        super().alarm(reason)
+    def alarm(self, alarm: Alarm) -> None:
+        super().alarm(alarm)
         raise self.error
 
 
@@ -834,6 +837,9 @@ def test_an_alarm_that_cannot_be_sent_leaves_a_true_halt(
     assert "did not store" in reason and OWNER_STEP in reason
     assert f"The alarm could not be sent: {type(error).__name__}" in reason
     assert alarms.reasons[-1] in reason
+    # The channel's own words stay out of both halts, which reach a page.
+    assert "unreachable" not in stored.value.reason and "unreachable" not in reason
+    assert [a.cause for a in alarms.alarms] == [f"storage.later-capture:{key}", "storage.outage"]
 
 
 @pytest.mark.parametrize("error", PAGER_ERRORS, ids=lambda error: type(error).__name__)

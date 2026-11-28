@@ -408,6 +408,8 @@ def owing(case: Case, refuse: bool) -> tuple[ExecutionWorker, Wired, list[str]]:
     if not refuse:
         store.before = lambda n, op, key: None
     planner.alarms.sent.clear()
+    planner.alarms.alarms.clear()
+    case.raised = planner.alarms.alarms  # type: ignore[attr-defined]
     return worker, store, planner.alarms.sent
 
 
@@ -448,6 +450,10 @@ def test_10_an_answer_that_is_lost_with_the_process_alarms_and_ends_it_with_an_e
         worker.run(Looped(error))  # type: ignore[arg-type]
     assert ACK in raised.value.reason
     assert len(said) == 2 and said[1] == f"account sim-1: {raised.value.reason}. {STEP}"
+    # The page before the last tries and the one after them are two causes, so neither holds
+    # the other back as a repeat.
+    causes = [a.cause for a in case.raised]  # type: ignore[attr-defined]
+    assert causes == ["execution.process-ending:sim-1", "execution.process-ends:sim-1"]
     # What the loop ended with is in the error's context, for the host's restart record.
     assert (raised.value.__context__ is error) if error else True
 

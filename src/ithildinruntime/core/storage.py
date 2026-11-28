@@ -25,12 +25,15 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from functools import cache
 
+from .alarms import EXPLAIN, Clears, Kind
 from .codec import CodecError, decode, encode
 from .halt import Halt, Outage
 from .ports import Alerts, BlobStore, Timer
 from .records import BlobHeader, BlobRef, DecisionResult, HaltRecord, RestartRecord, _Record
 
 __all__ = [
+    "LATER_CAPTURE",
+    "STORE_OUTAGE",
     "BlobMissing",
     "ChecksumMismatch",
     "Conflict",
@@ -48,6 +51,23 @@ __all__ = [
     "sha256_of",
 ]
 
+
+# A store that does not answer pages once per process and repeats while it lasts, whatever
+# key each call tried, so its cause names no key.
+STORE_OUTAGE = Kind(
+    "storage.outage",
+    "Alarms on storage and backups",
+    "A write S3 refuses for a reason other than an existing key, or a write or read S3 does not "
+    "answer by the deadline",
+    EXPLAIN,
+    Clears.BY_MODE,
+)
+LATER_CAPTURE = Kind(
+    "storage.later-capture",
+    "Alarms on storage and backups",
+    "A deterministic step that writes different bytes for the same inputs, or any create-only "
+    "write S3 refuses whose stored SHA-256 differs",
+)
 
 # How many decoded output files one `Storage` keeps, which covers every file of a decision at
 # today's count of strategies. More strategies cost only speed.
@@ -306,9 +326,9 @@ class Storage:
             return self._place(kind, held)
         except _AlarmFailed as failed:
             # The capture is stored, so it is not held, and the halt says so.
+            # The channel's own words stay out, as `order_path._alarm` leaves them out.
             raise self._halt(
-                f"{failed.reason}, and that alarm could not be sent: "
-                f"{type(failed.error).__name__}: {failed.error}"
+                f"{failed.reason}, and that alarm could not be sent: {type(failed.error).__name__}"
             ) from failed.error
         except _Deadline as late:
             self._hold(kind, held)
@@ -650,7 +670,7 @@ class Storage:
                     )
                     done = Stored(BlobRef(key, held.sha256), counts)
                     try:
-                        self._alerts.alarm(reason)
+                        self._alerts.alarm(LATER_CAPTURE(reason, scope=held.key))
                     except BaseException as error:
                         raise _AlarmFailed(reason, error, done) from error
                     return done
@@ -754,11 +774,9 @@ class Storage:
             f"The owner's step: {self._owner_step}"
         )
         try:
-            self._alerts.alarm(halt.reason)
+            self._alerts.alarm(STORE_OUTAGE(halt.reason))
         except BaseException as error:
-            return Outage(
-                f"{halt.reason}. The alarm could not be sent: {type(error).__name__}: {error}"
-            )
+            return Outage(f"{halt.reason}. The alarm could not be sent: {type(error).__name__}")
         return halt
 
     def _same_decision(self, key: str, header: BlobHeader, decision_at: datetime) -> None:

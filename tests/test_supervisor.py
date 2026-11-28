@@ -24,7 +24,9 @@ import pytest
 from ithildinruntime.adapters import FolderStore, LogAlerts, SystemTimer
 from ithildinruntime.core import (
     RUN_RECORD_FORMAT,
+    Alarm,
     BeforeClose,
+    Clears,
     Mode,
     OrderIntent,
     Plan,
@@ -166,8 +168,13 @@ class World:
         }
         return Supervisor(**(made | changes))
 
+    def raised(self) -> list[Alarm]:
+        """Each alarm the supervisor wrote, read back from its journal lines."""
+        lines = self.lines.getvalue().splitlines()
+        return [Alarm.from_line(line)[1] for line in lines if line.startswith("ALARM")]
+
     def alarms(self) -> list[str]:
-        return [line for line in self.lines.getvalue().splitlines() if line.startswith("ALARM")]
+        return [alarm.reason for alarm in self.raised()]
 
     def results(self, day: date = TODAY, stages=STAGES, run: str | None = None) -> None:
         for stage in stages:
@@ -496,6 +503,11 @@ def test_a_previous_run_with_no_stop_holds_every_strategy_and_journals_one_pause
     assert "2026-10-01 ended uncleanly: it stored no stop" in alarm
     assert f"Open positions: {CHAN} GLD +4" in alarm
     assert "The operator clears it" in alarm
+    (raised,) = world.raised()
+    assert (raised.cause, raised.clears) == (
+        f"supervisor.unclean-hold:{DEPLOYMENT}",
+        Clears.OPERATOR,
+    )
 
 
 def test_a_live_hold_names_the_owner(world: World) -> None:
@@ -506,6 +518,7 @@ def test_a_live_hold_names_the_owner(world: World) -> None:
     # A live plan is a different plan, so the start ends there, after the hold.
     (alarm, *_) = world.alarms()
     assert "The owner clears it" in alarm and "operator" not in alarm
+    assert world.raised()[0].clears is Clears.OWNER
 
 
 def test_every_strategy_the_book_holds_is_held_with_the_tables(world: World) -> None:
@@ -809,6 +822,8 @@ def test_a_halted_runs_alarm_says_what_to_do_and_who_clears_it(world: World) -> 
     assert "confirm the account's positions there" in alarm
     assert "Once the halt is stored, the next session's start holds every strategy" in alarm
     assert "The operator clears it" in alarm
+    (raised,) = world.raised()
+    assert (raised.cause, raised.clears) == (f"supervisor.run-halted:{DEPLOYMENT}", Clears.OPERATOR)
 
 
 def test_a_stall_alarm_says_a_later_restart_can_still_store_the_stop(world: World) -> None:
@@ -819,6 +834,7 @@ def test_a_stall_alarm_says_a_later_restart_can_still_store_the_stop(world: Worl
     world.supervisor().run(TODAY)
     (alarm,) = world.alarms()
     assert "unless the missing result lands and a person starts the supervisor's unit" in alarm
+    assert world.raised()[0].clears is Clears.OPERATOR
 
 
 def test_a_stop_asked_before_the_runs_stop_ends_with_its_own_code(world: World) -> None:
@@ -915,6 +931,8 @@ def test_a_stray_start_record_key_reads_as_a_lost_machine_and_holds(world: World
     world.supervisor().run(TODAY)
     assert world.held()
     assert any("start records of 2026-10-02 could not be read" in a for a in world.alarms())
+    (unread,) = [a for a in world.raised() if a.cause.startswith("supervisor.starts-unread")]
+    assert unread.clears is Clears.OPERATOR, "it holds, so on paper the operator clears it"
 
 
 def test_a_deadline_that_cannot_be_computed_halts_the_run(world: World, monkeypatch) -> None:
@@ -1252,8 +1270,9 @@ def test_a_standing_hold_on_live_names_the_owner(world: World) -> None:
     world.opened()
     world.put(_hold_key(), b"{}")
     world.supervisor(mode=Mode.LIVE).run(TODAY)
-    standing = [a for a in world.alarms() if "still held" in a]
-    assert standing and "The owner clears it" in standing[0]
+    standing = [a for a in world.raised() if "still held" in a.reason]
+    assert standing and "The owner clears it" in standing[0].reason
+    assert standing[0].clears is Clears.OWNER
 
 
 # Round 2 of the review: what no test reached
@@ -1680,6 +1699,12 @@ def test_halts_in_place_that_land_on_a_later_tick_end_the_wait(world: World) -> 
     world.most_ticks = 10
     assert world.supervisor().run(TODAY).code == EXIT_FAILED
     assert world.ticks == 2 and world.held() and world.blob(halt) is None
+    # The attempt and its outcome are two causes, so the pager never holds the outcome.
+    causes = [a.cause for a in world.raised() if a.cause.startswith("supervisor.run-halt-")]
+    assert causes == [
+        f"supervisor.run-halt-unstored:{DEPLOYMENT}",
+        f"supervisor.run-halt-in-place:{DEPLOYMENT}",
+    ]
 
 
 def test_a_stop_asked_before_any_halt_lands_says_nothing_records_it(world: World) -> None:

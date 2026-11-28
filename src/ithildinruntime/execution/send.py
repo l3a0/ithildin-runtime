@@ -113,6 +113,7 @@ from ithildinruntime.core import (
 from ithildinruntime.journal import DOUBTFUL, NOT_SENT, DecisionEntry, View
 
 from .account import Account
+from .alarms import CLAIM_TAKEN, LEGS_STAND, NOTHING_SENT, OTHER_PLAN
 from .inputs import read_inputs
 from .order_path import OrderPath, Outage
 from .orders import order_type, plan_orders
@@ -262,7 +263,9 @@ class SendStage:
         try:
             view = recorded(account, view, lambda v: _planned(v, at, entry), report)
         except _OtherPlan as other:
-            added = account.alarm(other.reason, report)
+            added = account.alarm(
+                OTHER_PLAN(other.reason, scope=f"{self._run.run}:{at.isoformat()}"), report
+            )
             raise Halt(f"{other.reason}{added}") from None
         names = [order.client_order_id for order in plan.orders]
 
@@ -291,8 +294,11 @@ class SendStage:
         view = account.view(report)
         said, doubts = _standing(view, at)
         added = ""
-        for doubt in doubts:
-            added = account.alarm(f"{doubt}, and {key} holds another call's claim", report) or added
+        for number, doubt in enumerate(doubts):
+            alarm = CLAIM_TAKEN(
+                f"{doubt}, and {key} holds another call's claim", scope=f"{key}#{number}"
+            )
+            added = account.alarm(alarm, report) or added
         try:
             path = account.path(brokers(at), report)
             path.loss(self._deployment, self._run.run, at, unread=at not in view.decided)
@@ -460,7 +466,8 @@ class SendStage:
         if ended and then:
             said.append(then)
         reason = ". ".join(said)
-        added = self._account.alarm(f"nothing is sent: {reason}", report)
+        scope = names[0] if names else self._run.run
+        added = self._account.alarm(NOTHING_SENT(f"nothing is sent: {reason}", scope=scope), report)
         raise Halt(f"nothing is sent: {reason}{added}")
 
     # Step 8
@@ -572,7 +579,8 @@ class SendStage:
             )
         what = f"{'. '.join(said)}. The plan's orders stand so: {legs}"
         # The one alarm that names every leg, beside the outage's own where there was one.
-        added = self._account.alarm(what, report)
+        scope = orders[0].client_order_id if orders else self._run.run
+        added = self._account.alarm(LEGS_STAND(what, scope=scope), report)
         raise Halt(f"{what}{added}")
 
     def _read(self, said: list[str], report: Callable[[], None]) -> View | None:

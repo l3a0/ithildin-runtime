@@ -136,6 +136,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from ithildinruntime.core import (
+    Alarm,
     Alerts,
     BlobHeader,
     BlobRef,
@@ -143,6 +144,7 @@ from ithildinruntime.core import (
     Event,
     EventKind,
     Halt,
+    Kind,
     Plan,
     Progress,
     Queue,
@@ -156,6 +158,15 @@ from ithildinruntime.core import (
     result_key,
 )
 
+from .alarms import (
+    COULD_NOT_FINISH,
+    HALT_DROPPED,
+    HALT_UNSTORED,
+    HOLDING,
+    LOOP_STOPPED,
+    QUEUE_SILENT,
+    UNHANDLED,
+)
 from .table import Stage, Table, routes
 
 __all__ = ["Handler", "Item", "LoopFailed", "ReceiveLoop"]
@@ -245,6 +256,20 @@ class _Fatal(Exception):
     pass
 
 
+class _ScopedAlerts:
+    """`Alerts` whose every alarm's cause is scoped to the loop's component, not its instance."""
+
+    def __init__(self, alerts: Alerts, component: str) -> None:
+        self._alerts = alerts
+        self._component = component
+
+    def alarm(self, alarm: Alarm) -> None:
+        self._alerts.alarm(alarm.within(self._component))
+
+    def heartbeat(self) -> None:
+        self._alerts.heartbeat()
+
+
 class ReceiveLoop:
     """One worker's receive loop over its queue, for the stages of one component.
 
@@ -294,7 +319,7 @@ class ReceiveLoop:
         self._storage = storage
         self._bucket = bucket
         self._handlers = dict(handlers)
-        self._alerts = alerts
+        self._alerts = _ScopedAlerts(alerts, component)
         self._timer = timer
         self._beat = beat
         self._pool_size = pool_size
@@ -543,11 +568,13 @@ class ReceiveLoop:
         blobs = "blob" if len(held) == 1 else "blobs"
         try:
             self._alerts.alarm(
-                f"{self._worker} holds {len(held)} {blobs} S3 has not stored: "
-                f"{', '.join(held)}. It stopped receiving because {self._why_stopped()}. "
-                "It keeps retrying them, and exits once they are stored, unless the host "
-                "kills it first, which loses them. A capture S3 keeps answering with an "
-                "error is never dropped, so it holds the process until a person acts"
+                HOLDING(
+                    f"{self._worker} holds {len(held)} {blobs} S3 has not stored: "
+                    f"{', '.join(held)}. It stopped receiving because {self._why_stopped()}. "
+                    "It keeps retrying them, and exits once they are stored, unless the host "
+                    "kills it first, which loses them. A capture S3 keeps answering with an "
+                    "error is never dropped, so it holds the process until a person acts"
+                )
             )
         except BaseException:
             # Whatever the channel raised, what is held is still tried. Sent
@@ -593,7 +620,7 @@ class ReceiveLoop:
             # reason when the alarm cannot be sent.
             self._dropped.append(said)
         try:
-            self._alerts.alarm(said)
+            self._alerts.alarm(HALT_DROPPED(said, scope=key))
         except Exception:
             pass
 
@@ -637,19 +664,26 @@ class ReceiveLoop:
         except Exception as error:
             self._give_up(f"could not answer its queue: {_said(error)}", error)
 
-    def _give_up(self, what: str, error: BaseException, more: str = "") -> None:
+    def _give_up(
+        self,
+        what: str,
+        error: BaseException,
+        more: str = "",
+        kind: Kind = LOOP_STOPPED,
+        scope: str = "",
+    ) -> None:
         """End the loop with `LoopFailed` and alarm, from the event loop's thread."""
         self._fail(error, f"{self._worker} {what}", more)
-        self._send(f"{self._worker} {what}{more}")
+        self._send(kind(f"{self._worker} {what}{more}", scope=scope))
 
-    def _send(self, reason: str) -> None:
+    def _send(self, alarm: Alarm) -> None:
         # On an io thread, so a slow alert channel never holds the beat back.
         assert self._loop is not None
-        self._sending.append(self._loop.run_in_executor(self._io, self._alarm_quietly, reason))
+        self._sending.append(self._loop.run_in_executor(self._io, self._alarm_quietly, alarm))
 
-    def _alarm_quietly(self, reason: str) -> None:
+    def _alarm_quietly(self, alarm: Alarm) -> None:
         try:
-            self._alerts.alarm(reason)
+            self._alerts.alarm(alarm)
         except Exception:
             # The loop ends with LoopFailed, and the host's restart shows.
             pass
@@ -735,8 +769,10 @@ class ReceiveLoop:
         self._alarmed_unanswered = True
         try:
             self._alerts.alarm(
-                f"{self._worker}'s queue has answered no receive for {silent:.0f} seconds, "
-                f"last with {_escaped(refused.answer)}"
+                QUEUE_SILENT(
+                    f"{self._worker}'s queue has answered no receive for {silent:.0f} seconds, "
+                    f"last with {_escaped(refused.answer)}"
+                )
             )
         except Exception:
             # The loop goes on, and the halt on the deaf queue still comes.
@@ -947,7 +983,7 @@ class ReceiveLoop:
             cause = error.__cause__ or error
             more = f": {_said(cause)}{running.said_ended()}"
             self._fail(cause, f"{self._worker}: {error}", more)
-            self._send(f"{self._worker}: {error}{more}")
+            self._send(HALT_UNSTORED(f"{self._worker}: {error}{more}"))
         elif error is not None:
             # An error `_work` did not turn into a stored or held result. A
             # later check would find no result and start the decision again,
@@ -957,7 +993,14 @@ class ReceiveLoop:
                 f"could not finish stage {running.item.stage} at decision "
                 f"{decision_part(running.item.decision_at)}"
             )
-            self._give_up(what, error, f": {_said(error)}{running.said_ended()}")
+            item = running.item
+            self._give_up(
+                what,
+                error,
+                f": {_said(error)}{running.said_ended()}",
+                COULD_NOT_FINISH,
+                f"{item.stage}:{decision_part(item.decision_at)}",
+            )
         assert self._inbox is not None
         self._inbox.put_nowait(("finished", running))
 
@@ -1018,7 +1061,9 @@ class ReceiveLoop:
         # The alarm goes first, so the reason is sent even when its halt
         # cannot be built or is never stored.
         try:
-            self._alerts.alarm(reason)
+            self._alerts.alarm(
+                UNHANDLED(reason, scope=f"{item.stage}:{decision_part(item.decision_at)}")
+            )
         except BaseException:
             # Monitoring alarms on every halt it reads, so nothing the channel
             # raises may keep the halt from being stored.
