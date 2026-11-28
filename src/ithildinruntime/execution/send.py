@@ -13,8 +13,10 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    unreadable snapshot hides no order. Where the loss cannot be read and the
    journal holds no plan of the decision, the stop fires with no reading,
    since the call that claimed it may have read the loss past its stop and
-   died before its firing was stored. A run that builds no broker for this
-   stage writes no claim, since it sends nothing.
+   died before its firing was stored, and so does a store that does not
+   answer that reading, since the latch holds a firing whose writes fail. A
+   run that builds no broker for this stage writes no claim, since it sends
+   nothing.
 2. Each input's result in the row's order, each halt passed on, and then the
    snapshot, the constraints, the targets, and recover's book, valuation and
    caps, all read before any file of this stage's is stored.
@@ -27,7 +29,6 @@ nothing, and then works in this order. docs/architecture/06-runtime.md's
    cannot be read halts.
 5. `OrderPath.loss`, which fires the stop and halts past it with no order
    needed.
-
 6. `plan_orders`, and then the `decision` entry, which names every file the plan
    was made from, before anything is asked or sent. A plan of this decision the
    journal already holds that is not this one halts, with an alarm naming both.
@@ -56,16 +57,17 @@ A halt of steps 2 to 4, and the halt of a run with no broker, reads the day's
 loss before it ends the decision, through `Account.loss`, which touches no
 broker, as the claim's halt does. A reading past its stop fires the stop, as
 step 5 does, and its `stop_fired` entry names the halt. A reading inside its
-stop leaves the halt as it was, and the halt keeps its cause, so monitoring
-does not page on a halt passed on from upstream. One whose inputs halt says
-why, and names a reason it shares with the halt only once. An `Outage` and a
-`LeaseHeld` pass through with no reading, and an outage during a reading fires
-nothing on either path. The stop of each strategy is the smaller of its
-`[risk]` section's `loss_stop` and the caps blob's, read alone, so a halted risk
-stage, a stress field the caps hold wrongly, or a limit the loss never uses
-leaves the loss readable. A reading after a halt of the sync can fire and never
-proves the loss stayed inside its stop, because the journal's book is the one
-the sync found to differ from the broker's.
+stop leaves the halt as it was, and the halt keeps its cause, so monitoring does
+not page on a halt passed on from upstream. One whose inputs halt says why, and
+names a reason it shares with the halt only once. An `Outage` and a `LeaseHeld`
+pass through with no reading. An outage during a reading fires nothing, except
+on the claim's halt of a decision the journal holds no plan of, where it fires
+with no reading as any input it cannot read does. The stop of each strategy is
+the smaller of its `[risk]` section's `loss_stop` and the caps blob's, read
+alone, so a halted risk stage, a stress field the caps hold wrongly, or a limit
+the loss never uses leaves the loss readable. A reading after a halt of the sync
+can fire and never proves the loss stayed inside its stop, because the journal's
+book is the one the sync found to differ from the broker's.
 
 A result holds a halt or an outcome, never both.
 """
@@ -337,6 +339,8 @@ class SendStage:
         An `Outage` and a `LeaseHeld` pass through with no reading. A loss read
         inside its stop leaves `halt` as it is, and a joined halt keeps its cause.
         """
+        # No step before 5 takes the account's lease today. A `LeaseHeld` passes through for the
+        # wait #237's plan ends one with, once a step before the loss takes the lease.
         if isinstance(halt, (Outage, LeaseHeld)):
             return halt
         said = self._loss_after(halt.reason, at, f"the decision halted: {halt.reason}", report)
@@ -378,9 +382,9 @@ class SendStage:
         A reading past its stop fires the stop, as step 5 does, and a reading
         inside it adds nothing. One whose inputs halt adds why, and names a reason
         it shares with `halted` only once. An `Outage` fires nothing, since the
-        outage already paged and a store that does not answer cannot take a
-        firing. `after` names `halted` in a firing's entry, and `unread` fires the
-        stop with no reading where an input halts.
+        outage has already paged, except under `unread`. `after` names `halted`
+        in a firing's entry, and `unread` fires the stop with no reading where an
+        input halts or a store does not answer, for the claim's halt with no plan.
         """
         where = (self._deployment, self._run.run, at)
         try:

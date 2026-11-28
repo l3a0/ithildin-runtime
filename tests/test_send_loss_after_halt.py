@@ -36,8 +36,10 @@ from ithildinruntime.core import (
     loss_stop_key,
     off_switch_key,
 )
+from ithildinruntime.execution.account import Account
 from ithildinruntime.execution.brokers.faults import EditPosition, Faults
 from ithildinruntime.execution.order_path import Unread
+from ithildinruntime.journal import VerdictEntry
 from tests.support import gates
 from tests.support.order_world import CASH, RUN, World, caps_blob
 from tests.support.order_world import DEPLOYMENT as PAPER
@@ -106,6 +108,16 @@ def holds(made: SendWorld) -> None:
     assert len(made.submits()) == 1
 
 
+def control(made: SendWorld, result: DecisionResult, paged: int, upstream: str, stage: str) -> None:
+    """A loss inside its stop of 10 on a halt: the halt as it was, with its cause, and no more."""
+    assert result.halt is not None and result.halt.reason == upstream
+    assert result.halt.cause == made.result_ref(stage)
+    assert made.keeper.losses, "the loss was not read"
+    assert stop_kinds(made) == [] and made.alarms.sent[paged:] == []
+    assert "decision" not in made.kinds(made.before) and "intent" not in made.kinds(made.before)
+    assert len(made.submits()) == 1
+
+
 # 1 and 2. A caps blob rewritten after recover is read at step 5 for its loss_stop alone.
 
 
@@ -132,14 +144,19 @@ def test_a_caps_blob_rewritten_after_recover_still_latches_a_loss_past_its_stop(
     holds(made)
 
 
-def test_a_stress_move_past_its_age_still_latches_a_loss_past_its_stop() -> None:
+@pytest.mark.parametrize("stop", [Decimal(1), Decimal(10)], ids=["past", "control"])
+def test_a_stress_move_past_its_age_still_latches_a_loss_past_its_stop(stop: Decimal) -> None:
     """The risk stage halts first when the age passes on the calendar, and the loss is read."""
-    made = short_then()
+    made = short_then(stop)
     reason = "the hard caps' stress_through is 2026-01-02, past the 1 allowed"
     made.stage_halted(made.at, RISK_STAGE, reason)
     paged = len(made.alarms.sent)
     result = made.send_stage()
-    latched(made, result, paged, f"{made.result_key(RISK_STAGE)} holds a halt: {reason}")
+    upstream = f"{made.result_key(RISK_STAGE)} holds a halt: {reason}"
+    if stop == 10:
+        control(made, result, paged, upstream, RISK_STAGE)
+        return
+    latched(made, result, paged, upstream)
     holds(made)
 
 
@@ -155,13 +172,18 @@ def test_a_missing_forecast_still_latches_a_loss_past_its_stop() -> None:
     holds(made)
 
 
-def test_a_halted_risk_stage_latches_a_loss_past_its_stop() -> None:
-    made = short_then()
+@pytest.mark.parametrize("stop", [Decimal(1), Decimal(10)], ids=["past", "control"])
+def test_a_halted_risk_stage_latches_a_loss_past_its_stop(stop: Decimal) -> None:
+    made = short_then(stop)
     reason = "the deployment runs 2 strategies"
     made.stage_halted(made.at, RISK_STAGE, reason)
     paged = len(made.alarms.sent)
     result = made.send_stage()
-    latched(made, result, paged, f"{made.result_key(RISK_STAGE)} holds a halt: {reason}")
+    upstream = f"{made.result_key(RISK_STAGE)} holds a halt: {reason}"
+    if stop == 10:
+        control(made, result, paged, upstream, RISK_STAGE)
+        return
+    latched(made, result, paged, upstream)
     holds(made)
 
 
@@ -175,12 +197,21 @@ def garbled(made: SendWorld, key: str) -> None:
     made.store.before = before
 
 
-def test_an_unreadable_off_switch_still_latches_a_loss_past_its_stop() -> None:
-    made = short_then()
+@pytest.mark.parametrize("stop", [Decimal(1), Decimal(10)], ids=["past", "control"])
+def test_an_unreadable_off_switch_still_latches_a_loss_past_its_stop(stop: Decimal) -> None:
+    made = short_then(stop)
     garbled(made, off_switch_key(ACCOUNT, CHAN))
     paged = len(made.alarms.sent)
     result = made.send_stage()
-    latched(made, result, paged, "strategy off switch unreadable: ValueError")
+    upstream = "strategy off switch unreadable: ValueError"
+    if stop == 10:
+        # The switch's halt is the stage's own, so it carries no cause.
+        assert result.halt is not None and result.halt.reason == upstream
+        assert result.halt.cause is None and made.keeper.losses
+        assert stop_kinds(made) == [] and made.alarms.sent[paged:] == []
+        assert "decision" not in made.kinds(made.before)
+        return
+    latched(made, result, paged, upstream)
     holds(made)
 
 
@@ -211,6 +242,9 @@ def test_a_sync_halt_fires_on_a_loss_past_its_stop(fault: str) -> None:
     assert result.halt is not None
     upstream = result.halt.reason.split(f". {FIRED}")[0]
     latched(made, result, paged, upstream)
+    if fault == "a broker that does not answer":
+        # With the broker flat, the next recover halts on the difference first.
+        holds(made)
 
 
 # 7. A loss inside its stop reads and leaves the halt as it was.
@@ -281,7 +315,22 @@ def test_the_loss_reading_still_halts_on_a_valuation_of_another_session() -> Non
     assert world.every_kind().count("stop_fired") == 0
 
 
-def test_the_loss_reading_fires_on_a_valuation_at_or_below_zero() -> None:
+@pytest.mark.parametrize("value", [0, -5])
+def test_the_loss_reading_fires_on_a_valuation_at_or_below_zero(value: int) -> None:
+    """`tighten` halts there, where the loss is largest, and the halt path's reading fires."""
+    # Short 1,000 GLD sold at 1 and marked at 1,002 leaves the account worth -1,000.
+    world = World(
+        position=Decimal(-1000),
+        snapshot=gates.snapshot({gates.GLD: 1002, gates.USO: 1}),
+        valuation=gates.valuation(value, replayed_through=1),
+        constraints=(gates.constraints(loss_stop=Decimal(1)),),
+    )
+    with pytest.raises(Halt, match=f"the day's loss of {1000 + value}.0000 is past its stop of 1"):
+        reading(world)
+    assert world.every_kind().count("stop_fired") == 1
+
+
+def test_the_gate_reads_a_valuation_at_or_below_zero_that_its_check_halts_on() -> None:
     """`tighten` halts there, where the loss is largest, and the reading measures it."""
     for value in (0, -5):
         world = gates.World(book=gates.book(cash=-10)).given(valuation=gates.valuation(value))
@@ -334,7 +383,12 @@ def test_an_upstream_outage_passes_through_with_no_reading() -> None:
 
 
 @pytest.mark.parametrize("path", ["a-halt", "a-claim", "the-off-switch"])
-def test_an_outage_during_the_reading_fires_nothing_on_either_path(path: str) -> None:
+def test_an_outage_during_the_reading_fires_only_on_a_claim_with_no_plan(path: str) -> None:
+    """An outage fires nothing, but on the claim's halt of a decision with no plan.
+
+    The call that claimed it may have read the loss past its stop and died, and the latch holds
+    a firing whose writes fail, so there the stop fires with no reading, as before #247.
+    """
     made = short_then(Decimal(1000) if path == "a-claim" else Decimal(1))
     valuation = made.key(VALUATION_OUTPUT)
     if path == "a-halt":
@@ -349,10 +403,18 @@ def test_an_outage_during_the_reading_fires_nothing_on_either_path(path: str) ->
     paged = len(made.alarms.sent)
     result = made.send_attempt()
     assert result.halt is not None
-    assert stop_kinds(made) == []
     sent = made.alarms.sent[paged:]
+    if path == "a-claim":
+        assert stop_kinds(made) == ["stop_fired", "stop_stored"]
+        assert made.view().stop.standing.entry.reading is None
+        assert "the loss stop fired with no reading" in result.halt.reason
+        # The outage pages, and so does the firing.
+        assert len(sent) == 2 and "did not answer" in sent[0]
+        assert "the loss stop fired with no reading" in sent[1]
+        return
+    assert stop_kinds(made) == []
     assert not any("loss stop fired" in s or FIRED in s for s in sent)
-    if path != "the-off-switch":
+    if path == "a-halt":
         assert "The day's loss could not be read" in result.halt.reason
         # The outage alone pages, once.
         assert len(sent) == 1 and "did not answer" in sent[0]
@@ -430,6 +492,10 @@ def test_step_5_and_the_halt_path_return_the_same_reading() -> None:
         )
         step_5 = world.path().loss(PAPER, RUN, gates.DECISION, world.strategies())
         assert step_5 == reading(world) and step_5[0].loss == loss
+        # The order's own check reads the same figure against the same stop.
+        world.send()
+        (entry,) = [e for e in world.entries() if isinstance(e, VerdictEntry)]
+        assert entry.verdict.loss == step_5[0]
 
 
 def test_a_reading_past_its_stop_is_the_same_on_both_paths() -> None:
@@ -455,22 +521,154 @@ def test_a_strategy_that_holds_nothing_fires_on_the_accounts_loss_past_its_stop(
         others=(gates.constraints(strategy=TWO, loss_stop=Decimal(1)),),
     )
     made.stage_halted(made.at, RISK_STAGE, "the deployment runs 2 strategies")
+    paged = len(made.alarms.sent)
     result = made.send_stage()
-    assert result.halt is not None and "past its stop of 1.0000" in result.halt.reason
-    entry = made.view().stop.standing.entry
-    assert (entry.reading.loss, entry.reading.bound) == (Decimal("3.0000"), Decimal("1.0000"))
+    upstream = f"{made.result_key(RISK_STAGE)} holds a halt: the deployment runs 2 strategies"
+    latched(made, result, paged, upstream)
+    made.others = (gates.constraints(strategy=TWO, loss_stop=Decimal(1000)),)
+    holds(made)
 
 
-def test_a_risk_section_with_a_bad_field_the_loss_never_uses_still_reads_the_loss() -> None:
-    bad = risked(strategy(), Decimal(1))
-    bad = replace(bad, sections={**bad.sections, RISK_SECTION: {"loss_stop": 1, "max_net": -1}})
-    made = short_then(strategies=(bad,))
+@pytest.mark.parametrize("stop", [1, 10], ids=["past", "control"])
+def test_a_risk_section_with_a_bad_field_the_loss_never_uses_still_reads_the_loss(stop) -> None:
+    bad = risked(strategy(), Decimal(stop))
+    sections = {**bad.sections, RISK_SECTION: {"loss_stop": stop, "max_net": -1}}
+    made = short_then(strategies=(replace(bad, sections=sections),))
     made.stage_halted(made.at, RISK_STAGE, "max_net is -1, below zero")
     paged = len(made.alarms.sent)
     result = made.send_stage()
-    latched(
-        made,
-        result,
-        paged,
-        f"{made.result_key(RISK_STAGE)} holds a halt: max_net is -1, below zero",
+    upstream = f"{made.result_key(RISK_STAGE)} holds a halt: max_net is -1, below zero"
+    if stop == 10:
+        control(made, result, paged, upstream, RISK_STAGE)
+        return
+    latched(made, result, paged, upstream)
+    # The section keeps its stop of 1 the next session too, so the firing stands either way.
+    holds(made)
+
+
+# What round 1 of the review asked for.
+
+
+@pytest.mark.parametrize("where", ["step-5", "a-halt"])
+def test_the_caps_own_loss_stop_binds_where_it_is_the_tighter(where: str) -> None:
+    """The caps blob is the one place the owner's stop enters the reading, read alone."""
+    made = short_then(Decimal(10))
+    # The owner tightens the caps' own stop, which recover's copy of them does not hold yet.
+    made.rewrite_caps(loss_stop=Decimal(1))
+    if where == "a-halt":
+        made.portfolio_halted(made.at, MISSING)
+    paged = len(made.alarms.sent)
+    result = made.send_stage()
+    assert result.halt is not None and FIRED in result.halt.reason
+    entry = made.view().stop.standing.entry
+    assert (entry.reading.loss, entry.reading.bound) == (Decimal("3.0000"), Decimal("1.0000"))
+    (page,) = made.alarms.sent[paged:]
+    assert FIRED in page
+    holds(made)
+
+
+def losing_world(**changes) -> World:
+    """An order path's world whose loss of 101 is past its stop of 100."""
+    return World(
+        valuation=gates.valuation(CASH + Decimal(101), replayed_through=1),
+        constraints=(gates.constraints(loss_stop=Decimal(100)),),
+        **changes,
     )
+
+
+@pytest.mark.parametrize(
+    ("section", "why"),
+    [
+        (None, r"has no \[risk\] section"),
+        ({"max_net": 1}, "states no loss_stop"),
+        ({"loss_stop": True}, "core refuses: the strategy's loss_stop is True"),
+        ({"loss_stop": "1"}, "core refuses: the strategy's loss_stop is '1'"),
+        ({"loss_stop": 0}, "core refuses: the strategy's loss_stop is 0, not above zero"),
+        ({"loss_stop": -1}, "core refuses: the strategy's loss_stop is -1, not above zero"),
+        ({"loss_stop": Decimal("NaN")}, "core refuses: the strategy's loss_stop"),
+    ],
+    ids=["no-section", "no-stop", "a-bool", "text", "zero", "negative", "nan"],
+)
+def test_a_stop_the_risk_section_holds_wrongly_reads_as_unread(section, why) -> None:
+    """Such a decision cannot read its loss, which is #264's, so nothing fires here."""
+    world = losing_world()
+    (made,) = world.strategies()
+    sections = {k: v for k, v in made.sections.items() if k != RISK_SECTION}
+    if section is not None:
+        sections[RISK_SECTION] = section
+    strategies = (replace(made, sections=sections),)
+    where = (PAPER, RUN, gates.DECISION)
+    with pytest.raises(Unread, match=why) as halt:
+        world.account().loss(where, strategies, world.report, after="a halt")
+    assert gates.CHAN in halt.value.reason
+    assert world.every_kind().count("stop_fired") == 0 and world.alarms.sent == []
+
+
+def test_a_stage_that_runs_no_strategy_cannot_read_its_loss() -> None:
+    world = losing_world()
+    where = (PAPER, RUN, gates.DECISION)
+    with pytest.raises(Unread, match="runs no strategy"):
+        world.account().loss(where, (), world.report, after="a halt")
+    assert world.every_kind().count("stop_fired") == 0
+    # The claim's halt with no plan fires with no reading on it, as on any input it cannot read.
+    with pytest.raises(Halt, match="^the loss stop fired with no reading.*runs no strategy"):
+        world.account().loss(where, (), world.report, after="a claim", unread=True)
+
+
+def test_an_account_that_cannot_be_used_reads_no_loss_and_says_so() -> None:
+    made = short_then()
+    made.portfolio_halted(made.at, MISSING)
+    broken = Account(
+        store=made.store,  # type: ignore[arg-type]
+        storage=made.storage(),
+        account="a/b",
+        writer="d" * 32,
+        gate=made.keeper,  # type: ignore[arg-type]
+        clock=made.clock,  # type: ignore[arg-type]
+        alerts=made.alarms,
+        retry=made.retry,
+        pause=made.clock.wait,
+    )
+    result = made.send_attempt(made.sender(account=broken, brokers=Halt("no broker")))
+    assert result.halt is not None
+    assert result.halt.reason == (
+        "no broker. The day's loss could not be read: the account 'a/b' is no alias a journal "
+        "is kept under"
+    )
+    assert stop_kinds(made) == [] and made.keeper.losses == []
+
+
+def test_a_settle_that_halts_reads_as_unread_and_fires_nothing() -> None:
+    made = short_then()
+    made.portfolio_halted(made.at, MISSING)
+    upstream = f"{made.result_key(PORTFOLIO_STAGE)} holds a halt: {MISSING}"
+
+    def refused(report) -> None:
+        raise Halt("the journal still does not take the answer of order X")
+
+    made.account._shared.unstored.settle = refused  # type: ignore[method-assign]
+    result = made.send_attempt()
+    assert result.halt is not None
+    # Step 3's settle halts first, and the reading's own settle halts for that same reason.
+    assert result.halt.reason == upstream + (
+        ". The day's loss could not be read: the journal still does not take the answer of order X"
+    )
+    assert stop_kinds(made) == []
+
+
+@pytest.mark.parametrize(
+    "rewrite",
+    [
+        {"stress_move": gates.d("0.01"), "stress_low": gates.d("0.02")},
+        {"stress_through": date(2026, 1, 2), "stress_max_age_days": 1},
+    ],
+    ids=["stress-move-below-its-low", "stress-through-past-its-age"],
+)
+def test_step_5_still_halts_on_caps_an_order_could_not_use(rewrite) -> None:
+    """The loss reads inside its stop, and a decision that plans no order halts before its plan."""
+    made = short_then(Decimal(1000))
+    made.rewrite_caps(**rewrite)
+    result = made.send_stage()
+    assert result.halt is not None and FIRED not in result.halt.reason
+    assert "the hard caps'" in result.halt.reason
+    assert "decision" not in made.kinds(made.before) and stop_kinds(made) == []

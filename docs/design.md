@@ -2545,9 +2545,11 @@ The price is seven things.
    their kind, and the alpha model reads them.
 2. A position held when a later change arrives is held through those decisions.
    No strategy exit goes out. The day's loss is not tested either, because data's
-   halt leaves the send stage no snapshot to read it from, and until
-   [#264](https://github.com/l3a0/ithildin-runtime/issues/264) rules what such a
-   decision does, it does what it did before. Worst loss covers only the
+   halt leaves the send stage no snapshot to read it from. On shadow and paper
+   such a decision is to hold the account until a person clears it, as
+   [#264](https://github.com/l3a0/ithildin-runtime/issues/264) says and
+   [#150](https://github.com/l3a0/ithildin-runtime/issues/150) builds, and
+   until then it does what it did before. Worst loss covers only the
    stress move's window, so, as [for any position a halt leaves
    open](#a-strategy-is-judged-over-a-sample-and-runs-unchanged-through-it), only
    the owner's act bounds it.

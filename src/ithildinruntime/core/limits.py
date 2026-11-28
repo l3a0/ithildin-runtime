@@ -151,7 +151,9 @@ def smaller_stop(strategy: object, caps: object) -> Decimal:
     """The tighter of a strategy's loss stop and the caps', each a finite decimal above zero.
 
     `tighten` takes its `loss_stop` from here, and so does every reading of the
-    day's loss, so the stop an order is refused on is the stop the loss fires on.
+    day's loss, so an order's check and the day's loss tighten a pair of stops
+    the same way. The pair can differ where the caps change between the risk
+    stage and the send, and each call reads the caps as they stand.
     """
     return min(_stop("the strategy's", strategy), _stop("the hard caps'", caps))
 

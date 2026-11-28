@@ -127,6 +127,7 @@ from ithildinruntime.core import (
     parse_loss_stop,
     read_order_id,
     readable_until,
+    require_current,
     sha256_of,
     smaller_stop,
     takeover_key,
@@ -1099,9 +1100,19 @@ class OrderPath:
 
         It first halts unless the broker trades this account. That is the
         reading's one touch of the broker, which `Account.loss` leaves out.
+        Once the loss reads inside its stop, it also halts on caps an order
+        could not use, the whole blob and its stress age, so a decision that
+        plans no order halts on them before its plan.
         """
         self._one_account()
-        return read_loss(self._shared, self._report, (deployment, run, decision_at), strategies)
+        shared = self._shared
+        readings = read_loss(shared, self._report, (deployment, run, decision_at), strategies)
+        # The loss reads the caps' loss_stop alone, so it fires on caps an order could not use.
+        # Inside its stop, the decision still halts on them before its plan, as an order would.
+        caps, _ = self._caps()
+        _, valuation = read_measured(shared.storage, deployment, run, decision_at, self._report)
+        require_current(caps, valuation, decision_at)
+        return readings
 
     # Reads
 
@@ -1950,16 +1961,25 @@ def read_loss(
     read. A rerun after the close so fires on the decision's own loss, where the
     gate's check of the clock against the session's close halts the second read.
 
-    A halt on an input raises `Unread`, and an `Outage` passes through with no
-    firing, since a store that does not answer cannot take one. `after` is set
+    A halt on an input, or a settle that halts, raises `Unread`, and an
+    `Outage` passes through with no firing, since the outage has already paged
+    and a caller stops its other writes on one. `after` is set
     where the decision has already halted, and names why, in the firing's
     entry. There a reading at the decision's own time inside its stop counts as
     read, even where the second reading halts. `unread` fires the stop with no
     reading where an input halts, for the claim halt of a decision the journal
     holds no plan of, since only that plan proves the loss was read inside its
-    bound.
+    bound. It fires on an `Outage` too, since the call that claimed may have
+    read the loss past its stop and died, and the latch holds a firing whose
+    writes fail until a later settle stores it. A settle that halts fires
+    nothing, as before.
     """
-    shared.settle(report)
+    try:
+        shared.settle(report)
+    except Outage:
+        raise
+    except Halt as halt:
+        raise Unread(halt.reason) from None
     deployment, run, decision_at = where
     try:
         view = _viewed(shared, shared.patience.tries(report))
@@ -1976,9 +1996,9 @@ def read_loss(
             shared.gate.loss_against(book, snapshot, stop, valuation, state, decision_at)
             for stop in stops
         )
-    except Outage:
-        raise
     except Halt as halt:
+        if isinstance(halt, Outage) and not unread:
+            raise
         if not unread:
             raise Unread(halt.reason) from None
         said = (
