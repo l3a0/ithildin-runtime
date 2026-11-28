@@ -704,6 +704,9 @@ def test_an_order_the_broker_lists_is_not_named_late() -> None:
     world = _two()
     _, entry = _taken_over(world, _row(world.orders[0]))
     assert entry.late == ()
+    # A takeover that finds no late order leaves nothing for a person to clear.
+    (raised,) = [a for a in world.alarms.alarms if "taken over from" in a.reason]
+    assert raised.clears is Clears.NOBODY
 
 
 def test_a_free_lease_with_no_takeover_owed_journals_none() -> None:

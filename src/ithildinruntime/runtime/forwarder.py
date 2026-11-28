@@ -28,15 +28,18 @@ forwarder that reads it ship together. #202 builds its unit.
    alarm tries again at its interval.
 6. **Its count of pages a day** is kept beside the cursor too, so a restart of
    its unit does not start the day's count again.
-7. **It beats while it makes progress.** It touches its heartbeat file every
+7. **It beats while it makes progress.** It beats as it starts and then every
    `BEAT_EVERY` seconds, and skips the beat once one entry has been in hand for
    `STUCK_AFTER` seconds, as a worker's loop does with a hung handler. So a
    forwarder stuck in a push, or one that ended, stops beating, and the host's
    watchdog, which #202 points at it, kills it, its unit restarts it from its
-   cursor, and its `OnFailure` handler pages where the restarts run out. It
-   first beats after one interval, so a forwarder that dies at once in a loop
-   never beats. A forwarder that waits on a quiet journal is not told apart from
-   a quiet host, and #260's drills fire a line through it.
+   cursor, and its `OnFailure` handler pages where the restarts run out. A crash
+   loop is caught by the unit's restart limit, not by the beat. Two cases the
+   beat does not catch: a forwarder whose journal read stalls without ending
+   reads as one waiting on a quiet host, and a push slower than its timeout per
+   socket operation can hold a line past `STUCK_AFTER` and page it twice after
+   the restart. #260's drills fire a line through it, and a line sent through it
+   on a schedule is proposed on #258.
 
 The marker of a refused push holds the latest refusal and is never removed:
 monitoring compares its time with that of its own last ping. Every file the
@@ -91,7 +94,8 @@ __all__ = [
 ]
 
 # Seconds between the forwarder's touches of its heartbeat file, and how long one entry may
-# be in hand before it stops beating: past two pushes' 10-second timeouts.
+# be in hand before it stops beating: past two pushes' 10-second timeouts, which urllib
+# applies to each socket operation rather than to the whole call.
 BEAT_EVERY = 10.0
 STUCK_AFTER = 30.0
 
@@ -267,21 +271,26 @@ class Forwarder:
     def run(self) -> None:
         """Handle each entry after the saved cursor, saving the cursor after each one.
 
-        It beats every `beat_every` seconds until the journal ends, skipping each beat
-        while one entry has been in hand for `stuck_after` seconds or more.
+        It beats as it starts and every `beat_every` seconds until the journal ends,
+        skipping each beat while one entry has been in hand for `stuck_after` seconds.
         """
         stop = threading.Event()
 
+        def beat() -> None:
+            since = self._since
+            if since is not None and self._clock() - since >= self._stuck_after:
+                return
+            try:
+                self._beat()
+            except OSError:
+                # A heartbeat file that cannot be touched reads as stopped, which pages.
+                pass
+
         def beating() -> None:
             while not stop.wait(self._beat_every):
-                since = self._since
-                if since is not None and self._clock() - since >= self._stuck_after:
-                    continue
-                try:
-                    self._beat()
-                except OSError:
-                    # A heartbeat file that cannot be touched reads as stopped, which pages.
-                    pass
+                beat()
+
+        beat()
 
         beater = threading.Thread(target=beating, name="forwarder-beat", daemon=True)
         beater.start()

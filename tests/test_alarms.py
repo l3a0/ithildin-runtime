@@ -297,20 +297,19 @@ def test_the_supervisors_alarms_say_who_clears_by_its_mode(live: bool) -> None:
 
 
 def test_no_supervisor_alarm_says_who_clears_on_its_own() -> None:
-    """Every alarm the supervisor and its hold check raise goes through `raised`."""
+    """The supervisor and its hold check each read the mode once, in one place that raises.
+
+    Each module calls `raised` once and the channel's `alarm` once, both inside that one
+    place, and passes who clears nowhere, so no call site can say it for itself.
+    """
     import ast
 
     root = Path(ithildinruntime.__file__).parent / "runtime" / "supervisor"
-    found = []
-    for path in (root / "__init__.py", root / "hold.py"):
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.Call) and ast.unparse(node.func) in (
-                "self._alerts.alarm",
-                "alarm",
-            ):
-                (arg,) = node.args
-                if not (isinstance(arg, ast.Call) and ast.unparse(arg.func) == "raised"):
-                    found.append(f"{path.name}:{node.lineno}")
-                elif any(k.arg == "clears" for k in arg.keywords):
-                    found.append(f"{path.name}:{node.lineno}")
-    assert found == []
+    for name in ("__init__.py", "hold.py"):
+        calls = [
+            n for n in ast.walk(ast.parse((root / name).read_text())) if isinstance(n, ast.Call)
+        ]
+        named = [ast.unparse(c.func) for c in calls]
+        assert named.count("raised") == 1, name
+        assert sum(f.endswith("alarm") and not f.endswith("_alarm") for f in named) == 1, name
+        assert not any(k.arg == "clears" for c in calls for k in c.keywords), name

@@ -21,9 +21,11 @@ the receive loop's kinds do.
 3. Any other alarm is held. A held alarm counts as sent, so an `Alerts` that
    wraps the pager raises only on a push the server refused.
 
-A repeat names how many alarms of the cause arrived since it began, and the
-first page after a cause ended names how many of its alarms were held and never
-paged. A second cause pages at once under its own key. The keys live in memory, because a
+A repeat names how many alarms of the cause arrived since it began. When a
+cause ends with alarms held, its own next alarm names how many were held and
+never paged, if it comes within two hours of the cause's last alarm, after
+which the count is forgotten. A second cause pages at once under its own key.
+The keys live in memory, because a
 machine holds no state and the store may be what is down. The price is that a
 restart pages each cause again at once, which is the cheaper failure than a
 dropped page.

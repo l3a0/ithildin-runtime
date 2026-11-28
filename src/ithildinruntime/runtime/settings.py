@@ -179,8 +179,8 @@ def read_forwarder_settings(variables: Mapping[str, str] | None = None) -> Forwa
        pages a day and its marker of a refused push.
     4. `journal`, the directory of the host's journal, where the forwarder runs in a
        container that mounts it. Optional, and `journalctl` reads the default without it.
-    5. `heartbeat`, the file the forwarder touches while it runs, which the host's watchdog
-       reads. Optional, and nothing is touched without it.
+    5. `heartbeat`, the file the forwarder touches while it makes progress, which the host's
+       watchdog reads. Optional, and nothing is touched without it.
 
     An error about a key's value names the key, never what it holds, since a person may
     write the address itself where a path belongs. A key no reader knows is named, so the

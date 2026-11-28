@@ -357,9 +357,9 @@ def test_the_journal_and_heartbeat_keys_reach_the_forwarder(tmp_path, settings_f
     assert (settings.journal, settings.heartbeat) == (Path("/var/log/journal"), beat)
     made = entry.forwarder_for(settings, post=Topic())
     assert "--directory=/var/log/journal" in made._journal.__self__.arguments(None)
-    assert made._beat is not None
-    made._beat()
-    assert beat.exists(), "the forwarder's beat touches the file the key heartbeat names"
+    made._journal = Journal()
+    made.run()
+    assert beat.exists(), "the forwarder beat as it started"
 
 
 def test_the_forwarder_beats_while_it_runs(settings_file) -> None:
@@ -449,6 +449,7 @@ def test_a_forwarder_stuck_in_a_push_stops_beating(settings_file) -> None:
     time.sleep(0.6)
     stuck = len(beats)
     time.sleep(0.3)
+    # At most stuck_after / beat_every = 5 beats while the line is young, and the one at start.
     assert len(beats) == stuck and stuck <= 6, "no beat while one line has been in hand too long"
     release.set()
     runner.join(5)
@@ -479,3 +480,28 @@ def test_a_key_holding_the_address_is_named_and_not_printed(tmp_path, settings_f
     with pytest.raises(SettingError, match=f"the key {key}|the directory the key {key}") as refused:
         read_forwarder_settings({"ITHILDIN_SETTINGS": str(settings_file)})
     assert "secret-topic-name" not in str(refused.value)
+
+
+def test_the_forwarder_beats_again_once_a_line_is_done(settings_file) -> None:
+    import time
+
+    beats: list[float] = []
+
+    def quiet_after_one(after):
+        yield Entry("c0", "ithildin-data.service", line("data", "a stall"), START)
+        time.sleep(0.5)
+
+    settings = read_forwarder_settings({"ITHILDIN_SETTINGS": str(settings_file)})
+    made = entry.forwarder_for(settings, post=Topic())
+    made = Forwarder(
+        journal=quiet_after_one,
+        pager=made._pager,
+        state=made._state,
+        beat=lambda: beats.append(time.monotonic()),
+        beat_every=0.02,
+        stuck_after=0.1,
+    )
+    started = time.monotonic()
+    made.run()
+    late = [b for b in beats if b - started > 0.3]
+    assert len(late) >= 3, "a forwarder waiting on a quiet journal after a line still beats"

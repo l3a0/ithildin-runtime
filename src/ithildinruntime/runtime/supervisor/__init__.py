@@ -66,6 +66,7 @@ from ithildinruntime.core import (
     CodecError,
     DecisionResult,
     Halt,
+    Kind,
     Mode,
     Plan,
     RunHalt,
@@ -203,6 +204,11 @@ class Supervisor:
         self._boot = boot
         self._timer = timer
         self._alerts = alerts
+        # Who clears each alarm is read from the mode here, once, and no call site says it.
+        live = self._mode is Mode.LIVE
+        self._raise: Callable[[Kind, str], None] = lambda kind, reason: alerts.alarm(
+            raised(kind, reason, deployment=deployment, live=live)
+        )
         self._release_file = release_file
         self._wait = wait
         self._tick = tick
@@ -231,14 +237,9 @@ class Supervisor:
             # of its own for this start keeps a pause of it from covering any other.
             unknown = f"unknown-{secrets.token_hex(4)}"
             starts = Starts(self._plan_may_stand(run), (unknown,), False, self._released_here(run))
-            self._alerts.alarm(
-                raised(
-                    STARTS_UNREAD,
-                    f"{self._deployment}: the start records of {run} could not be read: "
-                    f"{_said(error)}",
-                    deployment=self._deployment,
-                    live=self._mode is Mode.LIVE,
-                )
+            self._raise(
+                STARTS_UNREAD,
+                f"{self._deployment}: the start records of {run} could not be read: {_said(error)}",
             )
         if self._trading:
             try:
@@ -272,33 +273,25 @@ class Supervisor:
                 if starts.released
                 else "no worker of it starts"
             )
-            self._alerts.alarm(
-                raised(
-                    START_UNRECORDED,
-                    f"{self._deployment}: no start record of {run} that names this machine could "
-                    f"be read or written, so it writes no plan and no release file, and {after}. "
-                    "Start the supervisor's unit "
-                    "again once the store answers",
-                    deployment=self._deployment,
-                    live=self._mode is Mode.LIVE,
-                )
+            self._raise(
+                START_UNRECORDED,
+                f"{self._deployment}: no start record of {run} that names this machine could "
+                f"be read or written, so it writes no plan and no release file, and {after}. "
+                "Start the supervisor's unit "
+                "again once the store answers",
             )
             return Outcome(EXIT_HELD, f"no start record of {run} names this machine")
         try:
             plan = self._store_plan(first, last)
         except Halt as halt:
-            self._alerts.alarm(
-                raised(
-                    PLAN_UNSTORED,
-                    f"{self._deployment}: the supervisor could not store the plan of {run}, so "
-                    "nothing watches its orders in doubt and nothing writes its stop: "
-                    f"{halt.reason}. A plan of another release means the pin moved during the "
-                    "session, and the next session runs the new release. Otherwise start the "
-                    "supervisor's unit again "
-                    "once the store answers",
-                    deployment=self._deployment,
-                    live=self._mode is Mode.LIVE,
-                )
+            self._raise(
+                PLAN_UNSTORED,
+                f"{self._deployment}: the supervisor could not store the plan of {run}, so "
+                "nothing watches its orders in doubt and nothing writes its stop: "
+                f"{halt.reason}. A plan of another release means the pin moved during the "
+                "session, and the next session runs the new release. Otherwise start the "
+                "supervisor's unit again "
+                "once the store answers",
             )
             return Outcome(EXIT_PLAN, halt.reason)
         try:
@@ -310,15 +303,11 @@ class Supervisor:
                 if self._released_here(plan.run)
                 else "no worker on this machine starts"
             )
-            self._alerts.alarm(
-                raised(
-                    RELEASE_UNWRITTEN,
-                    f"{self._deployment}: the local release file could not be written, so {after}: "
-                    f"{type(error).__name__}: {error}. Start the supervisor's unit again once its "
-                    "directory is writable by the supervisor alone",
-                    deployment=self._deployment,
-                    live=self._mode is Mode.LIVE,
-                )
+            self._raise(
+                RELEASE_UNWRITTEN,
+                f"{self._deployment}: the local release file could not be written, so {after}: "
+                f"{type(error).__name__}: {error}. Start the supervisor's unit again once its "
+                "directory is writable by the supervisor alone",
             )
             return Outcome(EXIT_PLAN, f"the local release file could not be written: {error}")
         return self._watch(plan)
@@ -333,16 +322,12 @@ class Supervisor:
             except StoreError as error:
                 held.append(f"{strategy} (whose halts could not be read: {_said(error)})")
         if held:
-            self._alerts.alarm(
-                raised(
-                    HALT_STANDS,
-                    f"{self._deployment}: on {today.isoformat()} {', '.join(held)} is still held "
-                    f"by a halt nobody has cleared, so it sends no new order. {who(self._mode)}, "
-                    "with "
-                    "#203's `ithildin halt clear` once it is built",
-                    deployment=self._deployment,
-                    live=self._mode is Mode.LIVE,
-                )
+            self._raise(
+                HALT_STANDS,
+                f"{self._deployment}: on {today.isoformat()} {', '.join(held)} is still held "
+                f"by a halt nobody has cleared, so it sends no new order. {who(self._mode)}, "
+                "with "
+                "#203's `ithildin halt clear` once it is built",
             )
 
     # Starting
@@ -389,15 +374,11 @@ class Supervisor:
                 supervisor_start_key(self._deployment, run, self._boot, count), encode(record)
             )
         except Exception as error:
-            self._alerts.alarm(
-                raised(
-                    START_UNWRITTEN,
-                    f"{self._deployment}: the start record of {run} could not be written: "
-                    f"{_said(error)}"
-                    + (". This boot's first record stands, so it watches on" if this_boot else ""),
-                    deployment=self._deployment,
-                    live=self._mode is Mode.LIVE,
-                )
+            self._raise(
+                START_UNWRITTEN,
+                f"{self._deployment}: the start record of {run} could not be written: "
+                f"{_said(error)}"
+                + (". This boot's first record stands, so it watches on" if this_boot else ""),
             )
             return False
         return True
@@ -481,31 +462,23 @@ class Supervisor:
                 return self._stop(plan, stages, decisions)
             if self._trading and missing and now >= close + STALL_AFTER_CLOSE:
                 said = "; ".join(f"{stage} at {at:%Y-%m-%dT%H:%M}Z" for stage, at in missing)
-                self._alerts.alarm(
-                    raised(
-                        STALL,
-                        f"{self._deployment}: {plan.run} has no result for {said} an hour after "
-                        "the close, so the supervisor ends with no stop. The next session's start "
-                        "holds every strategy, unless the missing result lands and a person "
-                        "starts the supervisor's unit again before then, which stores the stop, "
-                        "or the run's "
-                        "halt where one is owed",
-                        deployment=self._deployment,
-                        live=self._mode is Mode.LIVE,
-                    )
+                self._raise(
+                    STALL,
+                    f"{self._deployment}: {plan.run} has no result for {said} an hour after "
+                    "the close, so the supervisor ends with no stop. The next session's start "
+                    "holds every strategy, unless the missing result lands and a person "
+                    "starts the supervisor's unit again before then, which stores the stop, "
+                    "or the run's "
+                    "halt where one is owed",
                 )
                 return Outcome(EXIT_STALLED, f"{plan.run} stalled with results missing: {said}")
             if self._wait(self._tick):
-                self._alerts.alarm(
-                    raised(
-                        STOP_ASKED,
-                        f"{self._deployment}: the supervisor was asked to stop before {plan.run}'s "
-                        "stop was stored, so nothing watches the rest of the session until it "
-                        "starts "
-                        "again. If its unit shows stopped, start the supervisor's unit again",
-                        deployment=self._deployment,
-                        live=self._mode is Mode.LIVE,
-                    )
+                self._raise(
+                    STOP_ASKED,
+                    f"{self._deployment}: the supervisor was asked to stop before {plan.run}'s "
+                    "stop was stored, so nothing watches the rest of the session until it "
+                    "starts "
+                    "again. If its unit shows stopped, start the supervisor's unit again",
                 )
                 return Outcome(EXIT_ASKED, f"asked to stop before {plan.run} stopped")
 
@@ -551,17 +524,13 @@ class Supervisor:
         """Halt the whole run: its halt first, then a halt as every result still missing."""
         reason = "; ".join(late)
         # Alarmed first, so the orders are named even where the halt cannot be stored.
-        self._alerts.alarm(
-            raised(
-                RUN_HALTED,
-                f"{self._deployment}: the supervisor halts {plan.run}, and the run ends with no "
-                f"stop: {reason}. Settle at the broker each order this names, and confirm the "
-                "account's positions there. Once the halt is stored, the next session's start "
-                "holds "
-                f"every strategy. {who(self._mode)}",
-                deployment=self._deployment,
-                live=self._mode is Mode.LIVE,
-            )
+        self._raise(
+            RUN_HALTED,
+            f"{self._deployment}: the supervisor halts {plan.run}, and the run ends with no "
+            f"stop: {reason}. Settle at the broker each order this names, and confirm the "
+            "account's positions there. Once the halt is stored, the next session's start "
+            "holds "
+            f"every strategy. {who(self._mode)}",
         )
         record = RunHalt(
             format=RUN_RECORD_FORMAT,
@@ -631,48 +600,36 @@ class Supervisor:
                     "this session once the store answers. A start in a later session holds every "
                     "strategy instead"
                 )
-                self._alerts.alarm(
-                    raised(
-                        RUN_HALT_IN_PLACE,
-                        f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
-                        f"{_said(error)}. In its place {said}. Pull the account's kill switch now. "
-                        f"{after}",
-                        deployment=self._deployment,
-                        live=self._mode is Mode.LIVE,
-                    )
+                self._raise(
+                    RUN_HALT_IN_PLACE,
+                    f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
+                    f"{_said(error)}. In its place {said}. Pull the account's kill switch now. "
+                    f"{after}",
                 )
                 return Outcome(EXIT_FAILED, f"the run's halt of {plan.run} could not be stored")
             if asked:
                 # Exit 3, which the host never restarts, since a restart in this session would
                 # judge the run afresh and could store its stop.
-                self._alerts.alarm(
-                    raised(
-                        STOP_ASKED_BEFORE_HALT,
-                        f"{self._deployment}: the supervisor was asked to stop before the run's "
-                        f"halt of {plan.run}, or any halt in its place, was stored, so nothing "
-                        "records the halt. It ends with a code the host does not restart. Leave "
-                        "the supervisor's unit stopped for the rest of the session: with no stop "
-                        "stored, the next session's start holds every strategy. A start in this "
-                        "session judges the run afresh, and stores the run's stop unless an order "
-                        "is still late. Keep the account's kill switch pulled until each position "
-                        "is confirmed "
-                        "at the broker",
-                        deployment=self._deployment,
-                        live=self._mode is Mode.LIVE,
-                    )
+                self._raise(
+                    STOP_ASKED_BEFORE_HALT,
+                    f"{self._deployment}: the supervisor was asked to stop before the run's "
+                    f"halt of {plan.run}, or any halt in its place, was stored, so nothing "
+                    "records the halt. It ends with a code the host does not restart. Leave "
+                    "the supervisor's unit stopped for the rest of the session: with no stop "
+                    "stored, the next session's start holds every strategy. A start in this "
+                    "session judges the run afresh, and stores the run's stop unless an order "
+                    "is still late. Keep the account's kill switch pulled until each position "
+                    "is confirmed "
+                    "at the broker",
                 )
                 return Outcome(EXIT_HALTED, f"asked to stop before {plan.run}'s halt was stored")
             if not alarmed:
-                self._alerts.alarm(
-                    raised(
-                        RUN_HALT_UNSTORED,
-                        f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
-                        f"{_said(error)}, and no halt holds any strategy in its place. Pull the "
-                        "account's kill switch now. The supervisor tries the halt again on each "
-                        "tick until one lands, and the store alarms on each try it fails",
-                        deployment=self._deployment,
-                        live=self._mode is Mode.LIVE,
-                    )
+                self._raise(
+                    RUN_HALT_UNSTORED,
+                    f"{self._deployment}: the run's halt of {plan.run} could not be stored: "
+                    f"{_said(error)}, and no halt holds any strategy in its place. Pull the "
+                    "account's kill switch now. The supervisor tries the halt again on each "
+                    "tick until one lands, and the store alarms on each try it fails",
                 )
                 alarmed = True
             asked = self._wait(self._tick)
@@ -683,16 +640,12 @@ class Supervisor:
             except Exception as again:
                 error = again
             else:
-                self._alerts.alarm(
-                    raised(
-                        RUN_HALT_STORED,
-                        f"{self._deployment}: the run's halt of {plan.run} is stored now, so the "
-                        "next session's start holds every strategy. Keep the account's kill "
-                        "switch pulled "
-                        "until each position is confirmed at the broker",
-                        deployment=self._deployment,
-                        live=self._mode is Mode.LIVE,
-                    )
+                self._raise(
+                    RUN_HALT_STORED,
+                    f"{self._deployment}: the run's halt of {plan.run} is stored now, so the "
+                    "next session's start holds every strategy. Keep the account's kill "
+                    "switch pulled "
+                    "until each position is confirmed at the broker",
                 )
                 return None
 
@@ -742,16 +695,12 @@ class Supervisor:
             except Exception as error:
                 halt = error if isinstance(error, Halt) else Halt(_said(error))
                 # No stop is stored, and the host restarts the supervisor to read them again.
-                self._alerts.alarm(
-                    raised(
-                        RUN_HALT_UNREAD,
-                        f"{self._deployment}: the run's halt of {plan.run}, or a halt of a "
-                        "strategy standing in for it, could not be read, so no stop is stored "
-                        "yet: "
-                        f"{halt.reason}. The host restarts the supervisor",
-                        deployment=self._deployment,
-                        live=self._mode is Mode.LIVE,
-                    )
+                self._raise(
+                    RUN_HALT_UNREAD,
+                    f"{self._deployment}: the run's halt of {plan.run}, or a halt of a "
+                    "strategy standing in for it, could not be read, so no stop is stored "
+                    "yet: "
+                    f"{halt.reason}. The host restarts the supervisor",
                 )
                 return Outcome(
                     EXIT_FAILED, f"the run's halt could not be read, so no stop: {halt.reason}"
